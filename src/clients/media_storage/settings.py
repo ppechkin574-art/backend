@@ -1,0 +1,12 @@
+from datetime import timedelta
+
+from pydantic import Field
+from pydantic_settings import BaseSettings
+
+
+class MinioSettings(BaseSettings):
+    endpoint: str
+    access_key: str
+    secret_key: str
+    bucket: str
+    expires: timedelta = Field(default=timedelta(minutes=30))

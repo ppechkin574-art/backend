@@ -1,0 +1,2 @@
+class MediaStorageError(Exception):
+    pass

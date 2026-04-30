@@ -1,0 +1,45 @@
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+exclude = [
+    "alembic",
+    ".venv",
+    "venv",
+    "__pycache__",
+    "*.pyc",
+    ".git",
+    ".env",
+    "dist",
+    "build",
+]
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "UP", "B", "C4", "ARG", "SIM", "T20", "G",  "YTT", "S"
+]
+ignore = [
+    "E501",  # line too long
+    "B008",  # function-call-in-default-argument
+    "B904",  # raise-without-from-inside-except
+    "S104",  # possible binding to all interfaces
+]
+
+[tool.ruff.lint.isort]
+# known-first-party not needed because isort is called before ruff
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.vulture]
+exclude = [
+    "*/dtos.py",
+    "*/dtos/*.py",
+    "*/models.py",
+    "*/models/*.py",
+]
+min_confidence = 60
+paths = ["src"]

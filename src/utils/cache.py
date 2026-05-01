@@ -123,6 +123,17 @@ class CacheService:
             logger.exception("Redis error (delete_pattern): %s", e)
             return 0
 
+    def flush_all(self) -> bool:
+        """Очистить всю текущую базу Redis. Использовать после массового изменения данных
+        (например после применения дампа БД), чтобы убрать stale-кеш с пустыми ответами."""
+        try:
+            self.redis.flushdb()
+            logger.warning("Cache flushed entirely")
+            return True
+        except redis.RedisError as e:
+            logger.exception("Redis error (flush_all): %s", e)
+            return False
+
     def invalidate_by_resource(self, resource: str, user_id: UUID | None = None) -> int:
         return self.delete_pattern(f"user:user:{user_id}:{resource}:*" if user_id else f"global:{resource}:*")
 

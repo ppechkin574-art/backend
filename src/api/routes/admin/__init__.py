@@ -1,4 +1,5 @@
 from .bank import router as bank_router
+from .cache import router as cache_router
 from .dashboard import router as dashboard_router
 from .ents import router as ents_router
 from .modules import router as modules_router
@@ -26,4 +27,5 @@ routers = [
     modules_router,
     users_router,
     bank_router,
+    cache_router,
 ]

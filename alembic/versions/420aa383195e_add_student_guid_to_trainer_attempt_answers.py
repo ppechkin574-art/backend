@@ -29,7 +29,7 @@ def upgrade():
         "trainer_attempt_answers",
         "students",
         ["student_guid"],
-        ["guid"],
+        ["id"],
     )
     # ### end Alembic commands ###
 

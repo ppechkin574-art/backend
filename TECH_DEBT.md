@@ -19,7 +19,18 @@
 
 ## 🔴 Критично
 
-### 1. Keycloak
+### 1. Keycloak ✅ ЗАКРЫТО (01.05.2026)
+
+**Статус:** работает. Backend подключён к Keycloak на `https://keycloak-production-0a0c.up.railway.app`, realm `lumi` импортирован, клиенты `web-app` и `tesla-admin-panel` созданы, тестовый юзер `admin@aima.kz` логинится через `/auth/login-swagger` → возвращаются access/refresh токены.
+
+**Остающийся минор для прод-ready:**
+- Сменить пароль временного admin-юзера Keycloak (`KEYCLOAK_ADMIN_PASSWORD`) на постоянный сильный.
+- Сменить пароль `admin@aima.kz` (был temporary `ChangeMeAdmin123!`).
+- Включить email-verification в realm `lumi → Realm settings → Login`, заполнить SMTP в `Realm settings → Email`.
+- Защитить `master` realm — отключить self-registration на нём (по умолчанию отключено, проверить).
+
+<details>
+<summary>Изначальные заметки (что было до фикса)</summary>
 
 **Сейчас:** заглушки `https://example.com`. Любая попытка логина / регистрации / refresh-токена упадёт.
 
@@ -42,6 +53,8 @@ keycloak__open_id__SERVER_URL        → https://your-keycloak.up.railway.app
 keycloak__open_id__REALM_NAME        → lumi
 keycloak__open_id__CLIENT_SECRET_KEY → (реальный из Keycloak)
 ```
+
+</details>
 
 ---
 

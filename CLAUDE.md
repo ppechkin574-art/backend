@@ -49,10 +49,21 @@
 
 **Что отключено / стоит как заглушка:**
 - ❌ Firebase: `firebase__enabled=false` → push не отправляются.
-- ❌ Keycloak `https://example.com` → логин невозможен.
+- ✅ **Keycloak подключён** на `https://keycloak-production-0a0c.up.railway.app`, realm `lumi` импортирован, логин работает (см. [docs/KEYCLOAK_SETUP.md](./docs/KEYCLOAK_SETUP.md)).
 - ❌ MinIO `localhost:9000` → загрузка файлов сломана.
-- ❌ Все OAuth (Apple, Google) → социальный логин не работает.
+- ❌ Apple/Google OAuth → социальный логин не работает (Apple key читается лениво, см. фикс в `5cce03b`).
 - ❌ Email/SMS/WhatsApp → коды подтверждения не доходят.
+
+**Сервисы в Railway-проекте:**
+- `backend` (этот) — `https://backend-production-f2a1.up.railway.app`
+- `Postgres` — основная БД для backend
+- `Redis` — кеш + сессии
+- `keycloak` (Docker) — `https://keycloak-production-0a0c.up.railway.app`
+- `Keycloak` (Postgres) — БД для Keycloak
+
+**Тестовые креды:**
+- Keycloak admin: `admin` / `<KEYCLOAK_ADMIN_PASSWORD>` (в Variables сервиса `keycloak`)
+- App admin: `admin@aima.kz` / `ChangeMeAdmin123!` (temporary, сменить через Keycloak Admin Console → realm `lumi` → Users)
 
 См. **[TECH_DEBT.md](./TECH_DEBT.md)** — там roadmap по фазам и подробный список 32 секретов.
 

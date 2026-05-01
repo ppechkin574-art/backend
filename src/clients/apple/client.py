@@ -15,21 +15,27 @@ class AppleOAuthClient:
     def __init__(self, settings: AppleOAuthSettings):
         self.settings = settings
         self.jwks_client = PyJWKClient("https://appleid.apple.com/auth/keys")
+        self.private_key_content: str | None = None
 
+    def _load_private_key(self) -> str:
+        if self.private_key_content is not None:
+            return self.private_key_content
+        if not self.settings.private_key_file:
+            raise ValueError("Apple OAuth is not configured: private_key_file is empty")
         try:
-            if not settings.private_key_file:
-                return
-            with open(settings.private_key_file) as f:
+            with open(self.settings.private_key_file) as f:
                 self.private_key_content = f.read()
         except FileNotFoundError:
-            logger.exception("Apple private key file not found: %s", settings.private_key_file)
+            logger.exception("Apple private key file not found: %s", self.settings.private_key_file)
             raise
         except Exception as e:
             logger.exception("Error reading Apple private key: %s", e)
             raise
+        return self.private_key_content
 
     def generate_client_secret(self) -> str:
         """Генерирует JWT client secret для Apple OAuth"""
+        private_key = self._load_private_key()
         now = int(time.time())
         payload = {
             "iss": self.settings.team_id,
@@ -42,7 +48,7 @@ class AppleOAuthClient:
         headers = {"kid": self.settings.key_id, "alg": "ES256"}
 
         try:
-            client_secret = jwt.encode(payload, self.private_key_content, algorithm="ES256", headers=headers)
+            client_secret = jwt.encode(payload, private_key, algorithm="ES256", headers=headers)
             return client_secret
         except Exception as e:
             logger.exception("Failed to generate Apple client secret: %s", e)

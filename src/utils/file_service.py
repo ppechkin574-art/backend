@@ -1,79 +1,111 @@
 import io
 import logging
-import os
 import uuid
 
 from fastapi import HTTPException, UploadFile
 from PIL import Image
 
+from clients.media_storage.client import MediaStorageClientInterface
+from clients.media_storage.exceptions import MediaStorageError
+
 logger = logging.getLogger(__name__)
 
 
 class FileService:
-    def __init__(self, upload_base_dir: str = "/app/uploads", file_base_url: str | None = None):
-        self.upload_base_dir = upload_base_dir
+    """
+    Хранение медиа-файлов в S3-совместимом storage (MinIO).
 
-        if file_base_url is None:
-            file_base_url = os.getenv("FILE_BASE_URL", "")
-            logger.info("FileService: Got FILE_BASE_URL from environment: '%s'", file_base_url)
+    Все файлы лежат в одном bucket, организация через префиксы:
+        avatars/<user_id>_<uuid>.jpg
+        subjects/<uuid>.jpg
 
-        self.file_base_url = file_base_url.rstrip("/") if file_base_url else ""
+    Раздача — через presigned URL (TTL задан в настройках MinIO).
+    Локальный диск не используется — контейнеры backend могут масштабироваться.
+    """
 
-        self.avatars_dir = os.path.join(upload_base_dir, "avatars")
-        self.subjects_dir = os.path.join(upload_base_dir, "subjects")
-        os.makedirs(self.avatars_dir, exist_ok=True)
-        os.makedirs(self.subjects_dir, exist_ok=True)
+    AVATAR_PREFIX = "avatars"
+    SUBJECT_PREFIX = "subjects"
+    MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024
+    THUMBNAIL_SIZE = (500, 500)
+    JPEG_QUALITY = 85
+
+    def __init__(self, media_storage: MediaStorageClientInterface):
+        self._storage = media_storage
 
     async def save_avatar(self, user_id: str, avatar_file: UploadFile) -> str:
+        """Загружает аватар пользователя в S3. Возвращает имя файла."""
+        contents = await self._read_validated_image(avatar_file)
+        processed = await self._process_image(contents)
+
+        filename = f"{user_id}_{uuid.uuid4().hex}.jpg"
+        object_name = f"{self.AVATAR_PREFIX}/{filename}"
+
         try:
-            if not avatar_file.content_type.startswith("image/"):
-                raise HTTPException(status_code=400, detail="File must be an image")
-
-            contents = await avatar_file.read()
-            logger.info("  - file size: %s bytes", len(contents))
-
-            if len(contents) > 5 * 1024 * 1024:
-                raise HTTPException(status_code=400, detail="File too large. Max 5MB")
-
-            processed_image = await self._process_image(contents)
-
-            file_extension = "jpg"
-            filename = f"{user_id}_{uuid.uuid4().hex}.{file_extension}"
-            file_path = os.path.join(self.avatars_dir, filename)
-
-            with open(file_path, "wb") as buffer:
-                buffer.write(processed_image)
-
-            logger.info("Avatar saved for user %s: %s", user_id, filename)
-            return filename
-
-        except Exception as e:
-            logger.exception("Error saving avatar for user %s: %s", user_id, str(e))
+            self._storage.save(object_name, io.BytesIO(processed))
+        except MediaStorageError as e:
+            logger.exception("Failed to save avatar for user %s", user_id)
             raise HTTPException(status_code=500, detail="Failed to save avatar") from e
 
+        logger.info("Avatar saved: %s", object_name)
+        return filename
+
     async def save_subject_image(self, image_file: UploadFile) -> str:
+        """Загружает картинку предмета в S3. Возвращает имя файла."""
+        contents = await self._read_validated_image(image_file)
+        processed = await self._process_image(contents)
+
+        filename = f"subject_{uuid.uuid4().hex}.jpg"
+        object_name = f"{self.SUBJECT_PREFIX}/{filename}"
+
         try:
-            if not image_file.content_type.startswith("image/"):
-                raise HTTPException(status_code=400, detail="File must be an image")
-
-            contents = await image_file.read()
-            if len(contents) > 5 * 1024 * 1024:
-                raise HTTPException(status_code=400, detail="File too large. Max 5MB")
-
-            processed_image = await self._process_image(contents)
-
-            filename = f"subject_{uuid.uuid4().hex}.jpg"
-            file_path = os.path.join(self.subjects_dir, filename)
-
-            with open(file_path, "wb") as buffer:
-                buffer.write(processed_image)
-
-            logger.info("Subject image saved: %s", filename)
-            return filename
-
-        except Exception as e:
-            logger.exception("Error saving subject image: %s", str(e))
+            self._storage.save(object_name, io.BytesIO(processed))
+        except MediaStorageError as e:
+            logger.exception("Failed to save subject image")
             raise HTTPException(status_code=500, detail="Failed to save image") from e
+
+        logger.info("Subject image saved: %s", object_name)
+        return filename
+
+    def delete_avatar(self, filename: str) -> bool:
+        """Удаляет аватар по имени файла. Возвращает True если удалили."""
+        return self._delete_object(f"{self.AVATAR_PREFIX}/{self._extract_filename(filename)}")
+
+    def delete_subject_image(self, filename: str) -> bool:
+        """Удаляет картинку предмета по имени файла."""
+        return self._delete_object(f"{self.SUBJECT_PREFIX}/{self._extract_filename(filename)}")
+
+    def get_avatar_url(self, filename: str) -> str:
+        """Presigned URL для отдачи аватара клиенту."""
+        if not filename:
+            return ""
+        try:
+            return self._storage.link(f"{self.AVATAR_PREFIX}/{self._extract_filename(filename)}")
+        except MediaStorageError as e:
+            logger.warning("Failed to build avatar URL for %s: %s", filename, e)
+            return ""
+
+    def get_subject_image_url(self, image_path: str) -> str | None:
+        """Presigned URL для отдачи картинки предмета.
+
+        Принимает либо имя файла (subject_xxx.jpg), либо устаревший относительный путь
+        вида /images/subjects/subject_xxx.jpg — для обратной совместимости с дампом БД.
+        """
+        if not image_path:
+            return None
+        try:
+            return self._storage.link(f"{self.SUBJECT_PREFIX}/{self._extract_filename(image_path)}")
+        except MediaStorageError as e:
+            logger.warning("Failed to build subject image URL for %s: %s", image_path, e)
+            return None
+
+    async def _read_validated_image(self, file: UploadFile) -> bytes:
+        if not file.content_type or not file.content_type.startswith("image/"):
+            raise HTTPException(status_code=400, detail="File must be an image")
+
+        contents = await file.read()
+        if len(contents) > self.MAX_FILE_SIZE_BYTES:
+            raise HTTPException(status_code=400, detail="File too large. Max 5MB")
+        return contents
 
     async def _process_image(self, image_data: bytes) -> bytes:
         try:
@@ -82,54 +114,29 @@ class FileService:
             if image.mode in ("RGBA", "LA", "P"):
                 image = image.convert("RGB")
 
-            image.thumbnail((500, 500), Image.Resampling.LANCZOS)
+            image.thumbnail(self.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
 
             output = io.BytesIO()
-            image.save(output, format="JPEG", quality=85, optimize=True)
+            image.save(output, format="JPEG", quality=self.JPEG_QUALITY, optimize=True)
 
             return output.getvalue()
-
         except Exception as e:
-            logger.exception("Error processing image: %s", str(e))
+            logger.exception("Error processing image: %s", e)
             raise HTTPException(status_code=400, detail="Invalid image file") from e
 
-    def delete_avatar(self, filename: str) -> bool:
+    def _delete_object(self, object_name: str) -> bool:
         try:
-            file_path = os.path.join(self.avatars_dir, filename)
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                return True
-            return False
-        except Exception as e:
-            logger.exception("Error deleting avatar %s: %s", filename, str(e))
+            self._storage.remove(object_name)
+            return True
+        except MediaStorageError as e:
+            logger.warning("Failed to delete object %s: %s", object_name, e)
             return False
 
-    def delete_subject_image(self, filename: str) -> bool:
-        try:
-            file_path = os.path.join(self.subjects_dir, filename)
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                logger.info("Subject image deleted: %s", filename)
-                return True
-            return False
-        except Exception as e:
-            logger.exception("Error deleting subject image %s: %s", filename, str(e))
-            return False
-
-    def get_avatar_url(self, filename: str) -> str:
-        if not filename:
-            return ""
-
-        if self.file_base_url:
-            return f"{self.file_base_url}/uploads/avatars/{filename}"
-        else:
-            return f"/uploads/avatars/{filename}"
-
-    def get_subject_image_url(self, image_path: str) -> str | None:
-        if not image_path:
-            return None
-
-        if image_path.startswith("/"):
-            return f"{self.file_base_url}/uploads{image_path}"
-        else:
-            return f"{self.file_base_url}/uploads/subjects/{image_path}"
+    @staticmethod
+    def _extract_filename(value: str) -> str:
+        """Берёт последний сегмент пути. Поддерживает обе формы:
+        - "subject_xxx.jpg"            → "subject_xxx.jpg"
+        - "/images/subjects/abc.jpg"   → "abc.jpg"
+        - "subjects/abc.jpg"           → "abc.jpg"
+        """
+        return value.rstrip("/").split("/")[-1]

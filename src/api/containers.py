@@ -8,6 +8,7 @@ from clients import IdentityProviderClientKeycloak, NotificationClientTelegram
 from clients.apple.client import AppleOAuthClient
 from clients.firebase import FirebaseNotificationClient
 from clients.google.client import GoogleOAuthClient
+from clients.media_storage.client import MediaStorageClientMinio
 from clients.notification.client import (
     NotificationClientEmail,
     NotificationClientSMS,
@@ -44,10 +45,14 @@ class Container(containers.DeclarativeContainer):
         default_ttl=3600,
     )
 
+    media_storage = providers.Singleton(
+        MediaStorageClientMinio,
+        settings=config.provided.minio,
+    )
+
     file_service = providers.Singleton(
         FileService,
-        upload_base_dir=config.provided.upload_base_dir,
-        file_base_url=config.provided.file_base_url,
+        media_storage=media_storage,
     )
 
     identity_provider_client = providers.Singleton(

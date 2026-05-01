@@ -37,6 +37,18 @@ class MediaStorageClientInterface(Protocol):
         """
         raise NotImplementedError
 
+    def remove(self, name: str) -> None:
+        """
+        Delete file by object name. No-op if file does not exist.
+
+        Args:
+            name: Object name.
+
+        Raises:
+            MediaStorageError: Failed to delete file.
+        """
+        raise NotImplementedError
+
 
 class MediaStorageClientMinio:
     def __init__(self, settings: MinioSettings) -> None:
@@ -56,4 +68,11 @@ class MediaStorageClientMinio:
             return self._client.presigned_get_object(self._bucket, name, expires=self._expires)
         except Exception as e:
             logging.exception("Failed to get link for media(%s): %s", name, e)
+            raise MediaStorageError from e
+
+    def remove(self, name: str) -> None:
+        try:
+            self._client.remove_object(self._bucket, name)
+        except Exception as e:
+            logging.exception("Failed to remove media (%s): %s", name, e)
             raise MediaStorageError from e

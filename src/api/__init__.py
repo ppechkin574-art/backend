@@ -1,7 +1,6 @@
 import logging
 
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 from starlette.middleware.cors import CORSMiddleware
 
 from api.containers import Container
@@ -79,8 +78,6 @@ def create_app() -> FastAPI:
 
     setup_exception_handlers(app)
     setup_metrics(app)
-
-    app.mount("/uploads", StaticFiles(directory="/app/uploads"), name="uploads")
 
     for router in routers:
         app.include_router(router)

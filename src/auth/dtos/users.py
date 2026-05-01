@@ -41,8 +41,8 @@ class UserDTO(BaseModel):
     plan: PlanType = PlanType.FREE
     used_trial: bool = False
     subscription_end: datetime | None = None
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     attendance_streak_days: int = 0
     attendance_total_points: int = 0

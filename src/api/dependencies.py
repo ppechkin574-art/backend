@@ -1,9 +1,12 @@
+import logging
 from collections.abc import Generator
 from typing import TYPE_CHECKING
 from uuid import UUID
 
 from dependency_injector.wiring import Provide, inject
 from fastapi import HTTPException, status
+
+logger = logging.getLogger(__name__)
 from fastapi.params import Depends
 from fastapi.security import OAuth2PasswordBearer
 from redis import Redis
@@ -456,9 +459,10 @@ async def allow_only_admins(
     except HTTPException:
         raise
     except Exception as e:
+        logger.exception("Authentication system error in allow_only_admins: %s", e)
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail="Authentication system error",
+            detail=f"Authentication system error: {type(e).__name__}: {e}",
         ) from e
 
 

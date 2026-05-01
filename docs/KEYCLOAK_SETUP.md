@@ -12,7 +12,7 @@
 
 1. Кнопка **`+`** (или правая кнопка на канве) → **Database** → **PostgreSQL**.
    - Это **отдельная** БД для Keycloak, не та что используется backend. Keycloak хранит в ней realms/users/clients.
-   - Назови сервис `Postgres-keycloak` (чтобы не путать с основным `Postgres`).
+   - Имя сервиса по умолчанию `Postgres`, но у нас уже есть основной `Postgres` для backend. Переименуй этот в `Keycloak-db` (или `Postgres-keycloak`) — иначе плейсхолдеры конфликтуют. **Запиши имя — оно понадобится в плейсхолдерах ниже.**
 
 2. Снова **`+`** → **Docker Image** → введи `quay.io/keycloak/keycloak:26.0`.
    - Назови сервис `keycloak`.
@@ -21,20 +21,24 @@
 
 4. В сервисе `keycloak` → **Settings → Deploy → Custom Start Command** введи:
    ```
-   start --optimized --proxy-headers xforwarded --hostname-strict=false --import-realm
+   start --optimized --proxy-headers xforwarded --hostname-strict=false
    ```
+
+   ⚠️ **НЕ добавляй флаг `--import-realm`** — он работает только если файл realm-export примонтирован внутрь контейнера. Без него контейнер сразу выходит со статусом `Completed`. Realm импортируем позже через Admin Console (Шаг 2).
 
 5. В сервисе `keycloak` → **Settings → Source → Build → Custom Build Command** оставь пустым (используем готовый образ).
 
 6. В сервисе `keycloak` → **Variables → Raw Editor** вставь (заменив `<KEYCLOAK_DOMAIN>` на свой):
 
+   ⚠️ Замени `<DB_SERVICE_NAME>` на имя Postgres-сервиса для Keycloak (например `Keycloak-db` или `Keycloak`). Имя в `${{...}}` должно **точно** совпадать с тем что отображается на канве Railway.
+
    ```env
    KEYCLOAK_ADMIN=admin
    KEYCLOAK_ADMIN_PASSWORD=GENERATE_STRONG_PASSWORD_HERE
    KC_DB=postgres
-   KC_DB_URL=jdbc:postgresql://${{Postgres-keycloak.PGHOST}}:${{Postgres-keycloak.PGPORT}}/${{Postgres-keycloak.PGDATABASE}}
-   KC_DB_USERNAME=${{Postgres-keycloak.PGUSER}}
-   KC_DB_PASSWORD=${{Postgres-keycloak.PGPASSWORD}}
+   KC_DB_URL=jdbc:postgresql://${{<DB_SERVICE_NAME>.PGHOST}}:${{<DB_SERVICE_NAME>.PGPORT}}/${{<DB_SERVICE_NAME>.PGDATABASE}}
+   KC_DB_USERNAME=${{<DB_SERVICE_NAME>.PGUSER}}
+   KC_DB_PASSWORD=${{<DB_SERVICE_NAME>.PGPASSWORD}}
    KC_HOSTNAME=<KEYCLOAK_DOMAIN>.up.railway.app
    KC_HOSTNAME_STRICT=false
    KC_HTTP_ENABLED=true
@@ -45,6 +49,8 @@
    ```
 
    ⚠️ `KEYCLOAK_ADMIN_PASSWORD` сгенерируй надёжный пароль (хотя бы 16 символов). **Запиши его** — будет использоваться backend.
+
+   ⚠️ `KC_HOSTNAME` — только домен, без `https://` и без слэша в конце.
 
 7. Дождись успешного деплоя. В Deploy Logs должно быть:
    ```
@@ -125,8 +131,12 @@ keycloak__open_id__CLIENT_SECRET_KEY = <client_secret из Шага 3>
 ## Возможные проблемы
 
 ### `KC_DB_URL` не разрезолвается
-- Проверь, что сервис Postgres называется именно `Postgres-keycloak` (или поправь `${{...}}` плейсхолдеры).
+- Имя сервиса Postgres-для-Keycloak в `${{...}}` плейсхолдере должно **точно** совпадать с тем, как сервис назван на канве (регистр важен).
 - Сервис Postgres должен быть в **том же** Railway-проекте.
+
+### Контейнер сразу `Completed` (а не `Active`)
+- Чаще всего — флаг `--import-realm` без файла внутри контейнера. Убери его из Custom Start Command.
+- Реже — DB не доступна при старте: убедись что Postgres-сервис уже Online до запуска Keycloak.
 
 ### Keycloak не стартует — `Cannot connect to database`
 - Postgres-keycloak ещё не успел подняться. Дождись `Online` статуса у обоих сервисов и сделай Restart у Keycloak.

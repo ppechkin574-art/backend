@@ -27,10 +27,10 @@ class KeycloakUserDTO(BaseModel):
     id: UUID
     username: str
     email: EmailStr | None = None
-    emailVerified: bool
+    emailVerified: bool = False
     attributes: KeycloakAttributesDTO | None = None
-    createdTimestamp: datetime
-    enabled: bool
+    createdTimestamp: datetime | None = None
+    enabled: bool = True
 
 
 class KeycloakCreateUserDTO(BaseModel):

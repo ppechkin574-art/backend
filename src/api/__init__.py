@@ -63,14 +63,19 @@ def create_app() -> FastAPI:
         notifier_receiver_phone="",
     )
 
-    origins = settings.allowed_origins.split(",")
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=[origin.strip() for origin in origins if origin.strip()],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
+    cors_kwargs: dict = {
+        "allow_methods": ["*"],
+        "allow_headers": ["*"],
+    }
+    if not origins or "*" in origins:
+        cors_kwargs["allow_origin_regex"] = ".*"
+        cors_kwargs["allow_credentials"] = False
+    else:
+        cors_kwargs["allow_origins"] = origins
+        cors_kwargs["allow_credentials"] = True
+
+    app.add_middleware(CORSMiddleware, **cors_kwargs)
 
     setup_exception_handlers(app)
     setup_metrics(app)

@@ -56,6 +56,13 @@ def create_app() -> FastAPI:
     )
     app.state.container = container
 
+    app.add_middleware(LoggingContextMiddleware)
+    app.add_middleware(
+        ExceptionLoggingMiddleware,
+        notifier=container.notification_client(),
+        notifier_receiver_phone="",
+    )
+
     origins = settings.allowed_origins.split(",")
     app.add_middleware(
         CORSMiddleware,
@@ -63,13 +70,6 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-    )
-
-    app.add_middleware(LoggingContextMiddleware)
-    app.add_middleware(
-        ExceptionLoggingMiddleware,
-        notifier=container.notification_client(),
-        notifier_receiver_phone="",
     )
 
     setup_exception_handlers(app)

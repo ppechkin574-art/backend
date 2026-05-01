@@ -6,6 +6,7 @@ __pycache__/
 .vscode
 *.sh
 *.txt
+!requirements.txt
 *.json
 *.sql
 *.dump

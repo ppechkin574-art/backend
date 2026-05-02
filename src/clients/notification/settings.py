@@ -1,7 +1,8 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class TelegramBotSettings(BaseSettings):
+    model_config = SettingsConfigDict(extra="ignore")
     token: str
     chat_id: str
 
@@ -11,7 +12,12 @@ class EmailClientSettings(BaseSettings):
 
     Используется HTTP API вместо SMTP, потому что Railway (и большинство cloud-провайдеров)
     блокируют исходящий SMTP-трафик. См. TECH_DEBT.md п. 7.
+
+    `extra="ignore"` — чтобы старые SMTP-переменные (email/password/smtp_server/port)
+    не ломали инициализацию, если они остались в env после миграции с SMTP.
     """
+
+    model_config = SettingsConfigDict(extra="ignore")
 
     api_key: str
     from_email: str = "onboarding@resend.dev"

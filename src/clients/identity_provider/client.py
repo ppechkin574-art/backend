@@ -572,10 +572,14 @@ class IdentityProviderClientKeycloak:
             tokens = self._keycloak_openid.token(username=username, password=password)
             logger.info("Tokens created successfully for: %s", login)
             return KeycloakAccessTokenDTO(**tokens)
-        except KeycloakError as e:
-            logger.exception("Keycloak error creating tokens: %s", str(e))
+        except KeycloakError as exc:
+            # Запоминаем оригинальную ошибку под собственным именем — `as e` в Python 3
+            # очищает свою переменную при выходе из блока, поэтому без переименования
+            # внутренний except затирает внешний (UnboundLocalError ниже).
+            original_error = exc
+            logger.exception("Keycloak error creating tokens: %s", str(original_error))
 
-            if "Account is not fully set up" in str(e):
+            if "Account is not fully set up" in str(original_error):
                 logger.warning("Account not fully set up, waiting and retrying...")
                 import time
 
@@ -585,14 +589,17 @@ class IdentityProviderClientKeycloak:
                     tokens = self._keycloak_openid.token(username=username, password=password)
                     logger.info("Tokens created on retry for: %s", username)
                     return KeycloakAccessTokenDTO(**tokens)
-                except KeycloakError as e:
-                    logger.exception("Retry failed: %s", str(e))
+                except KeycloakError as retry_exc:
+                    logger.exception("Retry failed: %s", str(retry_exc))
+                    # Account всё ещё имеет required actions — это конкретный prod-flag
+                    # для фронта, чтобы он мог показать "Завершите регистрацию через web".
+                    raise NotVerifiedError from retry_exc
 
-            if e.response_code == 401:
-                raise InvalidAccessTokenError
-            if e.response_code == 400:
+            if original_error.response_code == 401:
+                raise InvalidAccessTokenError from original_error
+            if original_error.response_code == 400:
                 logger.warning("User not verified or other 400 error: %s", login)
-                raise NotVerifiedError
+                raise NotVerifiedError from original_error
             raise
 
     # def _get_required_action_description(self, action: str) -> str:

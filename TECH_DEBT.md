@@ -159,6 +159,25 @@ freedom_pay__CALLBACK_URL → https://api.aima.kz/payments/callback
 
 ## 🟡 Желательно
 
+### 7a. Email — заменить упоминания старого бренда в шаблонах писем
+
+**Сейчас в `src/clients/notification/templates/email_verification.html`:**
+- Заголовок: **«Lumi»** / **«Lumi App»**
+- Subject: **«Код подтверждения AIMA»** (это уже актуально, но шапка в письме всё ещё Lumi)
+- Support email: **`support@lumi-unt.kz`** (это домен Романа, нерабочий для нас)
+- Сайт: **`tesla-education.kz`** (тоже Романа)
+
+**Что заменить:**
+- Все упоминания `Lumi` → `AIMA`
+- `support@lumi-unt.kz` → `support@aima.kz`
+- `tesla-education.kz` → `aima.kz`
+
+⚠️ Параллельно нужно **завести почтовый ящик `support@aima.kz`** на хостере (через Hoster.kz — у пользователя `mail.aima.kz` MX уже настроен на хостер). Сам ящик создать в их панели управления почтой.
+
+Проверять при правке: `email_verification.html` — основной файл. Если будут добавлены другие шаблоны (`password_reset.html`, `subscription_expired.html` и т.д.) — пройти по всем.
+
+---
+
 ### 7. Email — переписать с SMTP на HTTP API сервис
 
 ⚠️ **Railway блокирует исходящий SMTP-трафик** (порты 25/465/587). Проверено 02.05.2026 с Gmail App Password — `OSError: [Errno 101] Network is unreachable` уже на этапе TCP-connect к `smtp.gmail.com`. Это политика большинства cloud-провайдеров против спама — изменить нельзя.

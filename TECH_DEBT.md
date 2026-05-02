@@ -1,9 +1,23 @@
 # Технический долг — AIMA Backend
 
-Документ описывает все шаги, необходимые для перевода backend из текущего «тестового» состояния (Railway, заглушки) в полноценный production. Создан после первого деплоя на Railway 01.05.2026.
+Документ описывает все шаги, необходимые для перевода backend из текущего «staging» состояния в полноценный production. Создан 01.05.2026, обновлён там же.
 
-**Текущий URL:** `https://backend-production-f2a1.up.railway.app`
-**Состояние:** API живой, миграции накатаны, но реальные интеграции не подключены — стоят заглушки `changeme` / `https://example.com`.
+**Состояние стека на сейчас:**
+- ✅ Backend, Admin, Postgres, Redis, **Keycloak**, **MinIO** — все подняты на Railway, Active.
+- ✅ Контент Романа залит из дампа: 12 предметов / 555 тем / 2821 вопрос.
+- ✅ Авторизация работает (Keycloak realm `lumi`).
+- ✅ Хранилище файлов работает (MinIO, через переписанный `FileService`).
+- ❌ Внешние интеграции: Firebase, Apple/Google OAuth, FreedomPay, SMTP/SMS/WhatsApp/Telegram — стоят заглушки. Без них приложение не сможет:
+  - регистрировать пользователей через email/SMS-коды,
+  - принимать оплату подписок,
+  - отправлять push,
+  - логиниться через Apple/Google.
+
+**URL'ы:**
+- Backend API: `https://backend-production-f2a1.up.railway.app/docs`
+- Admin Panel: `https://admin-production-4572.up.railway.app`
+- Keycloak: `https://keycloak-production-0a0c.up.railway.app`
+- MinIO Console: `https://minio-production-3f82.up.railway.app`
 
 ---
 
@@ -58,21 +72,16 @@ keycloak__open_id__CLIENT_SECRET_KEY → (реальный из Keycloak)
 
 ---
 
-### 2. MinIO / S3 (хранилище файлов)
+### 2. MinIO / S3 (хранилище файлов) ✅ ЗАКРЫТО (01.05.2026)
 
-**Сейчас:** `minio__endpoint=localhost:9000` — заглушка. Загрузка файлов и выдача media-URL не работают.
+**Статус:** работает. MinIO развёрнут на Railway с volume `/data`, bucket `aima-uploads` создан, отдельный service account с restricted policy. Backend подключён через приватную сеть `minio.railway.internal:9000`.
 
-**Варианты:**
-- Поднять MinIO на Railway: `+ New → Docker Image → minio/minio` с `server /data --console-address :9001`. Подключить volume.
-- Использовать AWS S3 / Cloudflare R2 / Backblaze B2 — `minio` SDK совместим с любым S3-API. Меняется endpoint и ключи.
+**Дополнительно:** оригинальный `FileService` Романа сохранял файлы на **локальный диск** контейнера через `open(file, "wb")` — на эфемерных контейнерах Railway это не работает. Переписан на `MediaStorageClientMinio.save()/link()/remove()`. Все аватары и subject-images теперь идут в S3-bucket. См. коммит `ecca173`.
 
-**Заменить:**
-```
-minio__endpoint    → minio.railway.internal:9000  (или s3.amazonaws.com / R2-endpoint)
-minio__access_key  → (реальный)
-minio__secret_key  → (реальный)
-minio__bucket      → aima-uploads  (создать руками)
-```
+**Остающиеся задачи перед прод-ready:**
+- Залить subject_images/* (10 файлов из `lumipack/subject_images/`) в bucket `aima-uploads/subjects/` через `mc.exe`.
+- Настроить регулярные бэкапы bucket (Railway не делает их автоматически для MinIO; либо переключиться на Cloudflare R2 / AWS S3, что уже не критично — код S3-агностичен).
+- Сменить дефолтный пароль `aima_admin / Aima2026MinioStrongPassXyz` на настоящий сильный.
 
 ---
 
@@ -342,42 +351,76 @@ pip install slowapi
 
 ## История фиксов
 
-Эти проблемы были обнаружены и исправлены при первом деплое на Railway. Записаны как факты — не как открытые задачи.
+Эти проблемы были обнаружены и исправлены при первом деплое на Railway. Записаны как факты — не как открытые задачи. Полный список см. в [CLAUDE.md → "Что было сломано"](./CLAUDE.md#что-было-сломано-в-исходном-репо-важно-при-отладке).
 
-### 1. Отсутствовал `requirements.txt`
-- В репозитории не было файла зависимостей: ни `requirements.txt`, ни секции `dependencies` в `pyproject.toml` (там только конфиги ruff/vulture).
-- Файл был сгенерирован вручную из импортов в `src/`.
-- Также в `.gitignore` стоял паттерн `*.txt`, из-за которого новый `requirements.txt` сначала не попадал в коммит. Добавлено исключение `!requirements.txt`.
-
-### 2. Dockerfile не собирал psycopg2
-- Не были установлены `gcc` и `libpq-dev` в builder-стадии.
-- Не был установлен `libpq5` в runtime-стадии.
-- Добавлены apt-пакеты, прописан `PYTHONPATH=/app/src`.
-
-### 3. PORT захардкожен в `src/main.py`
-- Было: `uvicorn.run(app, host="0.0.0.0", port=8000)` — игнорирует `$PORT` от Railway.
-- Стало: чтение `os.getenv("PORT", "8000")` + защита `if __name__ == "__main__"`.
-
-### 4. Отсутствовал `email-validator`
-- `KeycloakUserDTO` использует `pydantic.EmailStr`, который требует пакет `email-validator`.
-- В requirements не был указан. Добавлен `pydantic[email]==2.10.3` + `email-validator==2.2.0`.
-
-### 5. Миграция `fc858cd71edc_migration_fix.py` ломала схему
-- В функции `upgrade()` строки `op.add_column(...)` для колонок `guid`, `type`, `difficulty`, `question_type` были закомментированы, но связанные `op.create_unique_constraint(...)` оставались активными.
-- В результате UNIQUE-индексы пытались лечь на несуществующие колонки.
-- Раскомментированы 5 add_column для таблиц: `hints`, `questions` (×2), `subjects` (×2), `topics` (×2), `variants`.
-
-### 6. Миграция `420aa383195e_*.py` ссылалась на несуществующую колонку
-- FK `trainer_attempt_answers.student_guid → students.guid` — в таблице `students` нет колонки `guid` (PK называется `id`, см. модель `src/student/models.py`).
-- Заменено на `→ students.id`.
-
-### 7. Перенос с GitLab на GitHub
-- Репо изначально был у `romannvz/backend` на GitHub (с GitLab CI). Перенесён на `ppechkin574-art/backend` (`git push` со сменой remote, без переписывания истории — авторство коммитов сохранено за оригинальным автором).
-- Для CI/CD на GitHub нужно либо завести GitHub Actions, либо использовать встроенный Railway auto-deploy.
+Краткая сводка:
+1. **Сборка:** не было `requirements.txt`, в Dockerfile не было `gcc/libpq-dev/libpq5`, `main.py` хардкодил порт 8000.
+2. **Зависимости:** не было `email-validator` (хотя `KeycloakUserDTO` использует `EmailStr`).
+3. **Миграции:** `fc858cd71edc` создавала UNIQUE на закомментированных колонках; `420aa383195e` ссылалась на `students.guid` вместо `students.id`; наша миграция `d1f2a8c4e5a0` дублировала колонку из дампа.
+4. **DTO:** `KeycloakUserDTO.createdTimestamp/emailVerified/enabled` и `UserDTO.created_at/updated_at` были обязательными, но Keycloak/БД для realm-imported юзеров их не возвращали. Сделаны опциональными.
+5. **Apple OAuth клиент** синхронно читал `.p8` файл при init → краш если файла нет. Сделан ленивым.
+6. **CORSMiddleware** добавлялся первым (становился самым внутренним) → preflight OPTIONS падал 400. Перемещён в outermost + поддержка `allow_origin_regex` для wildcard.
+7. **FileService** сохранял на локальный диск контейнера → файлы пропадали на Railway. Переписан на MinIO через существующий `MediaStorageClientMinio`.
+8. **Redis-кеш** с TTL 7 дней содержал stale `data:[]` после массового изменения БД → questions/topics возвращали пусто. Добавлен `/admin/cache/flush` endpoint.
+9. **Перенос с GitLab на GitHub:** репо изначально был у `romannvz/backend` (с GitLab CI). Перенесён на `ppechkin574-art/backend` через `git push` со сменой remote, без переписывания истории.
 
 ---
 
 ## Дальнейшие шаги (roadmap)
+
+### ✅ Фаза 1 — Staging (закрыто 01.05.2026)
+
+- ✅ Backend живой на Railway (`backend-production-f2a1.up.railway.app`)
+- ✅ Postgres + Redis подключены
+- ✅ Миграции применены, все ~35 миграций накатаны
+- ✅ Контент Романа залит из дампа (12 предметов / 555 тем / 2821 вопрос)
+- ✅ Keycloak поднят, realm `lumi` импортирован, авторизация работает
+- ✅ MinIO поднят, bucket `aima-uploads` создан, FileService переписан на S3
+- ✅ Admin-панель развёрнута, видит весь контент
+- ✅ CORS, кеш-инвалидация, валидация Keycloak — всё починено
+
+### ⏳ Фаза 2 — Запуск мобильного приложения (следующий шаг)
+
+- ⏳ Подменить `Constants.baseUrl` во Flutter-приложении (`ppechkin574-art/app`) на `https://backend-production-f2a1.up.railway.app`.
+- ⏳ Запустить Pixel 7 эмулятор → `flutter run -d emulator-5554`.
+- ⏳ Проверить что приложение открывается, видит контент.
+- ⚠️ **Без SMS-провайдера** регистрация по номеру не пройдёт. Логин email/password может работать через Keycloak — проверить.
+
+### ⏳ Фаза 3 — Внешние интеграции для прод-фич
+
+В этом порядке (зависит от срочности):
+
+- ⏳ **Email + SMSC** (пп. 7-8) — нужны для регистрации/восстановления пароля.
+- ⏳ **Firebase** (п. 3) — push-уведомления о ежедневных тестах.
+- ⏳ **Google OAuth** (п. 5) — социальный логин для студентов.
+- ⏳ **Apple Sign-In** (п. 4) — обязателен для App Store при наличии других login-методов.
+- ⏳ **FreedomPay** (п. 6) — оплата подписок (требует юрлицо + договор).
+- ⏳ **Telegram-бот** (п. 10) — желателен для production-алертов backend.
+- ⏳ **Wazzup** (п. 9) — WhatsApp-уведомления (опционально).
+
+### ⏳ Фаза 4 — Прод-готовность инфраструктуры
+
+- ⏳ Кастомные домены (`api.aima.kz`, `admin.aima.kz`, `auth.aima.kz`).
+- ⏳ Закрыть public networking у Postgres (п. 21).
+- ⏳ Включить Postgres backups (п. 19).
+- ⏳ Sealed Variables для секретов (п. 22).
+- ⏳ Sentry + Grafana мониторинг (п. 20).
+- ⏳ Rate limiting через slowapi (п. 23).
+- ⏳ GitHub Actions CI (п. 25).
+- ⏳ Сменить все тестовые пароли (Keycloak admin, MinIO root, app admin).
+- ⏳ Email verification в Keycloak realm.
+
+### ⏳ Фаза 5 — Содержательное наполнение
+
+- ⏳ Залить subject_images/ (10 файлов из `lumipack/subject_images/`) в MinIO bucket `aima-uploads/subjects/`.
+- ⏳ Создать собственный Firebase-проект для AIMA (новый `lumi-XXXXX`).
+- ⏳ Настроить Apple Developer аккаунт + Service ID.
+- ⏳ Настроить Google Cloud OAuth Consent Screen + clients.
+
+---
+
+<details>
+<summary>Архив: первоначальный план (что планировалось до того как сделали)</summary>
 
 **Фаза 1 — увидеть продукт (текущая стадия):**
 - ✅ Backend живой на Railway
@@ -404,6 +447,8 @@ pip install slowapi
 - Закрыть CORS / публичный Postgres
 - Миграция на Sealed variables
 
+</details>
+
 ---
 
-_Документ создан 01.05.2026. Обновлять по мере прохождения roadmap._
+_Документ создан 01.05.2026. Последнее обновление — 01.05.2026 (после деплоя всех инфраструктурных сервисов и наката контента)._

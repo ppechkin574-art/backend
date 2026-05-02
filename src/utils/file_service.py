@@ -78,6 +78,9 @@ class FileService:
         """Presigned URL для отдачи аватара клиенту."""
         if not filename:
             return ""
+        # Если уже абсолютный URL (например, при миграции с другого хранилища) — отдаём как есть
+        if filename.startswith(("http://", "https://")):
+            return filename
         try:
             return self._storage.link(f"{self.AVATAR_PREFIX}/{self._extract_filename(filename)}")
         except MediaStorageError as e:
@@ -87,11 +90,18 @@ class FileService:
     def get_subject_image_url(self, image_path: str) -> str | None:
         """Presigned URL для отдачи картинки предмета.
 
-        Принимает либо имя файла (subject_xxx.jpg), либо устаревший относительный путь
-        вида /images/subjects/subject_xxx.jpg — для обратной совместимости с дампом БД.
+        Принимает:
+          - имя файла (subject_xxx.jpg) → генерируется presigned URL в S3
+          - устаревший относительный путь /images/subjects/foo.jpg → presigned по имени файла
+          - абсолютный URL (http(s)://...) → отдаётся как есть, без обращения к S3
+            (это нужно потому что в дампе БД у Романа image хранится как
+            "https://lumi-unt.kz/uploads/...", и каждый presigned-запрос
+            к MinIO в этом случае был бы лишним сетевым вызовом)
         """
         if not image_path:
             return None
+        if image_path.startswith(("http://", "https://")):
+            return image_path
         try:
             return self._storage.link(f"{self.SUBJECT_PREFIX}/{self._extract_filename(image_path)}")
         except MediaStorageError as e:

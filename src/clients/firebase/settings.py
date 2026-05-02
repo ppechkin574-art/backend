@@ -10,7 +10,14 @@ class FirebaseSettings(BaseModel):
     )
     credentials_path: str | None = Field(
         default=None,
-        description="Путь к сервисному ключу Firebase",
+        description="Путь к сервисному ключу Firebase (legacy, через volume-файл)",
+    )
+    credentials_json: str | None = Field(
+        default=None,
+        description=(
+            "Service-account ключ inline. Принимает либо сырой JSON, либо base64-кодированный JSON. "
+            "Прод-friendly способ хранения секрета: положить в переменную окружения, не в volume-файл."
+        ),
     )
     default_title: str = Field(
         default="Новые ежедневные задания уже ждут тебя!",

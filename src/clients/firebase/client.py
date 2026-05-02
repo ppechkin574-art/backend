@@ -1,3 +1,6 @@
+import base64
+import binascii
+import json
 import logging
 import threading
 from collections.abc import Iterable, Sequence
@@ -36,10 +39,46 @@ class FirebaseNotificationClient:
 
     @property
     def enabled(self) -> bool:
-        return self._settings.enabled and bool(self._settings.credentials_path)
+        return self._settings.enabled and bool(
+            self._settings.credentials_json or self._settings.credentials_path
+        )
+
+    def _build_credentials(self) -> credentials.Certificate:
+        """Сборка Firebase credentials из inline JSON (приоритет) или файла на диске.
+
+        Inline JSON может быть как сырым JSON-объектом, так и base64-кодированной строкой —
+        второе удобнее для хранения в env-переменных (одна строка, без проблем с переносами).
+        """
+        raw = self._settings.credentials_json
+        if raw:
+            data = self._decode_credentials_json(raw)
+            return credentials.Certificate(data)
+
+        if not self._settings.credentials_path:
+            raise ValueError(
+                "Firebase: ни credentials_json, ни credentials_path не заданы"
+            )
+        return credentials.Certificate(self._settings.credentials_path)
+
+    @staticmethod
+    def _decode_credentials_json(raw: str) -> dict:
+        stripped = raw.strip()
+        # Первая попытка — сырой JSON
+        if stripped.startswith("{"):
+            return json.loads(stripped)
+        # Вторая попытка — base64
+        try:
+            decoded = base64.b64decode(stripped, validate=True).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError) as e:
+            raise ValueError(
+                "firebase__credentials_json должен быть либо JSON-объектом, либо base64-строкой"
+            ) from e
+        return json.loads(decoded)
 
     def _ensure_app(self) -> None:
-        if self._app or not self._settings.credentials_path:
+        if self._app:
+            return
+        if not self._settings.credentials_json and not self._settings.credentials_path:
             return
 
         with self._lock:
@@ -47,22 +86,23 @@ class FirebaseNotificationClient:
                 return
 
             try:
-                
-                # return
-                cred = credentials.Certificate(self._settings.credentials_path)
+                cred = self._build_credentials()
             except FileNotFoundError as exc:
                 logger.exception(
                     "Firebase credentials file not found: %s",
                     self._settings.credentials_path,
                 )
                 raise exc
+            except (ValueError, json.JSONDecodeError) as exc:
+                logger.exception("Firebase credentials parse error: %s", exc)
+                raise
 
             try:
                 self._app = firebase_admin.get_app()
                 logger.debug("Reusing existing Firebase app")
             except ValueError:
                 self._app = firebase_admin.initialize_app(cred)
-                logger.info("Firebase app initialized")
+                logger.info("Firebase app initialized for project")
 
     def send_multicast(
         self,

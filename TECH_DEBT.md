@@ -159,15 +159,54 @@ freedom_pay__CALLBACK_URL → https://api.aima.kz/payments/callback
 
 ## 🟡 Желательно
 
-### 7. Email (рассылка кодов подтверждения, паролей)
+### 7. Email — переписать с SMTP на HTTP API сервис
 
-**Заменить:**
+⚠️ **Railway блокирует исходящий SMTP-трафик** (порты 25/465/587). Проверено 02.05.2026 с Gmail App Password — `OSError: [Errno 101] Network is unreachable` уже на этапе TCP-connect к `smtp.gmail.com`. Это политика большинства cloud-провайдеров против спама — изменить нельзя.
+
+**Что нужно сделать:**
+
+1. **Завести аккаунт в HTTP-email-сервисе.** Бесплатные варианты по убыванию лимита:
+   - **Resend** — 3000 писем/мес, https://resend.com
+   - **Brevo (бывший Sendinblue)** — 300 писем/день, https://brevo.com
+   - **SendGrid** — 100 писем/день, https://sendgrid.com
+   - **Postmark** — 100 писем/мес trial
+   - **Mailgun** — 100 писем/день в sandbox
+
+2. **Получить API key.**
+
+3. **Переписать `src/clients/notification/client.py.NotificationClientEmail`** с `smtplib` на HTTP-вызов через `httpx`/`requests`. Например для Resend:
+   ```python
+   httpx.post("https://api.resend.com/emails",
+              headers={"Authorization": f"Bearer {api_key}"},
+              json={"from": from_addr, "to": [to_addr], "subject": subject, "html": body})
+   ```
+
+4. **Заменить переменные:**
+   ```
+   email_client__API_KEY     → re_xxxxxxx (Resend) или аналог
+   email_client__FROM_EMAIL  → noreply@aima.kz
+   email_client__PROVIDER    → resend (или brevo/sendgrid)
+   ```
+
+5. **Удалить** `email_client__SMTP_SERVER`, `email_client__PORT`, `email_client__PASSWORD` — больше не нужны.
+
+**Текущий fallback:** при провале отправки backend пишет в Deploy Logs `КОД ДЛЯ РАЗРАБОТКИ: NNNNNN`. Это позволяет тестировать регистрацию читая код из логов, но **в production этот fallback нужно убрать** (security: не светить код в логах).
+
+<details>
+<summary>Изначальный план (не работает на Railway)</summary>
+
 ```
 email_client__EMAIL       → noreply@aima.kz
 email_client__PASSWORD    → app-password (для Gmail — App Password из Google Account → Security → 2-step → App passwords)
 email_client__SMTP_SERVER → smtp.gmail.com
 email_client__PORT        → 587
 ```
+
+При попытке отправить через Gmail App Password (`oxybcecrgnrjnfga`) backend получил `Network is unreachable` — Railway не пропускает SMTP-пакеты наружу. Любой SMTP-сервис будет давать тот же эффект.
+
+</details>
+
+---
 
 ---
 

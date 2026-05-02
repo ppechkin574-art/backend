@@ -136,14 +136,14 @@ class SMSCClient:
                 logger.info(
                     "SMS DEBUG - Simulated send to %s (ID: %s)",
                     phone,
-                    result["id", "N/A"],
+                    result.get("id", "N/A"),
                 )
             else:
                 logger.info(
                     "SMS sent successfully to %s (ID: %s, Cost: %s KZT)",
                     phone,
-                    result["id", "N/A"],
-                    result["cost", "N/A"],
+                    result.get("id", "N/A"),
+                    result.get("cost", "N/A"),
                 )
 
             return result

@@ -1,10 +1,7 @@
 import logging
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.utils import formatdate
 from typing import Protocol
 
+import httpx
 import requests
 
 from clients.notification.dtos import (
@@ -36,82 +33,90 @@ class NotificationClientInterface(Protocol):
         raise NotImplementedError
 
 
-class PersonalGmailClient:
-    """Клиент для отправки через Gmail"""
+class ResendEmailClient:
+    """Клиент для отправки email через Resend HTTP API.
+
+    Заменил собой старый SMTP-клиент (PersonalGmailClient), потому что Railway и
+    большинство cloud-провайдеров блокируют исходящий SMTP-трафик (порты 25/465/587).
+    """
+
+    API_URL = "https://api.resend.com/emails"
+    REQUEST_TIMEOUT_SECONDS = 15
 
     def __init__(self, email_settings: EmailClientSettings):
-        self.email = email_settings.email
-        self.password = email_settings.password
-        self.smtp_server = email_settings.smtp_server
-        self.port = email_settings.port
+        if not email_settings.api_key:
+            raise ValueError("Resend API key must be provided (email_client__API_KEY)")
+
+        self.api_key = email_settings.api_key
+        self.from_email = email_settings.from_email
+        self.from_name = email_settings.from_name
         self.template_loader = TemplateLoader()
 
-        if not self.email or not self.password:
-            raise ValueError("Email and password must be provided")
-
-        logger.info("EmailClient initialized for %s", self.email)
+        logger.info("ResendEmailClient initialized (from=%s)", self.from_email)
 
     def send_email(self, email_dto: EmailMessageDTO) -> None:
+        html_content = self.template_loader.render_template(
+            "email_verification", verification_code=email_dto.message
+        )
+
+        text_content = (
+            f"Код подтверждения AIMA: {email_dto.message}\n\n"
+            "Введите этот код для завершения регистрации.\n"
+            "Код действителен в течение 1 часа.\n\n"
+            "Если вы не запрашивали регистрацию, проигнорируйте это письмо.\n\n"
+            "Команда AIMA"
+        )
+
+        payload = {
+            "from": f"{self.from_name} <{self.from_email}>",
+            "to": [email_dto.to],
+            "subject": email_dto.subject,
+            "html": html_content,
+            "text": text_content,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
         try:
-            msg = MIMEMultipart()
-            msg["From"] = f"Lumi <{self.email}>"
-            msg["To"] = email_dto.to
-            msg["Subject"] = email_dto.subject
-            msg["Date"] = formatdate(localtime=True)
-
-            # 🔧 antispam headers
-            msg["X-Priority"] = "1"
-            msg["X-Mailer"] = "Lumi Mail System"
-            msg["X-Auto-Response-Suppress"] = "OOF, AutoReply"
-            msg["Precedence"] = "bulk"
-            msg["Auto-Submitted"] = "auto-generated"
-
-            html_content = self.template_loader.render_template(
-                "email_verification", verification_code=email_dto.message
+            response = httpx.post(
+                self.API_URL, headers=headers, json=payload, timeout=self.REQUEST_TIMEOUT_SECONDS
             )
-
-            msg.attach(MIMEText(html_content, "html"))
-
-            # alternative (fallback)
-            text_content = f"""
-                Код подтверждения Lumi: {email_dto.message}
-
-                Введите этот код для завершения регистрации.
-                Код действителен в течение 1 часа.
-
-                Если вы не запрашивали регистрацию, проигнорируйте это письмо.
-
-                С уважением,
-                Команда Lumi App
-                support@lumi-unt.kz
-                """
-            msg.attach(MIMEText(text_content, "plain"))
-
-            with smtplib.SMTP_SSL(self.smtp_server, self.port) as server:
-                server.login(self.email, self.password)
-                server.send_message(msg)
-
-            logger.info("Email sent successfully to %s", email_dto.to)
-
-        except Exception as e:
-            logger.exception("Failed to send email to %s: %s", email_dto.to, e)
+        except httpx.HTTPError as e:
+            logger.exception("Resend HTTP error sending to %s: %s", email_dto.to, e)
             raise
+
+        if response.status_code >= 400:
+            logger.error(
+                "Resend rejected message to %s: HTTP %s — %s",
+                email_dto.to,
+                response.status_code,
+                response.text,
+            )
+            response.raise_for_status()
+
+        logger.info("Email sent successfully to %s (resend id=%s)", email_dto.to, response.json().get("id"))
+
+
+# Алиас для обратной совместимости — старое имя класса
+PersonalGmailClient = ResendEmailClient
 
 
 class NotificationClientEmail:
-    """Клиент для отправки email уведомлений"""
+    """Клиент для отправки email уведомлений (через Resend)"""
 
     def __init__(self, email_settings: EmailClientSettings):
-        self.email_client = PersonalGmailClient(email_settings)
+        self.email_client = ResendEmailClient(email_settings)
         logger.info("NotificationClientEmail initialized")
 
     def notify(self, message: NotificationMessageDTO) -> None:
         code = message.message.split(": ")[-1] if ": " in message.message else message.message
         email_dto = EmailMessageDTO(
             to=message.to,
-            subject="Your Lumi Verification Code",
+            subject="Код подтверждения AIMA",
             message=code,
-            from_email=self.email_client.email,
+            from_email=self.email_client.from_email,
         )
 
         try:

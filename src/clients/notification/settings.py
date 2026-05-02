@@ -7,10 +7,15 @@ class TelegramBotSettings(BaseSettings):
 
 
 class EmailClientSettings(BaseSettings):
-    email: str
-    password: str
-    smtp_server: str = "smtp.gmail.com"
-    port: int = 587
+    """Resend HTTP API настройки.
+
+    Используется HTTP API вместо SMTP, потому что Railway (и большинство cloud-провайдеров)
+    блокируют исходящий SMTP-трафик. См. TECH_DEBT.md п. 7.
+    """
+
+    api_key: str
+    from_email: str = "onboarding@resend.dev"
+    from_name: str = "AIMA"
 
 
 class SMSCSettings(BaseSettings):

@@ -71,23 +71,44 @@
 
 | Интеграция | Статус | Причина |
 |---|---|---|
+| ✅ **Email (Resend)** | **Подключено**, отправка с `noreply@aima.kz`, домен Verified | API key `re_6FFUejgK_...` в Railway. Шаблон письма ещё содержит брендинг Lumi — фикс в TECH_DEBT 7a |
+| ✅ **SMS (SMSC.kz)** | **Подключено**, в DEBUG-режиме (бесплатно, код пишется в Deploy Logs) | Login `aima_app`, отдельный API-пароль. Для прода — пополнить баланс + снять `SMSC__DEBUG=true` + зарегистрировать sender `AIMA` |
 | Firebase Cloud Messaging | ❌ `firebase__enabled=false` | Нет credentials JSON в volume |
 | Apple Sign-In | ❌ заглушки | Нет `.p8` ключа от Apple Developer |
 | Google OAuth | ❌ `changeme` | Нет client_id/secret из Google Cloud Console |
 | FreedomPay | ❌ `merchant_id=000000`, `secret=changeme` | Нет договора с банком |
-| Email (Gmail SMTP) | ❌ `noreply@example.com` | Нет рабочего почтового ящика |
-| SMSC (SMS) | ❌ `changeme` | Нет аккаунта smsc.kz |
 | Wazzup (WhatsApp) | ❌ `changeme` | Нет API-ключа |
 | Telegram-бот для алёртов | ❌ `changeme` | Нет токена @BotFather |
 | Cloudflare CDN | ❌ `changeme` | Не используется |
 
+### Email — почему Resend, а не Gmail
+
+**Railway блокирует исходящий SMTP-трафик** (порты 25/465/587). Любой SMTP-клиент будет получать `OSError: [Errno 101] Network is unreachable`. Это политика большинства cloud-провайдеров против спама — изменить нельзя.
+
+Решение: **HTTP API сервис** вместо SMTP. Выбран **Resend** (3000 писем/мес бесплатно). Старый `PersonalGmailClient` через `smtplib.SMTP_SSL` переписан на `ResendEmailClient` через `httpx.post(api.resend.com/emails)`. Алиас `PersonalGmailClient = ResendEmailClient` сохранён для backward compat. См. коммит `a181b41`.
+
+**Domain setup:** в Resend Dashboard добавлен `aima.kz` (root domain). DNS-записи (DKIM TXT на `resend._domainkey.aima.kz`, SPF TXT на `send`, MX на `send`) добавлены в Hoster.kz. Verified за 5 минут. Поддомен `send.aima.kz` нужен для bounce-обработки, но FROM шлётся с **`noreply@aima.kz`** (главный домен — там DKIM-ключ).
+
+### SMS — почему SMSC.kz
+
+Изначально в коде Романа клиент `SMSCClient` ходит на `https://smsc.kz/rest/`. Не альтернатива — встроенный выбор. Разумный для KZ-рынка:
+- Местный провайдер с прямыми контрактами с Beeline/Kcell/Tele2/Activ.
+- Цена ~5-8 ₸/SMS (vs ~32 ₸ через Twilio).
+- Регистрация Sender ID `AIMA` за 1-3 дня (Twilio требует Brand registration $40 + 4-6 недель).
+- Документация на русском.
+
+Минусы: дешёвая надёжность (~95% доставка, бывают потери), нет WhatsApp. На проде когда выйдем за пределы KZ — стоит мигрировать на Twilio (записал в TECH_DEBT).
+
 ### Тестовые креды
 
 - **Keycloak admin** (для самого Keycloak): `admin` / `<KEYCLOAK_ADMIN_PASSWORD>` (в Variables сервиса `keycloak`).
-- **App admin** (для backend/admin-panel): `admin@aima.kz` / `ChangeMeAdmin123!` (temporary; при первом логине через Account Console попросит сменить).
+- **App admin** (для backend/admin-panel через Keycloak realm `lumi`): `admin@aima.kz` / `ChangeMeAdmin123!` (temporary; при первом логине через Account Console попросит сменить).
+- **Mobile test user** (Keycloak realm `lumi`): `+77001234567` / `Test12345!` — для логина по номеру в Flutter-приложении.
 - **MinIO Console root**: `aima_admin` / `Aima2026MinioStrongPassXyz`.
 - **MinIO Service Account для backend** (используется в env): Access Key `8DIGUUC4A3ZZTTFNDTV1`, Secret Key хранится в Railway Variables `minio__secret_key`.
 - **Postgres** для backend: connection string в `${{Postgres.DATABASE_URL}}` (внутр.) или `DATABASE_PUBLIC_URL` (публ., через `switchyard.proxy.rlwy.net`).
+- **Resend API**: `re_6FFUejgK_5yL5eP3GMDRMBeZJUFzRurut` (в `email_client__API_KEY`). Привязан к `ppechkin574@gmail.com`. Domain `aima.kz` Verified. Регион Tokyo (ap-northeast-1).
+- **SMSC.kz**: `aima_app` / отдельный API-пароль `b2F9b7H3a5K0x1W0`. Sender пока `SMSC.KZ` (стандартный, для прода зарегистрировать `AIMA`). Баланс 0 ₸ — реальные SMS не уходят, только DEBUG-симуляция.
 
 ### Структура проекта в Railway
 
@@ -160,6 +181,14 @@ content-inspiration / production
 | Проблема | Файл | Коммит фикса |
 |---|---|---|
 | Redis-кеш с TTL 7 дней содержал stale `data:[]` после массового изменения БД (накат дампа) → questions/topics возвращали пусто | добавил `POST /admin/cache/flush` и `POST /admin/cache/invalidate` | `a998c9d` |
+
+### Email и SMS интеграции
+
+| Проблема | Файл | Коммит фикса |
+|---|---|---|
+| Изначальный `PersonalGmailClient` через `smtplib.SMTP_SSL` не работает на Railway (cloud-провайдеры блокируют исходящий SMTP) | переписал на `ResendEmailClient` через HTTP API `httpx.post(api.resend.com)` | `a181b41` |
+| После замены `EmailClientSettings` старые SMTP-переменные в env (`SMTP_SERVER`, `PASSWORD`, `PORT`, `EMAIL`) роняли pydantic с `Extra inputs are not permitted` | добавил `model_config = SettingsConfigDict(extra="ignore")` | `b3116ac` |
+| В `sms_client.py` Романа было `result["id", "N/A"]` — это передаёт **tuple** как ключ → `KeyError` даже в DEBUG-режиме | заменил на `result.get("id", "N/A")` (2 места) | `ef5101c` |
 
 ### Накат контента из дампа Романа
 

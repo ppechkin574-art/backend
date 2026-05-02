@@ -178,60 +178,91 @@ freedom_pay__CALLBACK_URL → https://api.aima.kz/payments/callback
 
 ---
 
-### 7. Email — переписать с SMTP на HTTP API сервис
+### 7. Email ✅ ПОДКЛЮЧЕНО (Resend, 02.05.2026)
 
-⚠️ **Railway блокирует исходящий SMTP-трафик** (порты 25/465/587). Проверено 02.05.2026 с Gmail App Password — `OSError: [Errno 101] Network is unreachable` уже на этапе TCP-connect к `smtp.gmail.com`. Это политика большинства cloud-провайдеров против спама — изменить нельзя.
+**Статус:** работает в production-режиме.
 
-**Что нужно сделать:**
+- **Сервис:** Resend (HTTP API), 3000 писем/мес бесплатно.
+- **Регион:** Tokyo (ap-northeast-1) — изначально выбран (можно сменить на Frankfurt позже).
+- **Domain:** `aima.kz` (root) — Verified. DKIM-ключ на `resend._domainkey.aima.kz`, SPF и MX для bounces на `send.aima.kz`. DNS добавлены в Hoster.kz, верификация прошла за 5 минут.
+- **From:** `AIMA <noreply@aima.kz>` — письма попадают в Inbox без Spam.
+- **Код переписан:** `src/clients/notification/client.py` — был `PersonalGmailClient` через `smtplib.SMTP_SSL`, стал `ResendEmailClient` через `httpx.post(api.resend.com/emails)`. Алиас сохранён для backward compat. См. коммиты `a181b41` (Resend), `b3116ac` (extra="ignore" в Settings).
+- **Переменные в Railway:** `email_client__API_KEY`, `email_client__FROM_EMAIL=noreply@aima.kz`, `email_client__FROM_NAME=AIMA`. Старые SMTP-переменные удалены.
 
-1. **Завести аккаунт в HTTP-email-сервисе.** Бесплатные варианты по убыванию лимита:
-   - **Resend** — 3000 писем/мес, https://resend.com
-   - **Brevo (бывший Sendinblue)** — 300 писем/день, https://brevo.com
-   - **SendGrid** — 100 писем/день, https://sendgrid.com
-   - **Postmark** — 100 писем/мес trial
-   - **Mailgun** — 100 писем/день в sandbox
+**Почему не Gmail SMTP:** Railway блокирует исходящий SMTP-трафик (порты 25/465/587). Проверено 02.05.2026: `OSError: [Errno 101] Network is unreachable` уже на этапе TCP-connect к `smtp.gmail.com`. Это политика большинства cloud-провайдеров против спама — изменить нельзя.
 
-2. **Получить API key.**
+**Остающиеся задачи перед прод-релизом:**
+- Поправить шаблон `email_verification.html` (см. п. 7a — `Lumi` → `AIMA`, `support@lumi-unt.kz` → `support@aima.kz`).
+- Завести почтовый ящик `support@aima.kz` на хостере (MX `mail.aima.kz` уже настроен).
+- Когда счётчик 3000/мес превысит — перейти на платный тариф Resend ($20/мес за 50k писем) или мигрировать.
+- Убрать fallback с печатью кода в Deploy Logs (security: на проде не должно светиться).
 
-3. **Переписать `src/clients/notification/client.py.NotificationClientEmail`** с `smtplib` на HTTP-вызов через `httpx`/`requests`. Например для Resend:
-   ```python
-   httpx.post("https://api.resend.com/emails",
-              headers={"Authorization": f"Bearer {api_key}"},
-              json={"from": from_addr, "to": [to_addr], "subject": subject, "html": body})
+---
+
+### 7a. Шаблоны писем — заменить упоминания Lumi на AIMA
+
+В `src/clients/notification/templates/email_verification.html` остались:
+- Заголовок `Lumi` → нужно `AIMA`
+- `support@lumi-unt.kz` → `support@aima.kz`
+- `tesla-education.kz` → `aima.kz`
+
+Параллельно завести почтовый ящик `support@aima.kz` на хостере (через панель Hoster.kz — MX уже настроен).
+
+---
+
+### 8. SMSC.kz ✅ ПОДКЛЮЧЕНО в DEBUG (02.05.2026), осталось пополнить баланс для прода
+
+**Статус:** код связи backend ↔ SMSC работает, в DEBUG-режиме коды симулируются и пишутся в Deploy Logs. Для реальной отправки нужны 3 шага (минимум 30 минут).
+
+**Что сделано:**
+- Зарегистрирован аккаунт SMSC.kz: login `aima_app`, привязан к `ppechkin574@gmail.com`.
+- Создан отдельный API-пароль (тип «API HTTP/S, SOAP, SMTP») — `b2F9b7H3a5K0x1W0`. Это безопаснее чем использовать пароль от ЛК.
+- Переменные в Railway: `SMSC__LOGIN=aima_app`, `SMSC__KEY=b2F9b7H3a5K0x1W0`, `SMSC__SENDER=SMSC.KZ`, `SMSC__DEBUG=true`.
+- Поправлен баг Романа в `sms_client.py`: `result["id", "N/A"]` (передавало tuple как ключ) заменено на `result.get("id", "N/A")`. См. коммит `ef5101c`.
+- Тестовый запрос проходит за ~1.5 сек, код виден в Deploy Logs (`SMSC DEBUG - Simulation: ... -> Код подтверждения: NNNNNN`).
+
+**Почему именно SMSC.kz:** изначально в коде Романа клиент `SMSCClient` ходит на `https://smsc.kz/rest/`. Подходит для KZ-рынка: прямые контракты с местными операторами, цена ~5-8 ₸/SMS (vs ~32 ₸ через Twilio), регистрация Sender ID `AIMA` за 1-3 дня (Twilio требует Brand Registration $40 + 4-6 недель), документация на русском.
+
+**Минусы SMSC.kz:** ниже надёжность доставки (~95% vs ~99.9% у Twilio), нет WhatsApp-канала. На проде, когда выйдем за пределы KZ, стоит **рассмотреть миграцию на Twilio** — это отдельный пункт.
+
+**Перед выходом в production надо:**
+
+1. **Пополнить баланс SMSC** в личном кабинете (минимум 1000 ₸ ≈ 150 SMS, лучше 5000 ₸).
+   - Без баланса даже DEBUG-симуляция на стороне SMSC не пройдёт (SMSC в test-режиме всё равно требует ненулевой баланс для авторизации).
+   - В нашем DEBUG-режиме (через `SMSC__DEBUG=true`) backend вообще не зовёт SMSC API, поэтому работает с любым балансом — но это не для прода.
+
+2. **Зарегистрировать имя отправителя `AIMA`** в SMSC ЛК → `Имена отправителей` → загрузить документы ИП/ТОО (свидетельство о регистрации, минимум). Модерация 1-3 рабочих дня. Без этого SMS приходят от стандартного `SMSC.KZ` или `SMS-CENTRE` — для прода непрофессионально.
+
+3. **Снять галочку «Режим тестирования»** в SMSC → Настройки → API/SMPP. Иначе SMS уходят в виртуальную отправку без оплаты, но реально не доставляются.
+
+4. **Переключить в Railway:**
+   ```
+   SMSC__DEBUG=false
+   SMSC__SENDER=AIMA  (после одобрения модерации)
    ```
 
-4. **Заменить переменные:**
-   ```
-   email_client__API_KEY     → re_xxxxxxx (Resend) или аналог
-   email_client__FROM_EMAIL  → noreply@aima.kz
-   email_client__PROVIDER    → resend (или brevo/sendgrid)
-   ```
+5. **Опционально — IP whitelist:** в SMSC → Настройки → Доступ → Адреса для доступа добавить outbound IP Railway. Усиливает безопасность (если API-пароль утечёт через утечку логов, никто не сможет использовать его с другого IP).
 
-5. **Удалить** `email_client__SMTP_SERVER`, `email_client__PORT`, `email_client__PASSWORD` — больше не нужны.
+6. **Опционально — webhook для статусов:** в SMSC → Настройки → API/SMPP → URL для ответов и статусов прописать `https://backend-production-f2a1.up.railway.app/auth/sms/status`. Это позволит backend отслеживать доставку (доставлено / абонент недоступен / отказ оператора). Сейчас эта фича отключена.
 
-**Текущий fallback:** при провале отправки backend пишет в Deploy Logs `КОД ДЛЯ РАЗРАБОТКИ: NNNNNN`. Это позволяет тестировать регистрацию читая код из логов, но **в production этот fallback нужно убрать** (security: не светить код в логах).
+---
 
+### 8a. Миграция на Twilio (рассмотреть когда выйдем за пределы KZ)
+
+SMSC покрывает только Казахстан и СНГ. Если AIMA будет работать в РФ, других странах СНГ или дальше — нужно дополнить или заменить на Twilio:
+- Глобальное покрытие (200+ стран).
+- 99.9%+ доставка.
+- WhatsApp / Voice / MMS поддерживаются.
+- Дороже (~$0.07/SMS = ~32 ₸).
+- Требует Brand Registration в США (~$40 + 4-6 недель модерации).
+
+Реализация: новый `TwilioSMSClient` параллельно с `SMSCClient`, абстракция `SMSClientInterface`, выбор провайдера через `SMS_PROVIDER=smsc|twilio` в env.
+
+---
+
+<!-- Legacy section moved into п.8 above -->
 <details>
-<summary>Изначальный план (не работает на Railway)</summary>
-
-```
-email_client__EMAIL       → noreply@aima.kz
-email_client__PASSWORD    → app-password (для Gmail — App Password из Google Account → Security → 2-step → App passwords)
-email_client__SMTP_SERVER → smtp.gmail.com
-email_client__PORT        → 587
-```
-
-При попытке отправить через Gmail App Password (`oxybcecrgnrjnfga`) backend получил `Network is unreachable` — Railway не пропускает SMTP-пакеты наружу. Любой SMTP-сервис будет давать тот же эффект.
-
-</details>
-
----
-
----
-
-### 8. SMSC (SMS-коды)
-
-smsc.kz/smsc.ru — зарегистрировать аккаунт, получить логин и API-key.
+<summary>Изначальный краткий план SMSC (до интеграции)</summary>
 
 ```
 SMSC__LOGIN  → (реальный)
@@ -468,24 +499,29 @@ pip install slowapi
 - ✅ Admin-панель развёрнута, видит весь контент
 - ✅ CORS, кеш-инвалидация, валидация Keycloak — всё починено
 
-### ⏳ Фаза 2 — Запуск мобильного приложения (следующий шаг)
+### ✅ Фаза 2 — Smoke мобильного приложения (закрыто 02.05.2026)
 
-- ⏳ Подменить `Constants.baseUrl` во Flutter-приложении (`ppechkin574-art/app`) на `https://backend-production-f2a1.up.railway.app`.
-- ⏳ Запустить Pixel 7 эмулятор → `flutter run -d emulator-5554`.
-- ⏳ Проверить что приложение открывается, видит контент.
-- ⚠️ **Без SMS-провайдера** регистрация по номеру не пройдёт. Логин email/password может работать через Keycloak — проверить.
+- ✅ `Constants.baseUrl` подменён на `https://backend-production-f2a1.up.railway.app` (коммит `a3c5583` в `ppechkin574-art/app`).
+- ✅ Android-эмулятор Pixel 7 + Flutter `flutter run -d emulator-5554` собрался (потребовалось почистить `.gradle/caches`, переустановить NDK).
+- ✅ Приложение открылось, экран «Добро пожаловать!», login по номеру `+77001234567` / `Test12345!` (тестовый юзер в Keycloak realm `lumi`) → главный экран с реальными предметами Романа.
+- ✅ Связка Flutter → Backend → Postgres → Keycloak работает.
+- ✅ Попутно поправлен медленный `/user/subjects` (FileService для абсолютных URL не зовёт MinIO presigned, см. коммит `af8d09a`).
 
-### ⏳ Фаза 3 — Внешние интеграции для прод-фич
+### ✅ Фаза 3 (часть) — Email + SMS подключены (02.05.2026)
 
-В этом порядке (зависит от срочности):
+- ✅ **Resend** для email — отправка с `noreply@aima.kz`, домен Verified, см. п. 7.
+- ✅ **SMSC.kz** для SMS — DEBUG-режим работает, перед прод-релизом нужно пополнить баланс и зарегистрировать `AIMA` sender, см. п. 8.
 
-- ⏳ **Email + SMSC** (пп. 7-8) — нужны для регистрации/восстановления пароля.
-- ⏳ **Firebase** (п. 3) — push-уведомления о ежедневных тестах.
-- ⏳ **Google OAuth** (п. 5) — социальный логин для студентов.
+### ⏳ Фаза 3 (продолжение) — Остальные внешние интеграции
+
+В порядке приоритета:
+
+- ⏳ **Firebase** (п. 3) — push-уведомления (ежедневные тесты, новости).
+- ⏳ **Google OAuth** (п. 5) — социальный логин для студентов через Flutter.
 - ⏳ **Apple Sign-In** (п. 4) — обязателен для App Store при наличии других login-методов.
-- ⏳ **FreedomPay** (п. 6) — оплата подписок (требует юрлицо + договор).
-- ⏳ **Telegram-бот** (п. 10) — желателен для production-алертов backend.
-- ⏳ **Wazzup** (п. 9) — WhatsApp-уведомления (опционально).
+- ⏳ **FreedomPay** (п. 6) — оплата подписок (требует юрлицо + договор, 1-2 недели).
+- ⏳ **Telegram-бот для алёртов** (п. 10) — уведомления админам о падениях.
+- ⏳ **Wazzup** (п. 9) — WhatsApp-уведомления (опционально, как fallback к SMS).
 
 ### ⏳ Фаза 4 — Прод-готовность инфраструктуры
 

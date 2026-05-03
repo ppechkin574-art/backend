@@ -1,0 +1,73 @@
+stages:
+  - lint
+  - test
+  - build
+  - deploy
+
+variables:
+  DOCKER_DRIVER: overlay2
+  DOCKER_TLS_CERTDIR: ""
+  CI_REGISTRY_IMAGE: $CI_REGISTRY/$CI_PROJECT_PATH
+
+cache:
+  paths:
+    - .cache/pip
+
+before_script:
+  - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+
+lint:
+  stage: lint
+  image: python:3.13-slim
+  before_script:
+    - pip install ruff
+  script:
+    - ruff check .
+    - ruff format --check .
+  only:
+    - master
+    - merge_requests
+
+safety:
+  stage: test
+  image: python:3.13-slim
+  before_script:
+    - pip install pip-audit
+  script:
+    - pip-audit -r requirements.txt
+  only:
+    - master
+    - merge_requests
+
+build:
+  stage: build
+  script:
+    - export DOCKER_BUILDKIT=1
+    - docker build --cache-from $CI_REGISTRY_IMAGE:latest -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+    - |
+      if [ "$CI_COMMIT_BRANCH" == "master" ]; then
+        docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA $CI_REGISTRY_IMAGE:latest
+        docker push $CI_REGISTRY_IMAGE:latest
+      fi
+  only:
+    - master
+
+deploy:
+  stage: deploy
+  script:
+    - docker stop $CI_PROJECT_NAME || true
+    - docker rm $CI_PROJECT_NAME || true
+    - printenv | grep -vE '^CI_|^GITLAB_' | grep '=' > .env.runtime
+    - >
+      docker run -d
+      --env-file .env.runtime
+      --name $CI_PROJECT_NAME
+      -p 8000:8000
+      -v /var/www/lumi/uploads:/app/uploads
+      -v /var/www/lumi/secrets/apple_private_key.p8:/app/secrets/apple_private_key.p8:ro
+      -v /var/www/lumi/secrets/firebase_credentials.json:/app/secrets/firebase_credentials.json:ro
+      $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+  only:
+    - master
+  environment: production

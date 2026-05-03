@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="format-detection" content="telephone=no">
+    <meta name="x-apple-disable-message-reformatting">
+    <title>Lumi App - Код подтверждения</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        .email-container {
+            max-width: 600px;
+            width: 100%;
+            margin: 0 auto;
+        }
+
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #1a73e8 0%, #0d47a1 100%);
+            padding: 40px 30px;
+            text-align: center;
+            color: white;
+        }
+
+        .logo {
+            font-size: 36px;
+            font-weight: bold;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            opacity: 0.9;
+            font-size: 18px;
+        }
+
+        .content {
+            padding: 50px;
+            text-align: center;
+        }
+
+        .greeting {
+            color: #333;
+            font-size: 20px;
+            margin-bottom: 30px;
+            line-height: 1.6;
+        }
+
+        .code-container {
+            background: #f8f9fa;
+            border-radius: 15px;
+            padding: 35px;
+            text-align: center;
+            margin: 40px 0;
+            border: 2px dashed #1a73e8;
+        }
+
+        .code-label {
+            color: #666;
+            font-size: 16px;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+
+        .code {
+            font-size: 48px;
+            font-weight: bold;
+            color: #1a73e8;
+            letter-spacing: 4px;
+            font-family: 'Courier New', monospace;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            display: inline-block;
+            min-width: 280px;
+            box-shadow: 0 6px 20px rgba(26, 115, 232, 0.15);
+        }
+
+        .instructions {
+            background: #e8f4fd;
+            border-radius: 10px;
+            padding: 25px;
+            margin: 30px 0;
+            text-align: left;
+        }
+
+        .instructions-title {
+            font-weight: bold;
+            color: #0d47a1;
+            margin-bottom: 15px;
+            font-size: 18px;
+            text-align: center;
+        }
+
+        .instructions-list {
+            list-style: none;
+            padding-left: 0;
+        }
+
+        .instructions-list li {
+            margin-bottom: 12px;
+            padding-left: 25px;
+            position: relative;
+        }
+
+        .instructions-list li:before {
+            content: "•";
+            color: #1a73e8;
+            font-weight: bold;
+            position: absolute;
+            left: 10px;
+        }
+
+        .footer {
+            text-align: center;
+            padding: 30px;
+            background: #f8f9fa;
+            border-top: 1px solid #e0e0e0;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .contact-info {
+            margin-top: 15px;
+            line-height: 1.6;
+        }
+
+        .warning {
+            color: #d32f2f;
+            font-size: 13px;
+            margin-top: 20px;
+            font-style: italic;
+            background: #ffebee;
+            padding: 12px;
+            border-radius: 8px;
+        }
+
+        .support-text {
+            margin-top: 25px;
+            color: #555;
+            font-size: 15px;
+        }
+
+        .security-note {
+            background: #fff3cd;
+            color: #856404;
+            padding: 12px;
+            border-radius: 8px;
+            margin: 20px 0;
+            font-size: 14px;
+            border-left: 4px solid #ffc107;
+        }
+
+        @media (max-width: 620px) {
+            .content {
+                padding: 30px 25px;
+            }
+
+            .code {
+                font-size: 36px;
+                min-width: 220px;
+                padding: 15px;
+            }
+
+            .header {
+                padding: 30px 20px;
+            }
+
+            .logo {
+                font-size: 28px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="email-container">
+        <div class="container">
+            <div class="header">
+                <div class="logo">Lumi</div>
+                <div class="subtitle">Инновационная образовательная платформа</div>
+            </div>
+
+            <div class="content">
+                <div class="greeting">
+                    <strong>Здравствуйте!</strong><br>
+                    Благодарим за регистрацию в Lumi App! Для завершения процесса подтвердите ваш email адрес.
+                </div>
+
+                <div class="code-container">
+                    <div class="code-label">Ваш код подтверждения</div>
+                    <div class="code">{{ verification_code }}</div>
+                    <div style="font-size: 14px; color: #666; margin-top: 15px;">
+                        ⏰ Код действителен в течение 1 часа
+                    </div>
+                </div>
+
+                <div class="instructions">
+                    <div class="instructions-title">📋 Что делать дальше?</div>
+                    <ul class="instructions-list">
+                        <li>Скопируйте код подтверждения из этого письма</li>
+                        <li>Вернитесь в форму регистрации</li>
+                        <li>Введите код в соответствующее поле</li>
+                        <li>Нажмите кнопку "Подтвердить"</li>
+                    </ul>
+                </div>
+
+                <div class="security-note">
+                    🔒 <strong>Безопасность:</strong> Никому не сообщайте этот код.
+                    Наши сотрудники никогда не запрашивают его по телефону или в чате.
+                </div>
+
+                <div class="support-text">
+                    Возникли проблемы с подтверждением?<br>
+                    Напишите нам: <strong>support@lumi-unt.kz</strong>
+                </div>
+            </div>
+
+            <div class="footer">
+                <strong>С уважением, команда Lumi App</strong>
+                <div class="contact-info">
+                    Email: support@lumi-unt.kz<br>
+                    {% comment %} Сайт: tesla-education.kz {% endcomment %}
+                </div>
+                <div class="warning">
+                    Если вы не запрашивали этот код, проигнорируйте это письмо.
+                </div>
+                <div style="margin-top: 20px; font-size: 12px; color: #999;">
+                    © 2025 Lumi App. Все права защищены.
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

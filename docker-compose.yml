@@ -1,0 +1,10 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    volumes:
+      - /var/www/lumi/uploads:/app/uploads
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"

@@ -1,0 +1,29 @@
+from .bank import router as bank_router
+from .dashboard import router as dashboard_router
+from .ents import router as ents_router
+from .modules import router as modules_router
+from .notifications import router as notifications_router
+from .promocodes import router as promocodes_router
+from .questions import router as questions_router
+from .statistics import router as statistics_router
+from .subject_combinations import router as subject_combinations_router
+from .subjects import router as subjects_router
+from .topics import router as topics_router
+from .trainers import router as trainers_router
+from .users import router as users_router
+
+routers = [
+    dashboard_router,
+    subjects_router,
+    topics_router,
+    questions_router,
+    ents_router,
+    trainers_router,
+    statistics_router,
+    notifications_router,
+    subject_combinations_router,
+    promocodes_router,
+    modules_router,
+    users_router,
+    bank_router,
+]

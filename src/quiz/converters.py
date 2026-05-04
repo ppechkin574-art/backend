@@ -323,15 +323,11 @@ def to_topic_service(topic: TopicRepositoryDTO) -> TopicServiceDTO:
 
 
 def to_subject_service(subject: SubjectRepositoryDTO) -> SubjectServiceDTO:
-    print("subject.image: ", subject.image)
-    print("image_url = http://localhost:8000/uploads%s", subject.image)
     return SubjectServiceDTO(
         id=subject.id,
         name=subject.name,
         type=subject.type,
-        image=(
-            f"http://localhost:8000/uploads{subject.image}" if subject.image else ""
-        ),
+        image=subject.image or "",
     )
 
 

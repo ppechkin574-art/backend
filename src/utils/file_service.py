@@ -87,7 +87,7 @@ class FileService:
             logger.warning("Failed to build avatar URL for %s: %s", filename, e)
             return ""
 
-    def get_subject_image_url(self, image_path: str) -> str | None:
+    def get_subject_image_url(self, image_path: str) -> str:
         """Presigned URL для отдачи картинки предмета.
 
         Принимает:
@@ -97,16 +97,21 @@ class FileService:
             (это нужно потому что в дампе БД у Романа image хранится как
             "https://lumi-unt.kz/uploads/...", и каждый presigned-запрос
             к MinIO в этом случае был бы лишним сетевым вызовом)
+
+        Возвращает пустую строку, если путь пуст или MinIO не смог сгенерить URL
+        (например, файл ещё не залит в bucket — см. TECH_DEBT.md п.112).
+        Симметрично get_avatar_url, чтобы клиенты не получали null и не падали на
+        парсинге не-nullable String.
         """
         if not image_path:
-            return None
+            return ""
         if image_path.startswith(("http://", "https://")):
             return image_path
         try:
             return self._storage.link(f"{self.SUBJECT_PREFIX}/{self._extract_filename(image_path)}")
         except MediaStorageError as e:
             logger.warning("Failed to build subject image URL for %s: %s", image_path, e)
-            return None
+            return ""
 
     async def _read_validated_image(self, file: UploadFile) -> bytes:
         if not file.content_type or not file.content_type.startswith("image/"):

@@ -1,12 +1,16 @@
 import logging
 
 from fastapi import FastAPI
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.cors import CORSMiddleware
 
 from api.containers import Container
 from api.exceptions.handlers import setup_exception_handlers
 from api.lifespan import lifespan
 from api.middlewares.exception_logging_middleware import ExceptionLoggingMiddleware
+from api.middlewares.rate_limit import limiter
 from settings import Settings
 from utils.monitoring import (
     LoggingContextMiddleware,
@@ -54,6 +58,9 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     app.state.container = container
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
 
     app.add_middleware(LoggingContextMiddleware)
     app.add_middleware(

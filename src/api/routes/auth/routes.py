@@ -17,6 +17,7 @@ from fastapi import (
 from redis import Redis
 
 from api.dependencies import get_auth_service, get_file_service, get_redis, get_user
+from api.middlewares.rate_limit import limiter
 from api.routes.auth.converters import to_auth_login_dto
 from api.routes.auth.dtos import (
     ChangePasswordDTO,
@@ -131,7 +132,9 @@ def swagger_login(
 
 
 @public_router.post("/code/request", response_model=CodeRequestResponse)
+@limiter.limit("1/minute")
 async def request_code(
+    request: Request,
     request_data: CodeRequestDTO,
     service: AuthService = Depends(get_auth_service),
 ):
@@ -406,6 +409,7 @@ async def oauth_start(
     response_model=OAuthCallbackResponse,
     responses=oauth_callback_responses,
 )
+@limiter.limit("10/minute")
 async def oauth_callback(
     provider: OAuthProviders,
     request: Request,
@@ -581,7 +585,9 @@ def refresh_token(
 
 
 @public_router.post("/login", response_model=TokensDTO, responses=login_responses)
+@limiter.limit("5/minute")
 def login(
+    request: Request,
     login_params: LoginParamsDTO,
     service: AuthServiceInterface = Depends(get_auth_service),
 ):

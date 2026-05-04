@@ -8,6 +8,8 @@ from . import (
     progress,
     text_blocks,
     trainer,
+    user_points,
+    user_relationship,
 )
 
 __all__ = [
@@ -20,4 +22,6 @@ __all__ = [
     "progress",
     "text_blocks",
     "trainer",
+    "user_points",
+    "user_relationship",
 ]

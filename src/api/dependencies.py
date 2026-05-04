@@ -27,6 +27,8 @@ from auth.repositories import (
     UserRepositoryKeycloak,
 )
 from auth.services import AuthService, AuthServiceInterface
+from quiz.services.family import FamilyService
+from quiz.repositories.user_points import UserPointsRepository
 from bank.service import BankService
 from clients import (
     IdentityProviderClientInterface,
@@ -102,7 +104,9 @@ def get_identity_provider_client_keycloak(settings: Settings = Depends(get_setti
 
 
 def get_user_repository_keycloak(
-    identity_provider_client: IdentityProviderClientInterface = Depends(get_identity_provider_client_keycloak),
+    identity_provider_client: IdentityProviderClientInterface = Depends(
+        get_identity_provider_client_keycloak
+    ),
 ) -> UserRepositoryInterface:
     return UserRepositoryKeycloak(identity_provider_client)
 
@@ -119,7 +123,9 @@ def get_confirmation_code_repository_redis(
 
 @inject
 def get_notification_client_telegram(
-    telegram_client: NotificationClientInterface = Depends(Provide[Container.notification_client]),
+    telegram_client: NotificationClientInterface = Depends(
+        Provide[Container.notification_client]
+    ),
 ) -> NotificationClientInterface:
     return telegram_client
 
@@ -174,15 +180,23 @@ def get_oauth_helper(
 
 def get_auth_service(
     users: UserRepositoryInterface = Depends(get_user_repository_keycloak),
-    confirmation_codes: ConfirmationCodeRepositoryInterface = Depends(get_confirmation_code_repository_redis),
-    notification_client: NotificationClientInterface = Depends(get_notification_client_telegram),
+    confirmation_codes: ConfirmationCodeRepositoryInterface = Depends(
+        get_confirmation_code_repository_redis
+    ),
+    notification_client: NotificationClientInterface = Depends(
+        get_notification_client_telegram
+    ),
     email_client: NotificationClientInterface = Depends(get_notification_client_email),
     sms_client: NotificationClientInterface = Depends(get_notification_client_sms),
-    whatsapp_client: NotificationClientInterface = Depends(get_notification_client_whatsapp),
+    whatsapp_client: NotificationClientInterface = Depends(
+        get_notification_client_whatsapp
+    ),
     google_client: GoogleOAuthClient = Depends(get_google_oauth_client),
     apple_client: AppleOAuthClient = Depends(get_apple_oauth_client),
     oauth_helper: OAuthHelper = Depends(get_oauth_helper),
-    identity_provider: IdentityProviderClientKeycloak = Depends(get_identity_provider_client_keycloak),
+    identity_provider: IdentityProviderClientKeycloak = Depends(
+        get_identity_provider_client_keycloak
+    ),
 ) -> AuthServiceInterface:
     return AuthService(
         users,
@@ -214,7 +228,9 @@ def get_db_session(
 
 @inject
 def get_attendance_service(
-    attendance_service: AttendanceService = Depends(Provide[Container.attendance_service]),
+    attendance_service: AttendanceService = Depends(
+        Provide[Container.attendance_service]
+    ),
 ) -> AttendanceService:
     return attendance_service
 
@@ -226,14 +242,18 @@ def get_subscription_plan_repository(
 
 
 def get_subscription_plan_service(
-    plan_repository: SubscriptionPlanRepository = Depends(get_subscription_plan_repository),
+    plan_repository: SubscriptionPlanRepository = Depends(
+        get_subscription_plan_repository
+    ),
 ) -> SubscriptionPlanService:
     return SubscriptionPlanService(plan_repository)
 
 
 def get_subscription_service(
     auth_service: AuthServiceInterface = Depends(get_auth_service),
-    plan_repository: SubscriptionPlanRepository = Depends(get_subscription_plan_repository),
+    plan_repository: SubscriptionPlanRepository = Depends(
+        get_subscription_plan_repository
+    ),
 ) -> SubscriptionService:
     return SubscriptionService(auth_service, plan_repository)
 
@@ -259,6 +279,7 @@ def get_user(
     service: AuthServiceInterface = Depends(get_auth_service),
     subscription_service: SubscriptionService = Depends(get_subscription_service),
     attendance_service: AttendanceService = Depends(get_attendance_service),
+    db_session: Session = Depends(get_db_session),  # добавлено
 ) -> UserDTO:
     try:
         user = service.get_user_from_token(token)
@@ -272,6 +293,12 @@ def get_user(
             user.attendance_streak_days = 0
             user.attendance_total_points = 0
             user.attendance_today_points = None
+
+        # Добавляем баллы и ранг
+        points_repo = UserPointsRepository(db_session)
+        user.points = points_repo.get_total_points(user.id)
+        user.rank = points_repo.get_user_rank(user.id)
+
         return user
     except AuthAccessInvalidTokenError as e:
         raise HTTPException(
@@ -334,7 +361,9 @@ def get_trainer_attempt_service(
     module_lesson_service: ModuleLessonService = Depends(get_module_lesson_service),
     cashback_service: CashbackService = Depends(get_cashback_service),
 ) -> TrainerAttemptServiceInterface:
-    return TrainerAttemptService(uow, cache_service, module_lesson_service, cashback_service)
+    return TrainerAttemptService(
+        uow, cache_service, module_lesson_service, cashback_service
+    )
 
 
 def get_unit_of_work_students(
@@ -393,7 +422,9 @@ def get_question_parser(
 
 @inject
 def get_ws_token_manager(
-    ws_token_manager: WebSocketTokenManager = Depends(Provide[Container.ws_token_manager]),
+    ws_token_manager: WebSocketTokenManager = Depends(
+        Provide[Container.ws_token_manager]
+    ),
 ) -> WebSocketTokenManager:
     return ws_token_manager
 
@@ -417,7 +448,9 @@ def get_payment_service(
     user: UserDTO = Depends(get_user),
     auth_service: AuthServiceInterface = Depends(get_auth_service),
     subscription_service: SubscriptionService = Depends(get_subscription_service),
-    subscription_plan_service: SubscriptionPlanService = Depends(get_subscription_plan_service),
+    subscription_plan_service: SubscriptionPlanService = Depends(
+        get_subscription_plan_service
+    ),
 ) -> PaymentService:
     return PaymentService(
         freedom_pay_settings,
@@ -491,7 +524,9 @@ def get_ent_attempts_service(
 def get_import_service(
     question_service: QuestionServiceInterface = Depends(get_question_service),
     ent_option_service: EntOptionServiceInterface = Depends(get_ent_options_service),
-    ent_question_service: EntOptionQuestionServiceInterface = Depends(get_ent_questions_service),
+    ent_question_service: EntOptionQuestionServiceInterface = Depends(
+        get_ent_questions_service
+    ),
     trainer_service: TrainerServiceInterface = Depends(get_trainer_service),
     topic_service: TopicServiceInterface = Depends(get_topic_service),
     subject_service: SubjectServiceInterface = Depends(get_subject_service),
@@ -549,7 +584,9 @@ def get_progress_service(
     return ProgressService(uow, cache_service)
 
 
-def require_subscription(required_plan: PlanType | None = None, allow_none: bool = False):
+def require_subscription(
+    required_plan: PlanType | None = None, allow_none: bool = False
+):
     async def subscription_checker(
         user: UserDTO = Depends(get_user),
         subscription_service: SubscriptionService = Depends(get_subscription_service),
@@ -684,6 +721,17 @@ def get_subject_module_service(
 
 
 def get_admin_user_service(
-    identity_provider: IdentityProviderClientKeycloak = Depends(get_identity_provider_client_keycloak),
+    identity_provider: IdentityProviderClientKeycloak = Depends(
+        get_identity_provider_client_keycloak
+    ),
 ) -> AdminUserService:
     return AdminUserService(identity_provider)
+
+
+def get_family_service(
+    session: Session = Depends(get_db_session),
+    idp: IdentityProviderClientKeycloak = Depends(
+        get_identity_provider_client_keycloak
+    ),
+) -> FamilyService:
+    return FamilyService(session, idp)

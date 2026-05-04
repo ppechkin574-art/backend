@@ -62,7 +62,9 @@ def to_user_create_dto(params: AuthRegisterDTO, is_active: bool) -> UserCreateDT
 #     return ConfirmationCodeQueryDTO(user_id=user_id, code=code, action=action)
 
 
-def to_user_query_dto(user_id: UUID = None, phone: str = None, email: str = None) -> UserQueryDTO:
+def to_user_query_dto(
+    user_id: UUID = None, phone: str = None, email: str = None
+) -> UserQueryDTO:
     return UserQueryDTO(id=user_id, phone=phone, email=email)
 
 
@@ -106,14 +108,18 @@ def to_keycloak_create_user_dto(user: UserCreateDTO) -> "KeycloakCreateUserDTO":
         KeycloakCredentialDTO,
     )
 
-    username_base = user.email.split("@")[0] if user.email else transliterate_name(user.name)
+    username_base = (
+        user.email.split("@")[0] if user.email else transliterate_name(user.name)
+    )
 
     if len(username_base) > 30:
         username_base = username_base[:30]
 
     username_base = re.sub(r"[^a-zA-Z0-9._-]", "_", username_base)
 
-    random_suffix = "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(6))
+    random_suffix = "".join(
+        secrets.choice(string.ascii_lowercase + string.digits) for _ in range(6)
+    )
     username = f"{username_base}_{random_suffix}"
 
     subscription_end = user.subscription_end or datetime.now(UTC) + timedelta(days=3)
@@ -130,7 +136,9 @@ def to_keycloak_create_user_dto(user: UserCreateDTO) -> "KeycloakCreateUserDTO":
             plan=[user.plan.value],
             subscription_end=[subscription_end.isoformat()],
         ),
-        credentials=([KeycloakCredentialDTO(value=user.password)] if user.password else []),
+        credentials=(
+            [KeycloakCredentialDTO(value=user.password)] if user.password else []
+        ),
     )
 
 
@@ -144,43 +152,52 @@ def to_keycloak_user_query_dto(user: UserQueryDTO) -> "KeycloakUserQueryDTO":
     )
 
 
-def to_keycloak_user_update_dto(user: UserDTO, updated_user: UserUpdateDTO) -> KeycloakUserUpdateDTO:
-    name_value = updated_user.name if updated_user.name is not None else user.name
-    phone_value = updated_user.phone if updated_user.phone is not None else user.phone
+def to_keycloak_user_update_dto(
+    user: UserDTO, updated_user: UserUpdateDTO
+) -> KeycloakUserUpdateDTO:
+    update_data = updated_user.model_dump(exclude_unset=True)
 
     attributes_dict = {}
-    if name_value is not None:
-        attributes_dict["name"] = [name_value]
-    if phone_value is not None:
-        attributes_dict["phone"] = [phone_value]
 
-    if hasattr(updated_user, "avatar"):
-        if updated_user.avatar is None:
+    if "name" in update_data and update_data["name"] is not None:
+        attributes_dict["name"] = [update_data["name"]]
+    elif user.name:
+        attributes_dict["name"] = [user.name]
+
+    if "phone" in update_data and update_data["phone"] is not None:
+        attributes_dict["phone"] = [update_data["phone"]]
+    elif user.phone:
+        attributes_dict["phone"] = [user.phone]
+
+    if "avatar" in update_data:
+        if update_data["avatar"] is None:
             attributes_dict["avatar"] = []
-            logger.info("Removing avatar for user %s", user.id)
-        elif updated_user.avatar:
-            attributes_dict["avatar"] = [updated_user.avatar]
-            logger.info("Setting new avatar for user %s: %s", user.id, updated_user.avatar)
         else:
-            attributes_dict["avatar"] = []
-            logger.info("Removing avatar (empty string) for user %s", user.id)
-    else:
-        if user.avatar:
-            attributes_dict["avatar"] = [user.avatar]
+            attributes_dict["avatar"] = [update_data["avatar"]]
+    elif user.avatar:
+        attributes_dict["avatar"] = [user.avatar]
 
-    if updated_user.plan is not None:
-        attributes_dict["plan"] = [updated_user.plan.value]
+    if "plan" in update_data and update_data["plan"] is not None:
+        attributes_dict["plan"] = [update_data["plan"].value]
     elif user.plan:
         attributes_dict["plan"] = [user.plan.value]
 
-    if updated_user.subscription_end is not None:
-        attributes_dict["subscription_end"] = [updated_user.subscription_end.isoformat()]
+    if (
+        "subscription_end" in update_data
+        and update_data["subscription_end"] is not None
+    ):
+        attributes_dict["subscription_end"] = [
+            update_data["subscription_end"].isoformat()
+        ]
     elif user.subscription_end:
         attributes_dict["subscription_end"] = [user.subscription_end.isoformat()]
 
-    attributes = KeycloakAttributesUpdateDTO(**attributes_dict) if attributes_dict else None
+    email = update_data.get("email", user.email)
 
-    return KeycloakUserUpdateDTO(email=updated_user.email or user.email, attributes=attributes)
+    attributes = (
+        KeycloakAttributesUpdateDTO(**attributes_dict) if attributes_dict else None
+    )
+    return KeycloakUserUpdateDTO(email=email, attributes=attributes)
 
 
 def to_user_dto(keycloak_user: "KeycloakUserDTO", roles: list[str]) -> UserDTO:
@@ -220,7 +237,11 @@ def to_user_dto(keycloak_user: "KeycloakUserDTO", roles: list[str]) -> UserDTO:
             subscription_end_str = sub_end_list[0]
 
     try:
-        subscription_end = datetime.fromisoformat(subscription_end_str) if subscription_end_str else datetime.now(UTC)
+        subscription_end = (
+            datetime.fromisoformat(subscription_end_str)
+            if subscription_end_str
+            else datetime.now(UTC)
+        )
     except (ValueError, TypeError):
         subscription_end = datetime.now(UTC)
 
@@ -228,7 +249,9 @@ def to_user_dto(keycloak_user: "KeycloakUserDTO", roles: list[str]) -> UserDTO:
     if keycloak_user.attributes and keycloak_user.attributes.allowed_subject_ids:
         ids_list = keycloak_user.attributes.allowed_subject_ids
         if ids_list:
-            allowed_subject_ids = [int(id_str) for id_str in ids_list if id_str.isdigit()]
+            allowed_subject_ids = [
+                int(id_str) for id_str in ids_list if id_str.isdigit()
+            ]
 
     return UserDTO(
         id=keycloak_user.id,
@@ -248,7 +271,9 @@ def to_user_dto(keycloak_user: "KeycloakUserDTO", roles: list[str]) -> UserDTO:
 
 
 def to_user_tokens_dto(token: "KeycloakAccessTokenDTO") -> UserTokensDTO:
-    return UserTokensDTO(access_token=token.access_token, refresh_token=token.refresh_token)
+    return UserTokensDTO(
+        access_token=token.access_token, refresh_token=token.refresh_token
+    )
 
 
 def transliterate_name(name: str) -> str:

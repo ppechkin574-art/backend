@@ -47,10 +47,14 @@ logger = logging.getLogger(__name__)
 
 
 class EntAttemptServiceInterface(Protocol):
-    def create(self, attempt_params: EntAttemptCreateServiceDTO) -> EntAttemptServiceDTO:
+    def create(
+        self, attempt_params: EntAttemptCreateServiceDTO
+    ) -> EntAttemptServiceDTO:
         raise NotImplementedError
 
-    def answer(self, answer: EntAttemptAnswerServiceDTO) -> EntAttemptOptionStatisticServiceDTO:
+    def answer(
+        self, answer: EntAttemptAnswerServiceDTO
+    ) -> EntAttemptOptionStatisticServiceDTO:
         raise NotImplementedError
 
     # def get_answers():
@@ -59,7 +63,9 @@ class EntAttemptServiceInterface(Protocol):
     # def get_statistic_by_student(self, params: EntStatisticGetServiceDTO) -> EntStatisticServiceDTO:
     #     raise NotImplementedError
 
-    def update_current_question_index(self, attempt_id: int, student_guid: UUID, question_index: int) -> dict:
+    def update_current_question_index(
+        self, attempt_id: int, student_guid: UUID, question_index: int
+    ) -> dict:
         raise NotImplementedError
 
 
@@ -77,7 +83,9 @@ class EntAttemptService:
         self._cache_service = cache_service
         self._cashback_service = cashback_service
 
-    def create(self, attempt_params: EntAttemptCreateServiceDTO) -> EntAttemptServiceDTO:
+    def create(
+        self, attempt_params: EntAttemptCreateServiceDTO
+    ) -> EntAttemptServiceDTO:
         logger.info(
             "Starting ENT attempt creation for student: %s, exam_type: %s, option: %s, combination: %s",
             attempt_params.student_guid,
@@ -94,7 +102,9 @@ class EntAttemptService:
         # чтобы избежать смещения и отрицательного spend_time.
         if attempt_params.started_at.tzinfo is None:
             local_tz = datetime.now().astimezone().tzinfo
-            attempt_params.started_at = attempt_params.started_at.replace(tzinfo=local_tz)
+            attempt_params.started_at = attempt_params.started_at.replace(
+                tzinfo=local_tz
+            )
         attempt_params.started_at = attempt_params.started_at.astimezone(UTC)
 
         logger.info("Normalized started_at to UTC: %s", attempt_params.started_at)
@@ -106,7 +116,9 @@ class EntAttemptService:
             else self.ENT_BY_SUBJECT_DURATION
         )
 
-        attempt_params.deadline_at = attempt_params.started_at + timedelta(seconds=duration_seconds)
+        attempt_params.deadline_at = attempt_params.started_at + timedelta(
+            seconds=duration_seconds
+        )
 
         with self._uow:
             logger.info("Checking for existing active attempts...")
@@ -133,17 +145,26 @@ class EntAttemptService:
                 precomputed_full_exam_questions = self._generate_full_exam_questions(
                     attempt_params.subject_combination_id
                 )
-                question_ids = self._flatten_question_ids(precomputed_full_exam_questions)
-                attempt_params.full_exam_question_ids = self._serialize_question_ids(question_ids)
+                question_ids = self._flatten_question_ids(
+                    precomputed_full_exam_questions
+                )
+                attempt_params.full_exam_question_ids = self._serialize_question_ids(
+                    question_ids
+                )
 
             # Создание новой попытки
             ent_attempt = self._create_new_attempt(attempt_params)
 
             # Загрузка вопросов
             if ent_attempt.exam_type.value == "full_exam":
-                questions_service = precomputed_full_exam_questions or self._load_full_exam_questions(ent_attempt)
+                questions_service = (
+                    precomputed_full_exam_questions
+                    or self._load_full_exam_questions(ent_attempt)
+                )
             else:
-                questions_service = self._load_subject_questions(ent_attempt.ent_option_id)
+                questions_service = self._load_subject_questions(
+                    ent_attempt.ent_option_id
+                )
 
             result = to_ent_attempt_service(ent_attempt, questions_service)
 
@@ -158,7 +179,9 @@ class EntAttemptService:
             return result
 
     def answer(self, answer: EntAttemptAnswerServiceDTO):
-        logger.info("Starting ENT answer processing for attempt: %s", answer.ent_attempt_id)
+        logger.info(
+            "Starting ENT answer processing for attempt: %s", answer.ent_attempt_id
+        )
 
         logger.info("Received answer DTO: %s", answer)
         logger.info(
@@ -168,13 +191,19 @@ class EntAttemptService:
 
         if answer.questions:
             for i, q in enumerate(answer.questions):
-                logger.info("Question %s: id=%s, variants=%s", i + 1, q.question_id, q.variants)
+                logger.info(
+                    "Question %s: id=%s, variants=%s", i + 1, q.question_id, q.variants
+                )
         else:
-            logger.warning("No questions in answer for attempt %s", answer.ent_attempt_id)
+            logger.warning(
+                "No questions in answer for attempt %s", answer.ent_attempt_id
+            )
 
         with self._uow:
             # Получаем попытку
-            ent_attempt = self._uow.ent_attempts.get_attempt_by_id(answer.ent_attempt_id)
+            ent_attempt = self._uow.ent_attempts.get_attempt_by_id(
+                answer.ent_attempt_id
+            )
 
             logger.info(
                 "Found attempt: id=%s, status=%s, started_at=%s",
@@ -184,11 +213,15 @@ class EntAttemptService:
             )
 
             # Используем AttemptValidator
-            AttemptValidator.validate_attempt_exists(ent_attempt, answer.ent_attempt_id, answer.student_guid)
+            AttemptValidator.validate_attempt_exists(
+                ent_attempt, answer.ent_attempt_id, answer.student_guid
+            )
 
             if ent_attempt.status == Status.completed:
                 logger.warning("Attempt %s already completed", answer.ent_attempt_id)
-                raise AlreadyAnswered(f"Attempt {answer.ent_attempt_id} already completed")
+                raise AlreadyAnswered(
+                    f"Attempt {answer.ent_attempt_id} already completed"
+                )
 
             # Текущее время в Астане (GMT+5) как источник end_time
             tz_astana = timezone(timedelta(hours=5))
@@ -196,18 +229,26 @@ class EntAttemptService:
             now_utc = now_astana.astimezone(UTC)
 
             started_at = ent_attempt.started_at
-            started_at_utc = started_at.replace(tzinfo=UTC) if started_at.tzinfo is None else started_at.astimezone(UTC)
+            started_at_utc = (
+                started_at.replace(tzinfo=UTC)
+                if started_at.tzinfo is None
+                else started_at.astimezone(UTC)
+            )
 
             logger.info("Started at (UTC): %s", started_at_utc)
 
             # Приводим started_at к той же таймзоне (Astana), чтобы избежать naive/aware конфликтов
             tz_astana = timezone(timedelta(hours=5))
-            started_at_astana = DateUtils.ensure_timezone(started_at, tz_astana).astimezone(tz_astana)
+            started_at_astana = DateUtils.ensure_timezone(
+                started_at, tz_astana
+            ).astimezone(tz_astana)
 
             # Добавляем +2 часа к started_at_astana
             started_at_astana_plus2 = started_at_astana + timedelta(hours=2)
 
-            corrected_spend_time = (now_astana - started_at_astana_plus2).total_seconds()
+            corrected_spend_time = (
+                now_astana - started_at_astana_plus2
+            ).total_seconds()
             logger.info(
                 "Now (Astana): %s, started_at_astana: %s, started_at_astana_plus2: %s, corrected_spend_time: %s",
                 now_astana,
@@ -235,7 +276,9 @@ class EntAttemptService:
 
             logger.info("Calculated spend time: %s seconds", corrected_spend_time)
 
-            deadline_exceeded = AttemptValidator.validate_deadline(ent_attempt.deadline_at, now_utc)
+            deadline_exceeded = AttemptValidator.validate_deadline(
+                ent_attempt.deadline_at, now_utc
+            )
 
             logger.info("Now UTC: %s", now_utc)
             logger.info("Attempt started_at: %s", ent_attempt.started_at)
@@ -267,15 +310,20 @@ class EntAttemptService:
                 time_metrics["corrected_session_seconds"] = 1
                 time_metrics["is_time_corrected"] = True
                 time_metrics["correction_reason"] = (
-                    time_metrics.get("correction_reason") or "Spend time was non-positive; clamped to 1 second"
+                    time_metrics.get("correction_reason")
+                    or "Spend time was non-positive; clamped to 1 second"
                 )
 
             logger.info("Corrected spend time: %s seconds", corrected_spend_time)
-            logger.info("Time correction applied: %s", time_metrics["is_time_corrected"])
+            logger.info(
+                "Time correction applied: %s", time_metrics["is_time_corrected"]
+            )
 
             # Устанавливаем время завершения
             if time_metrics["is_time_corrected"]:
-                corrected_completed_at = ent_attempt.started_at + timedelta(seconds=corrected_spend_time)
+                corrected_completed_at = ent_attempt.started_at + timedelta(
+                    seconds=corrected_spend_time
+                )
                 ent_attempt.completed_at = corrected_completed_at
             else:
                 ent_attempt.completed_at = now_utc
@@ -340,8 +388,14 @@ class EntAttemptService:
 
                             # Безопасно получаем варианты
                             try:
-                                correct_variant_ids = {v.id for v in question_obj.variants if v.is_correct}
-                                question_type_value = question_obj.type.value if question_obj.type else "single_choice"
+                                correct_variant_ids = {
+                                    v.id for v in question_obj.variants if v.is_correct
+                                }
+                                question_type_value = (
+                                    question_obj.type.value
+                                    if question_obj.type
+                                    else "single_choice"
+                                )
                             except Exception as e:
                                 logger.warning(
                                     "Could not access variants for question %s in full_exam: %s",
@@ -352,8 +406,12 @@ class EntAttemptService:
                                 question_type_value = "single_choice"
                         else:
                             # Для by_subject - валидация вариантов
-                            question_obj = self._validate_ent_variants(q.question_id, q.variants)
-                            correct_variant_ids = {v.id for v in question_obj.variants if v.is_correct}
+                            question_obj = self._validate_ent_variants(
+                                q.question_id, q.variants
+                            )
+                            correct_variant_ids = {
+                                v.id for v in question_obj.variants if v.is_correct
+                            }
                             question_type_value = question_obj.type.value
 
                         chosen_variant_ids = set(q.variants)
@@ -385,7 +443,9 @@ class EntAttemptService:
                         )
 
                     # Сохранение ответов
-                    saved_answers_count += self._save_question_answers(ent_attempt.id, q.question_id, q.variants)
+                    saved_answers_count += self._save_question_answers(
+                        ent_attempt.id, q.question_id, q.variants
+                    )
 
                 # Обрабатываем вопросы, которые не пришли с фронта — считаем их пропущенными
                 missing_question_ids = allowed_question_ids - provided_question_ids
@@ -403,7 +463,9 @@ class EntAttemptService:
                         try:
                             self._uow.ent_attempts.answer(answer_create)
                             saved_answers_count += 1
-                            logger.debug("Created skipped answer for missing question %s", qid)
+                            logger.debug(
+                                "Created skipped answer for missing question %s", qid
+                            )
                         except Exception as e:
                             logger.exception(
                                 "Failed to create skipped answer for missing question %s: %s",
@@ -439,8 +501,15 @@ class EntAttemptService:
                     subject_id = option.subject_id
 
             self._uow.ent_attempts.save_attempt_updates(ent_attempt)
+            if attempt_stat.score > 0:
+                self._uow.user_points.add_points(student_guid, attempt_stat.score)
             self._uow.commit()
             self._cashback_service.check_and_update(student_guid)
+
+            # score = ent_attempt.score  # уже сохранён в базе
+            # if score and score > 0:
+            #     self._uow.user_points.add_points(student_guid, score)
+            #     self._uow.commit()
 
             # Формирование результата
             result = EntAttemptStatisticServiceDTO(
@@ -476,7 +545,9 @@ class EntAttemptService:
             )
 
             if subject_id:
-                self._cache_service.delete_pattern(f"user:{student_guid}:ent_options:subject_id={subject_id}")
+                self._cache_service.delete_pattern(
+                    f"user:{student_guid}:ent_options:subject_id={subject_id}"
+                )
 
             return result
 
@@ -603,7 +674,9 @@ class EntAttemptService:
     #         )
 
     # Вспомогательные методы (с использованием утилит)
-    def _get_active_attempt(self, student_guid, exam_type, ent_option_id=None, subject_combination_id=None):
+    def _get_active_attempt(
+        self, student_guid, exam_type, ent_option_id=None, subject_combination_id=None
+    ):
         """Получить активную попытку"""
         if exam_type == ExamType.full_exam:
             return self._uow.ent_attempts.get_active_full_exam_for_student(
@@ -635,7 +708,9 @@ class EntAttemptService:
         """Создать новую попытку"""
         try:
             logger.info("Creating new ENT attempt...")
-            ent_attempt = self._uow.ent_attempts.create(to_ent_attempt_create_repository(attempt_params))
+            ent_attempt = self._uow.ent_attempts.create(
+                to_ent_attempt_create_repository(attempt_params)
+            )
             logger.info("Created new ENT attempt with ID: %s", ent_attempt.id)
             self._uow.commit()
             return ent_attempt
@@ -655,7 +730,9 @@ class EntAttemptService:
 
     def _load_subject_questions(self, ent_option_id):
         """Загрузить вопросы по предмету"""
-        questions_repo = self._uow.ent_options.get_option_questions(ent_option_id=ent_option_id)
+        questions_repo = self._uow.ent_options.get_option_questions(
+            ent_option_id=ent_option_id
+        )
         return [to_service_question(q) for q in questions_repo]
 
     def _validate_ent_variants(self, question_id: int, variant_ids: list[int]):
@@ -687,14 +764,20 @@ class EntAttemptService:
 
             return question
 
-    def _save_question_answers(self, attempt_id: int, question_id: int, variants: list) -> int:
+    def _save_question_answers(
+        self, attempt_id: int, question_id: int, variants: list
+    ) -> int:
         """Сохранить ответы на вопрос"""
         saved = 0
 
-        logger.debug("Saving answers for question %s: variants=%s", question_id, variants)
+        logger.debug(
+            "Saving answers for question %s: variants=%s", question_id, variants
+        )
 
         if not variants or len(variants) == 0:
-            answer_create = EntAttemptAnswerCreateRepositoryDTO(ent_attempt_id=attempt_id, variant_id=None)
+            answer_create = EntAttemptAnswerCreateRepositoryDTO(
+                ent_attempt_id=attempt_id, variant_id=None
+            )
             try:
                 self._uow.ent_attempts.answer(answer_create)
                 saved += 1
@@ -768,15 +851,31 @@ class EntAttemptService:
         # Получаем связку предметов
         from quiz.models.ent import EntSubjectCombination
 
-        combination = self._uow.session.query(EntSubjectCombination).filter_by(id=subject_combination_id).first()
+        combination = (
+            self._uow.session.query(EntSubjectCombination)
+            .filter_by(id=subject_combination_id)
+            .first()
+        )
 
         if not combination:
             raise ValueError(f"Subject combination {subject_combination_id} not found")
 
         # Находим обязательные предметы по именам
-        history_kz = self._uow.session.query(Subject).filter(Subject.name == "История Казахстана").first()
-        reading_lit = self._uow.session.query(Subject).filter(Subject.name == "Грамотность чтения").first()
-        math_lit = self._uow.session.query(Subject).filter(Subject.name == "Математическая грамотность").first()
+        history_kz = (
+            self._uow.session.query(Subject)
+            .filter(Subject.name == "История Казахстана")
+            .first()
+        )
+        reading_lit = (
+            self._uow.session.query(Subject)
+            .filter(Subject.name == "Грамотность чтения")
+            .first()
+        )
+        math_lit = (
+            self._uow.session.query(Subject)
+            .filter(Subject.name == "Математическая грамотность")
+            .first()
+        )
         mandatory_subject_ids = []
         if history_kz:
             mandatory_subject_ids.append(history_kz.id)
@@ -804,12 +903,18 @@ class EntAttemptService:
 
         for subject_id in all_subject_ids:
             # Получаем предмет
-            subject = self._uow.session.query(Subject).filter(Subject.id == subject_id).first()
+            subject = (
+                self._uow.session.query(Subject)
+                .filter(Subject.id == subject_id)
+                .first()
+            )
             if not subject:
                 continue
 
             # Определяем лимит вопросов для данного предмета
-            question_limit = QUESTION_LIMITS.get(subject.name, DEFAULT_SPECIALIZED_LIMIT)
+            question_limit = QUESTION_LIMITS.get(
+                subject.name, DEFAULT_SPECIALIZED_LIMIT
+            )
 
             # Получаем все вопросы по предмету
             questions_repo = self._uow.questions.get_questions_by_subject(subject_id)
@@ -847,17 +952,23 @@ class EntAttemptService:
 
     def _load_full_exam_questions(self, attempt) -> list[SubjectQuestionsDTO]:
         """Загружает сохранённый набор вопросов для полноценного экзамена"""
-        question_ids = self._parse_question_ids(getattr(attempt, "full_exam_question_ids", None))
+        question_ids = self._parse_question_ids(
+            getattr(attempt, "full_exam_question_ids", None)
+        )
 
         if not question_ids:
             logger.info(
                 "Attempt %s has no stored question ids, regenerating question set",
                 attempt.id,
             )
-            subject_groups = self._generate_full_exam_questions(getattr(attempt, "subject_combination_id", None))
+            subject_groups = self._generate_full_exam_questions(
+                getattr(attempt, "subject_combination_id", None)
+            )
             question_ids = self._flatten_question_ids(subject_groups)
             questions_csv = self._serialize_question_ids(question_ids)
-            self._uow.ent_attempts.update_full_exam_question_ids(attempt.id, questions_csv)
+            self._uow.ent_attempts.update_full_exam_question_ids(
+                attempt.id, questions_csv
+            )
             attempt.full_exam_question_ids = questions_csv
             return subject_groups
 
@@ -867,10 +978,14 @@ class EntAttemptService:
                 "Stored question ids for attempt %s could not be loaded from DB",
                 attempt.id,
             )
-            subject_groups = self._generate_full_exam_questions(getattr(attempt, "subject_combination_id", None))
+            subject_groups = self._generate_full_exam_questions(
+                getattr(attempt, "subject_combination_id", None)
+            )
             question_ids = self._flatten_question_ids(subject_groups)
             questions_csv = self._serialize_question_ids(question_ids)
-            self._uow.ent_attempts.update_full_exam_question_ids(attempt.id, questions_csv)
+            self._uow.ent_attempts.update_full_exam_question_ids(
+                attempt.id, questions_csv
+            )
             attempt.full_exam_question_ids = questions_csv
             return subject_groups
 
@@ -928,19 +1043,25 @@ class EntAttemptService:
     def _get_allowed_question_ids(self, attempt) -> set[int]:
         """Вернёт множество ID вопросов, которые принадлежат попытке"""
         if attempt.exam_type == ExamType.full_exam:
-            question_ids = self._parse_question_ids(getattr(attempt, "full_exam_question_ids", None))
+            question_ids = self._parse_question_ids(
+                getattr(attempt, "full_exam_question_ids", None)
+            )
             if not question_ids:
                 subject_groups = self._load_full_exam_questions(attempt)
                 question_ids = self._flatten_question_ids(subject_groups)
             return set(question_ids)
 
         if attempt.ent_option_id:
-            option_question_ids = self._uow.ent_options.get_questions_ids(attempt.ent_option_id)
+            option_question_ids = self._uow.ent_options.get_questions_ids(
+                attempt.ent_option_id
+            )
             return set(option_question_ids)
 
         return set()
 
-    def update_current_question_index(self, attempt_id: int, student_guid: UUID, question_index: int) -> dict:
+    def update_current_question_index(
+        self, attempt_id: int, student_guid: UUID, question_index: int
+    ) -> dict:
         """Обновить текущую позицию вопроса в попытке"""
         logger.info(
             "Updating current question index for attempt %s to %s",
@@ -958,7 +1079,9 @@ class EntAttemptService:
                 raise WrongStudent("Attempt doesn't belong to student")
 
             if attempt.status != Status.in_progress:
-                raise AlreadyAnswered(f"Cannot update position - attempt is {attempt.status}")
+                raise AlreadyAnswered(
+                    f"Cannot update position - attempt is {attempt.status}"
+                )
 
             # Обновляем текущую позицию
             attempt.current_question_index = question_index
@@ -977,17 +1100,23 @@ class EntAttemptService:
             }
 
     @cached(strategy=CacheStrategy.USER, ttl=604800, resource="ent_attempts_history")
-    def get_attempts_history(self, student_guid: UUID, limit: int | None = None) -> list:
+    def get_attempts_history(
+        self, student_guid: UUID, limit: int | None = None
+    ) -> list:
         """Получить историю попыток студента"""
         from quiz.dtos.ent_attempts import (
             EntAttemptBySubjectHistoryDTO,
             EntAttemptFullExamHistoryDTO,
         )
 
-        logger.info("Getting attempts history for student %s, limit=%s", student_guid, limit)
+        logger.info(
+            "Getting attempts history for student %s, limit=%s", student_guid, limit
+        )
 
         with self._uow:
-            attempts = self._uow.ent_attempts.get_all_attempts_for_student(student_guid, limit)
+            attempts = self._uow.ent_attempts.get_all_attempts_for_student(
+                student_guid, limit
+            )
 
             history = []
             for attempt in attempts:
@@ -995,10 +1124,16 @@ class EntAttemptService:
                 stats = None
                 if attempt.status == Status.completed and attempt.completed_at:
                     try:
-                        spend_time = int((attempt.completed_at - attempt.started_at).total_seconds())
-                        stats = self._uow.ent_attempts.get_attempt_statistic(attempt.id, spend_time)
+                        spend_time = int(
+                            (attempt.completed_at - attempt.started_at).total_seconds()
+                        )
+                        stats = self._uow.ent_attempts.get_attempt_statistic(
+                            attempt.id, spend_time
+                        )
                     except Exception as e:
-                        logger.warning("Failed to get stats for attempt %s: %s", attempt.id, e)
+                        logger.warning(
+                            "Failed to get stats for attempt %s: %s", attempt.id, e
+                        )
 
                 # Общие поля
                 common_fields = {
@@ -1010,7 +1145,12 @@ class EntAttemptService:
                     "completed_at": attempt.completed_at,
                     "deadline_at": attempt.deadline_at,
                     "total_questions": (
-                        stats.correct + stats.incorrect + stats.partial_correct + stats.skiped if stats else None
+                        stats.correct
+                        + stats.incorrect
+                        + stats.partial_correct
+                        + stats.skiped
+                        if stats
+                        else None
                     ),
                     "correct_answers": stats.correct if stats else None,
                     "incorrect_answers": stats.incorrect if stats else None,
@@ -1025,13 +1165,17 @@ class EntAttemptService:
                             **common_fields,
                             exam_type=ExamType.by_subject,
                             ent_option_id=attempt.ent_option_id or 0,
-                            subject_id=(attempt.options.subject_id if attempt.options else 0),
+                            subject_id=(
+                                attempt.options.subject_id if attempt.options else 0
+                            ),
                             subject_name=(
                                 attempt.options.subject.name
                                 if attempt.options and attempt.options.subject
                                 else "Unknown"
                             ),
-                            option_number=(attempt.options.option_number if attempt.options else 0),
+                            option_number=(
+                                attempt.options.option_number if attempt.options else 0
+                            ),
                         )
                     )
                 else:  # full_exam
@@ -1041,7 +1185,9 @@ class EntAttemptService:
                             exam_type=ExamType.full_exam,
                             subject_combination_id=attempt.subject_combination_id or 0,
                             subject_combination_name=(
-                                attempt.subject_combination.name if attempt.subject_combination else "Unknown"
+                                attempt.subject_combination.name
+                                if attempt.subject_combination
+                                else "Unknown"
                             ),
                         )
                     )
@@ -1066,10 +1212,14 @@ class EntAttemptService:
 
         with self._uow:
             # Получаем попытку
-            attempt = self._uow.ent_attempts.get_attempt_with_answers(attempt_id, student_guid)
+            attempt = self._uow.ent_attempts.get_attempt_with_answers(
+                attempt_id, student_guid
+            )
 
             if not attempt:
-                raise TrainerAttemptNotExist(f"Attempt {attempt_id} not found for student {student_guid}")
+                raise TrainerAttemptNotExist(
+                    f"Attempt {attempt_id} not found for student {student_guid}"
+                )
 
             # Проверяем, что попытка завершена
             if attempt.status == Status.in_progress:
@@ -1081,17 +1231,23 @@ class EntAttemptService:
             # Получаем статистику
             spend_time = 0
             if attempt.completed_at:
-                spend_time = int((attempt.completed_at - attempt.started_at).total_seconds())
+                spend_time = int(
+                    (attempt.completed_at - attempt.started_at).total_seconds()
+                )
 
             stats = self._uow.ent_attempts.get_attempt_statistic(attempt.id, spend_time)
 
             # Получаем ответы пользователя
-            user_answers = self._uow.ent_attempts.get_attempt_answers_with_questions(attempt.id)
+            user_answers = self._uow.ent_attempts.get_attempt_answers_with_questions(
+                attempt.id
+            )
 
             # Получаем все вопросы попытки
             if attempt.exam_type.value == "by_subject":
                 # Для by_subject получаем вопросы из ent_option
-                questions_repo = self._uow.ent_options.get_option_questions(attempt.ent_option_id)
+                questions_repo = self._uow.ent_options.get_option_questions(
+                    attempt.ent_option_id
+                )
             else:
                 # Для full_exam восстанавливаем сохранённый набор вопросов
                 questions_repo = self._load_full_exam_questions(attempt)
@@ -1116,7 +1272,10 @@ class EntAttemptService:
                 "started_at": attempt.started_at,
                 "completed_at": attempt.completed_at,
                 "deadline_at": attempt.deadline_at,
-                "total_questions": stats.correct + stats.incorrect + stats.partial_correct + stats.skiped,
+                "total_questions": stats.correct
+                + stats.incorrect
+                + stats.partial_correct
+                + stats.skiped,
                 "correct_answers": stats.correct,
                 "incorrect_answers": stats.incorrect,
                 "skipped_answers": stats.skiped,
@@ -1143,9 +1302,13 @@ class EntAttemptService:
                     ent_option_id=attempt.ent_option_id,
                     subject_id=attempt.options.subject_id if attempt.options else 0,
                     subject_name=(
-                        attempt.options.subject.name if attempt.options and attempt.options.subject else "Unknown"
+                        attempt.options.subject.name
+                        if attempt.options and attempt.options.subject
+                        else "Unknown"
                     ),
-                    option_number=(attempt.options.option_number if attempt.options else 0),
+                    option_number=(
+                        attempt.options.option_number if attempt.options else 0
+                    ),
                     questions=questions_with_answers,
                 )
             else:
@@ -1170,7 +1333,9 @@ class EntAttemptService:
                     exam_type=ExamType.full_exam,
                     subject_combination_id=attempt.subject_combination_id,
                     subject_combination_name=(
-                        attempt.subject_combination.name if attempt.subject_combination else "Unknown"
+                        attempt.subject_combination.name
+                        if attempt.subject_combination
+                        else "Unknown"
                     ),
                     questions=questions_by_subject,
                 )
@@ -1226,7 +1391,9 @@ class EntAttemptService:
                     variants=variants,
                     question_number=idx + 1,
                     is_correct=is_correct,
-                    subject_name=self._extract_subject_name(question_obj) or default_subject_name or "Unknown",
+                    subject_name=self._extract_subject_name(question_obj)
+                    or default_subject_name
+                    or "Unknown",
                     topic_name=self._extract_topic_name(question_obj),
                 )
             )
@@ -1312,7 +1479,9 @@ class EntAttemptService:
             )
 
         # Инвалидировать все остальные кеши
-        deleted = self._cache_service.invalidate_by_resources(resources, user_id=student_guid)
+        deleted = self._cache_service.invalidate_by_resources(
+            resources, user_id=student_guid
+        )
         logger.info(
             "Invalidated ENT attempt cache for user %s, deleted %s keys",
             student_guid,

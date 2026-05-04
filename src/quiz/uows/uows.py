@@ -1,3 +1,4 @@
+from quiz.repositories.user_points import UserPointsRepository
 from bank.repository import BankRepository
 from database.uows import UnitOfWorkSQLAlchemy
 from quiz.repositories.attendance import AttendanceRepository
@@ -42,11 +43,19 @@ class UnitOfWorkTests(UnitOfWorkSQLAlchemy):
         self.questions: QuestionRepositoryInterface = QuestionRepository(self.session)
         self.subjects: SubjectRepositoryInterface = SubjectRepository(self.session)
         self.topics: TopicRepositoryInterface = TopicRepository(self.session)
-        self.ent_options: EntOptionsRepositoryInterface = EntOptionRepository(self.session)
-        self.ent_questions: EntOptionQuestionRepositoryInterface = EntOptionQuestionRepository(self.session)
-        self.ent_attempts: EntAttemptRepositoryInterface = EntAttemptRepository(self.session)
+        self.ent_options: EntOptionsRepositoryInterface = EntOptionRepository(
+            self.session
+        )
+        self.ent_questions: EntOptionQuestionRepositoryInterface = (
+            EntOptionQuestionRepository(self.session)
+        )
+        self.ent_attempts: EntAttemptRepositoryInterface = EntAttemptRepository(
+            self.session
+        )
         self.trainers: TrainerRepository = TrainerRepository(self.session)
-        self.trainer_attempts: TrainerAttemptRepositoryInterface = TrainerAttemptRepository(self.session)
+        self.trainer_attempts: TrainerAttemptRepositoryInterface = (
+            TrainerAttemptRepository(self.session)
+        )
         self.progress = ProgressRepository(self.session)
         self.daily_tests: DailyTestRepository = DailyTestRepository(self.session)
         self.attendance: AttendanceRepository = AttendanceRepository(self.session)
@@ -58,6 +67,7 @@ class UnitOfWorkTests(UnitOfWorkSQLAlchemy):
         self.user_module_progress = UserModuleProgressRepository(self.session)
         self.cashback = CashbackRepository(self.session)
         self.bank = BankRepository(self.session)
+        self.user_points = UserPointsRepository(self.session)
         return self
 
 
@@ -67,11 +77,19 @@ class UnitOfWorkQuestions(UnitOfWorkSQLAlchemy):
         self.questions: QuestionRepositoryInterface = QuestionRepository(self.session)
         self.subjects: SubjectRepositoryInterface = SubjectRepository(self.session)
         self.topics: TopicRepositoryInterface = TopicRepository(self.session)
-        self.ent_options: EntOptionsRepositoryInterface = EntOptionRepository(self.session)
-        self.ent_questions: EntOptionQuestionRepositoryInterface = EntOptionQuestionRepository(self.session)
-        self.ent_attempts: EntAttemptRepositoryInterface = EntAttemptRepository(self.session)
+        self.ent_options: EntOptionsRepositoryInterface = EntOptionRepository(
+            self.session
+        )
+        self.ent_questions: EntOptionQuestionRepositoryInterface = (
+            EntOptionQuestionRepository(self.session)
+        )
+        self.ent_attempts: EntAttemptRepositoryInterface = EntAttemptRepository(
+            self.session
+        )
         self.trainers: TrainerRepository = TrainerRepository(self.session)
-        self.trainer_attempts: TrainerAttemptRepositoryInterface = TrainerAttemptRepository(self.session)
+        self.trainer_attempts: TrainerAttemptRepositoryInterface = (
+            TrainerAttemptRepository(self.session)
+        )
         self.progress = ProgressRepository(self.session)
         self.daily_tests: DailyTestRepository = DailyTestRepository(self.session)
         self.attendance: AttendanceRepository = AttendanceRepository(self.session)

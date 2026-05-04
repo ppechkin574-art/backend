@@ -523,7 +523,7 @@ class SubjectService(SubjectServiceInterface):
             result = []
             for subject_data in self._uow.progress.get_subjects_with_progress(user_id, only_correct):
                 image = subject_data.get("image")
-                subject_data["image"] = self._file_service.get_subject_image_url(image) if image else None
+                subject_data["image"] = self._file_service.get_subject_image_url(image) if image else ""
                 result.append(SubjectProgressDTO(**subject_data))
 
             return result

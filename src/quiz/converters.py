@@ -322,12 +322,15 @@ def to_topic_service(topic: TopicRepositoryDTO) -> TopicServiceDTO:
     return TopicServiceDTO(id=topic.id, subject_id=topic.subject_id, name=topic.name)
 
 
-def to_subject_service(subject: SubjectRepositoryDTO) -> SubjectServiceDTO:
+def to_subject_service(subject: SubjectRepositoryDTO, file_service=None) -> SubjectServiceDTO:
+    image = subject.image or ""
+    if file_service is not None and image:
+        image = file_service.get_subject_image_url(image) or ""
     return SubjectServiceDTO(
         id=subject.id,
         name=subject.name,
         type=subject.type,
-        image=subject.image or "",
+        image=image,
     )
 
 

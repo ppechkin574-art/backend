@@ -192,7 +192,7 @@ class SubjectService(SubjectServiceInterface):
                 self._uow.commit()
                 self._invalidate_subject_cache()
                 logger.info("Invalidated subjects cache after creation")
-                return to_subject_service(created_subject)
+                return to_subject_service(created_subject, self._file_service)
             except SubjectIntegrityErrorRepository:
                 raise SubjectIntegrityErrorService
 
@@ -212,7 +212,7 @@ class SubjectService(SubjectServiceInterface):
         """
         with self._uow:
             try:
-                return to_subject_service(self._uow.subjects.get_by_id(subject_id))
+                return to_subject_service(self._uow.subjects.get_by_id(subject_id), self._file_service)
             except SubjectNotFoundRepository:
                 raise SubjectNotFoundService
 
@@ -237,7 +237,7 @@ class SubjectService(SubjectServiceInterface):
                 self._uow.commit()
                 self._invalidate_subject_cache(subject_id)
                 logger.info("Invalidated subject cache after update")
-                return to_subject_service(updated_subject)
+                return to_subject_service(updated_subject, self._file_service)
             except SubjectNotFoundRepository:
                 raise SubjectNotFoundService
             except SubjectSameNameRepository as e:
@@ -299,7 +299,7 @@ class SubjectService(SubjectServiceInterface):
             offset = (page - 1) * page_size
             subjects, total_count = self._uow.subjects.list(offset, page_size, search, sort_columns, is_sort_ascendings)
 
-            return [to_subject_service(subject) for subject in subjects], total_count
+            return [to_subject_service(subject, self._file_service) for subject in subjects], total_count
 
     @cached(strategy=CacheStrategy.GLOBAL, ttl=604800, resource="subject_topics")
     def get_topics(self, subject_id: int) -> builtins.list[TopicServiceDTO]:
@@ -330,7 +330,7 @@ class SubjectService(SubjectServiceInterface):
         """
         with self._uow:
             try:
-                return to_subject_service(self._uow.subjects.get_by_name(name))
+                return to_subject_service(self._uow.subjects.get_by_name(name), self._file_service)
             except SubjectNotFoundRepository:
                 return self.create(SubjectCreateServiceDTO(name=name))
 
@@ -346,7 +346,7 @@ class SubjectService(SubjectServiceInterface):
         """
         with self._uow:
             return [
-                {"subject": to_subject_service(subject), "topic_count": count}
+                {"subject": to_subject_service(subject, self._file_service), "topic_count": count}
                 for subject, count in self._uow.subjects.get_with_topic_counts()
             ]
 
@@ -364,7 +364,7 @@ class SubjectService(SubjectServiceInterface):
         """
         with self._uow:
             return [
-                {"subject": to_subject_service(subject), "question_count": count}
+                {"subject": to_subject_service(subject, self._file_service), "question_count": count}
                 for subject, count in self._uow.subjects.get_with_question_counts()
             ]
 
@@ -385,7 +385,7 @@ class SubjectService(SubjectServiceInterface):
         with self._uow:
             subject = self._uow.subjects.get_by_id(subject_id)
             return {
-                "subject": to_subject_service(subject),
+                "subject": to_subject_service(subject, self._file_service),
                 "topic_count": self.count_topics(subject_id),
                 "question_count": self._uow.questions.count_by_subject(subject_id),
                 "topics": [to_topic_service(topic) for topic in subject.topics],
@@ -458,7 +458,7 @@ class SubjectService(SubjectServiceInterface):
                 self._uow.subjects.delete(source_subject_id)
                 logger.info("Deleted source subject %s", source_subject_id)
                 self._uow.commit()
-                return to_subject_service(self._uow.subjects.get_by_id(target_subject_id))
+                return to_subject_service(self._uow.subjects.get_by_id(target_subject_id), self._file_service)
 
             except SubjectNotFoundRepository as e:
                 raise SubjectNotFoundService(str(e))

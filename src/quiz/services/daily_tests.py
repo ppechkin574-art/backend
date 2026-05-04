@@ -29,6 +29,7 @@ from quiz.utils.init import (
     VariantValidator,
 )
 from utils.cache import CacheService, CacheStrategy, cached
+from utils.file_service import FileService
 
 logger = logging.getLogger(__name__)
 
@@ -47,10 +48,12 @@ class DailyTestService:
         uow: UnitOfWorkTests,
         cache_service: CacheService,
         cashback_service: CashbackService,
+        file_service: FileService,
     ):
         self._uow = uow
         self._cache_service = cache_service
         self._cashback_service = cashback_service
+        self._file_service = file_service
 
     @staticmethod
     def _get_astana_today() -> date:
@@ -73,7 +76,7 @@ class DailyTestService:
                 SubjectPreferenceDTO(
                     subject_id=pref.subject.id,
                     subject_name=pref.subject.name,
-                    image=(f"https://lumi-unt.kz/uploads{pref.subject.image}" if pref.subject.image else None),
+                    image=self._file_service.get_subject_image_url(pref.subject.image) if pref.subject.image else None,
                     is_default=pref.is_default,
                 )
                 for pref in preferences
@@ -97,7 +100,7 @@ class DailyTestService:
                 SubjectPreferenceDTO(
                     subject_id=pref.subject.id,
                     subject_name=pref.subject.name,
-                    image=(f"https://lumi-unt.kz/uploads{pref.subject.image}" if pref.subject.image else None),
+                    image=self._file_service.get_subject_image_url(pref.subject.image) if pref.subject.image else None,
                     is_default=pref.is_default,
                 )
                 for pref in preferences

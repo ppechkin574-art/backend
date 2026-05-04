@@ -10,3 +10,5 @@ class MinioSettings(BaseSettings):
     secret_key: str
     bucket: str
     expires: timedelta = Field(default=timedelta(minutes=30))
+    public_endpoint: str | None = None
+    public_secure: bool = True

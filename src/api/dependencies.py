@@ -79,7 +79,7 @@ from student.uows import UnitOfWorkStudents
 from subscription.plan_repository import SubscriptionPlanRepository
 from subscription.plan_service import SubscriptionPlanService
 from subscription.service import SubscriptionService
-from utils.cache import CacheService
+from utils.cache import CacheService, CacheStrategy
 from utils.file_service import FileService
 
 if TYPE_CHECKING:
@@ -279,7 +279,8 @@ def get_user(
     service: AuthServiceInterface = Depends(get_auth_service),
     subscription_service: SubscriptionService = Depends(get_subscription_service),
     attendance_service: AttendanceService = Depends(get_attendance_service),
-    db_session: Session = Depends(get_db_session),  # добавлено
+    db_session: Session = Depends(get_db_session),
+    cache_service: CacheService = Depends(get_cache_service),
 ) -> UserDTO:
     try:
         user = service.get_user_from_token(token)
@@ -294,10 +295,23 @@ def get_user(
             user.attendance_total_points = 0
             user.attendance_today_points = None
 
-        # Добавляем баллы и ранг
-        points_repo = UserPointsRepository(db_session)
-        user.points = points_repo.get_total_points(user.id)
-        user.rank = points_repo.get_user_rank(user.id)
+        points_key = cache_service.make_key(
+            CacheStrategy.USER, user_id=user.id, resource="user_points", params="total"
+        )
+        rank_key = cache_service.make_key(
+            CacheStrategy.USER, user_id=user.id, resource="user_points", params="rank"
+        )
+        cached_points = cache_service.get(points_key)
+        cached_rank = cache_service.get(rank_key)
+        if cached_points is None or cached_rank is None:
+            points_repo = UserPointsRepository(db_session)
+            user.points = points_repo.get_total_points(user.id)
+            user.rank = points_repo.get_user_rank(user.id)
+            cache_service.set(points_key, user.points, ttl=60)
+            cache_service.set(rank_key, user.rank, ttl=60)
+        else:
+            user.points = int(cached_points)
+            user.rank = int(cached_rank)
 
         return user
     except AuthAccessInvalidTokenError as e:
@@ -689,8 +703,9 @@ def get_daily_test_service(
     uow: UnitOfWorkTests = Depends(get_unit_of_work_tests),
     cache_service: CacheService = Depends(get_cache_service),
     cashback_service: CashbackService = Depends(get_cashback_service),
+    file_service: FileService = Depends(get_file_service),
 ) -> DailyTestService:
-    return DailyTestService(uow, cache_service, cashback_service)
+    return DailyTestService(uow, cache_service, cashback_service, file_service)
 
 
 def get_current_user_id_optional(

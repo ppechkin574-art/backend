@@ -44,11 +44,19 @@ class GoogleOAuthClient:
     def verify_id_token(self, id_token_str: str) -> dict:
         """
         Возвращает payload (dict) после верификации id_token.
+        Audience-проверка проходит, если id_token подписан на любой из
+        client_id (web/android/ios) — мобила шлёт токен от своего нативного
+        клиента, web flow — от web-клиента.
         """
         try:
             payload = google_id_token.verify_oauth2_token(
-                id_token_str, google_requests.Request(), self.settings.client_id
+                id_token_str, google_requests.Request()
             )
+            aud = payload.get("aud")
+            if aud not in self.settings.trusted_audiences:
+                raise ValueError(
+                    f"Token audience '{aud}' is not in trusted client_ids"
+                )
             return payload
 
         except ValueError as e:

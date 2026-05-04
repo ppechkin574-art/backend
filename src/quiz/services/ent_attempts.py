@@ -549,6 +549,11 @@ class EntAttemptService:
                     f"user:{student_guid}:ent_options:subject_id={subject_id}"
                 )
 
+            if attempt_stat.score > 0:
+                self._cache_service.delete_pattern(
+                    f"user:{student_guid}:user_points:*"
+                )
+
             return result
 
     # @cached(strategy=CacheStrategy.USER, ttl=604800, resource="ent_statistic")

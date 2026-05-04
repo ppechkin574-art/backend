@@ -87,18 +87,18 @@ keycloak__open_id__CLIENT_SECRET_KEY → (реальный из Keycloak)
 
 ### 3. Firebase Cloud Messaging (push-уведомления)
 
-**Сейчас:** отключён через `firebase__enabled=false` (по дефолту). Push-уведомления о новых задачах не отправляются.
+**Сейчас:** ✅ Подключён. Firebase Admin SDK инициализируется при старте приложения (`Firebase app initialized for project aima-prod-67f9d` в логах), credentials передаются inline через `FIREBASE__CREDENTIALS_JSON` (см. коммит `c78c7b4`). Backend → FCM pipeline работает.
 
-**Шаги:**
-- Создать новый Firebase-проект на `firebase.google.com → Add project`.
-- Service Account → Generate new private key → скачать JSON.
-- Залить файл в Railway volume (см. п. 13).
+**Что осталось:**
+- Mobile-апп должен зарегать свой свежий FCM-токен на `POST /user/daily-tests/devices/token` после логина. Сейчас в БД 13 токенов от прошлых сессий, при тестовой рассылке через `POST /admin/notifications/test/send` все возвращают `NotRegistered` (9 авточищены). Это **frontend-задача Романа** — проверить, что Flutter после логина действительно дёргает endpoint регистрации устройства.
+- Плановый push (`Daily Test Notification Scheduler`, 09:00 Asia/Almaty) идёт в холостую — нет рабочих токенов. После того, как мобила пришлёт валидный FCM-токен — надо протестировать что таски ScheduleR доходят.
 
-**Включить:**
-```
-firebase__enabled          → true
-firebase__credentials_path → /app/secrets/firebase_credentials.json
-```
+**Если придётся пересоздавать Firebase project** (например, перевыпускать service account):
+- `firebase.google.com → Add project` → Project name `aima-prod`
+- Add app → Android (`com.lumi.lumiapp`) / iOS (`com.lumi.lumiapp`) → скачать `google-services.json` / `GoogleService-Info.plist` → положить в `app/android/app/` и `app/ios/Runner/`
+- Project settings → Service accounts → Generate new private key → скачать JSON
+- В Railway → service `backend` → Variables → `FIREBASE__CREDENTIALS_JSON` = base64(JSON) (строкой одной)
+- Backend перезапустится сам, в логах должно появиться `Firebase app initialized for project ...`
 
 ---
 

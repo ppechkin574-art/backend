@@ -4,6 +4,12 @@
 
 **Цель:** заменить заглушки `https://example.com` в env-переменных на реальный Keycloak. После этого заработает регистрация/логин/refresh токенов.
 
+> **📦 Snapshot текущего prod-реалма (04.05.2026):**
+> - [`keycloak-realm-lumi.live.json`](./keycloak-realm-lumi.live.json) — полный realm с клиентами / ролями / authentication flows
+> - [`keycloak-realm-lumi.user-profile.json`](./keycloak-realm-lumi.user-profile.json) — declarative user profile (важно: тут уже снято `required: ["user"]` с `firstName`/`lastName`, иначе любой логин юзера без этих полей возвращает `400 Account is not fully set up`)
+>
+> При пересоздании Keycloak: импортировать `live.json` через UI / `--import-realm`, потом отдельно загрузить user-profile через `PUT /admin/realms/lumi/users/profile`.
+
 ---
 
 ## Шаг 1. Развернуть Keycloak на Railway

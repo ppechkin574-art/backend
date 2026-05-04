@@ -32,7 +32,9 @@ logger = logging.getLogger(__name__)
 
 
 class IdentityProviderClientInterface(Protocol):
-    def get_or_create(self, user: KeycloakCreateUserDTO) -> tuple[KeycloakUserDTO, bool]:
+    def get_or_create(
+        self, user: KeycloakCreateUserDTO
+    ) -> tuple[KeycloakUserDTO, bool]:
         """
         Create user.
 
@@ -107,7 +109,9 @@ class IdentityProviderClientInterface(Protocol):
         """
         raise NotImplementedError
 
-    def create_tokens(self, login: KZPhone | EmailStr, password: str) -> KeycloakAccessTokenDTO:
+    def create_tokens(
+        self, login: KZPhone | EmailStr, password: str
+    ) -> KeycloakAccessTokenDTO:
         """
         Create tokens for the user.
 
@@ -215,7 +219,9 @@ class IdentityProviderClientInterface(Protocol):
         """
         raise NotImplementedError
 
-    def update_user_subscription(self, user_id: UUID, plan: PlanType, expires_at: datetime | None = None) -> None:
+    def update_user_subscription(
+        self, user_id: UUID, plan: PlanType, expires_at: datetime | None = None
+    ) -> None:
         """
         Обновить подписку пользователя в Keycloak
 
@@ -283,7 +289,9 @@ class IdentityProviderClientKeycloak:
 
     #     return f"{base_username}_{random_suffix}"
 
-    def get_or_create(self, user: KeycloakCreateUserDTO) -> tuple[KeycloakUserDTO, bool]:
+    def get_or_create(
+        self, user: KeycloakCreateUserDTO
+    ) -> tuple[KeycloakUserDTO, bool]:
         logger.info(
             "Creating or getting user: email=%s, phone=%s",
             user.email,
@@ -300,7 +308,9 @@ class IdentityProviderClientKeycloak:
 
         try:
             if user.attributes.phone:
-                existing_user = self.get(KeycloakUserQueryDTO(phone=user.attributes.phone[0]))
+                existing_user = self.get(
+                    KeycloakUserQueryDTO(phone=user.attributes.phone[0])
+                )
                 logger.info("Existing user found by phone: %s", existing_user.id)
                 return existing_user, False
         except IdentityNotFound:
@@ -316,14 +326,20 @@ class IdentityProviderClientKeycloak:
         )
 
         try:
-            user_id = UUID(self._keycloak_admin.create_user(user.model_dump(mode="json")))
+            user_id = UUID(
+                self._keycloak_admin.create_user(user.model_dump(mode="json"))
+            )
             logger.info("User created successfully: %s", user_id)
             return self.get(KeycloakUserQueryDTO(id=user_id)), True
         except KeycloakError as _e:
             if _e.response_code == 409:
                 logger.warning("User creation conflict, analyzing: %s", str(_e))
 
-                error_msg = _e.error_message.decode() if isinstance(_e.error_message, bytes) else str(_e.error_message)
+                error_msg = (
+                    _e.error_message.decode()
+                    if isinstance(_e.error_message, bytes)
+                    else str(_e.error_message)
+                )
                 logger.info("Conflict error message: %s", error_msg)
 
                 if "username" in error_msg.lower():
@@ -338,7 +354,9 @@ class IdentityProviderClientKeycloak:
                         )
                         return existing_user, False
                     except IdentityNotFound:
-                        logger.exception("Email conflict but user not found: %s", user.email)
+                        logger.exception(
+                            "Email conflict but user not found: %s", user.email
+                        )
                         raise IdentityNotFound
 
                 logger.exception("Unknown conflict type: %s", error_msg)
@@ -386,7 +404,9 @@ class IdentityProviderClientKeycloak:
                 logger.debug("User found by ID: %s", user_rep.get("id", "Unknown"))
             elif user.email:
                 logger.debug("Searching by email: %s", user.email)
-                users = self._keycloak_admin.get_users(query={"email": user.email, "exact": True})
+                users = self._keycloak_admin.get_users(
+                    query={"email": user.email, "exact": True}
+                )
                 logger.debug("Found %s users matching email", len(users))
                 if not users:
                     logger.warning("No users found for email: %s", user.email)
@@ -402,7 +422,9 @@ class IdentityProviderClientKeycloak:
                 logger.debug("Selected user: %s", user_rep.get("id", "Unknown"))
             elif user.username:
                 logger.debug("Searching by username: %s", user.username)
-                users = self._keycloak_admin.get_users(query={"username": user.username, "exact": True})
+                users = self._keycloak_admin.get_users(
+                    query={"username": user.username, "exact": True}
+                )
                 logger.debug("Found %s users matching username", len(users))
                 if not users:
                     logger.warning("No users found for username: %s", user.username)
@@ -504,17 +526,27 @@ class IdentityProviderClientKeycloak:
         try:
             roles = self._keycloak_admin.get_realm_roles_of_user(str(user_id))
             role_names = [role["name"] for role in roles]
-            logger.debug("Found %s roles for user %s: %s", len(role_names), user_id, role_names)
+            logger.debug(
+                "Found %s roles for user %s: %s", len(role_names), user_id, role_names
+            )
             return role_names
         except KeycloakError as _e:
-            logger.exception("Keycloak error getting roles for user %s: %s", user_id, str(_e))
+            logger.exception(
+                "Keycloak error getting roles for user %s: %s", user_id, str(_e)
+            )
             if _e.response_code == 404:
                 raise IdentityNotFound
             raise
 
     def get_users(self) -> list[KeycloakUserDTO]:
         """Получить всех пользователей из Keycloak."""
-        return [self._format_keycloak_user(u) for u in self._keycloak_admin.get_users({})]
+        return [
+            self._format_keycloak_user(u) for u in self._keycloak_admin.get_users({})
+        ]
+
+    def get_user(self, user_id: str) -> KeycloakUserDTO:
+        """Get user by ID (convenience method)."""
+        return self.get(KeycloakUserQueryDTO(id=UUID(user_id)))
 
     def delete(self, user_id: UUID) -> None:
         logger.info("Deleting user: %s", user_id)
@@ -551,14 +583,20 @@ class IdentityProviderClientKeycloak:
             logger.info("  - Email Verified: %s", user_after.get("emailVerified"))
             logger.info("  - Required Actions: %s", user_after.get("requiredActions"))
 
-            logger.info("User active status updated: user=%s, active=%s", user_id, active)
+            logger.info(
+                "User active status updated: user=%s, active=%s", user_id, active
+            )
         except KeycloakError as _e:
-            logger.exception("Keycloak error setting active status for user %s: %s", user_id, str(_e))
+            logger.exception(
+                "Keycloak error setting active status for user %s: %s", user_id, str(_e)
+            )
             if _e.response_code == 404:
                 raise IdentityNotFound
             raise
 
-    def create_tokens(self, login: KZPhone | EmailStr, password: str) -> KeycloakAccessTokenDTO:
+    def create_tokens(
+        self, login: KZPhone | EmailStr, password: str
+    ) -> KeycloakAccessTokenDTO:
         """
         Универсальный метод создания токенов.
         Поддерживает login как: email, телефон, username.
@@ -573,9 +611,6 @@ class IdentityProviderClientKeycloak:
             logger.info("Tokens created successfully for: %s", login)
             return KeycloakAccessTokenDTO(**tokens)
         except KeycloakError as exc:
-            # Запоминаем оригинальную ошибку под собственным именем — `as e` в Python 3
-            # очищает свою переменную при выходе из блока, поэтому без переименования
-            # внутренний except затирает внешний (UnboundLocalError ниже).
             original_error = exc
             logger.exception("Keycloak error creating tokens: %s", str(original_error))
 
@@ -586,13 +621,13 @@ class IdentityProviderClientKeycloak:
                 time.sleep(2)
 
                 try:
-                    tokens = self._keycloak_openid.token(username=username, password=password)
+                    tokens = self._keycloak_openid.token(
+                        username=username, password=password
+                    )
                     logger.info("Tokens created on retry for: %s", username)
                     return KeycloakAccessTokenDTO(**tokens)
                 except KeycloakError as retry_exc:
                     logger.exception("Retry failed: %s", str(retry_exc))
-                    # Account всё ещё имеет required actions — это конкретный prod-flag
-                    # для фронта, чтобы он мог показать "Завершите регистрацию через web".
                     raise NotVerifiedError from retry_exc
 
             if original_error.response_code == 401:
@@ -636,10 +671,14 @@ class IdentityProviderClientKeycloak:
             logger.info("  - Required Actions: %s", user_before.get("requiredActions"))
             logger.info("  - Email Verified: %s", user_before.get("emailVerified"))
 
-            self._keycloak_admin.set_user_password(user_id=str(user_id), password=password, temporary=False)
+            self._keycloak_admin.set_user_password(
+                user_id=str(user_id), password=password, temporary=False
+            )
 
             try:
-                self._keycloak_admin.update_user(user_id=str(user_id), payload={"requiredActions": []})
+                self._keycloak_admin.update_user(
+                    user_id=str(user_id), payload={"requiredActions": []}
+                )
                 logger.info("Required actions cleared for user: %s", user_id)
             except Exception as e:
                 logger.warning("Could not clear required actions: %s", str(e))
@@ -652,7 +691,9 @@ class IdentityProviderClientKeycloak:
             logger.info("Password set successfully for user: %s", user_id)
             return True
         except KeycloakError as _e:
-            logger.exception("Keycloak error setting password for user %s: %s", user_id, str(_e))
+            logger.exception(
+                "Keycloak error setting password for user %s: %s", user_id, str(_e)
+            )
             if _e.response_code == 404:
                 raise IdentityNotFound
             raise
@@ -682,7 +723,9 @@ class IdentityProviderClientKeycloak:
             raise
 
     def update_user(self, user_id: UUID, data: KeycloakUserUpdateDTO) -> None:
-        logger.info("Updating user: %s, data=%s", user_id, data.model_dump(exclude_unset=True))
+        logger.info(
+            "Updating user: %s, data=%s", user_id, data.model_dump(exclude_unset=True)
+        )
 
         try:
             current_user = self._keycloak_admin.get_user(str(user_id))
@@ -723,7 +766,11 @@ class IdentityProviderClientKeycloak:
             if _e.response_code == 404:
                 raise IdentityNotFound
             if _e.response_code == 409:
-                error_msg = _e.error_message.decode() if isinstance(_e.error_message, bytes) else _e.error_message
+                error_msg = (
+                    _e.error_message.decode()
+                    if isinstance(_e.error_message, bytes)
+                    else _e.error_message
+                )
                 if "email" in error_msg.lower():
                     raise EmailAlreadyExists
             raise
@@ -763,7 +810,9 @@ class IdentityProviderClientKeycloak:
             return KeycloakAccessTokenDTO(**tokens)
 
         except KeycloakError as e:
-            logger.exception("Keycloak error creating OAuth tokens for user %s: %s", user_id, str(e))
+            logger.exception(
+                "Keycloak error creating OAuth tokens for user %s: %s", user_id, str(e)
+            )
             if e.response_code == 404:
                 raise IdentityNotFound
             raise
@@ -784,7 +833,9 @@ class IdentityProviderClientKeycloak:
         if self._is_valid_username(login):
             logger.debug("Testing as username: %s", login)
             try:
-                users = self._keycloak_admin.get_users({"username": login, "exact": True})
+                users = self._keycloak_admin.get_users(
+                    {"username": login, "exact": True}
+                )
                 if users:
                     logger.debug("Found user by username: %s", login)
                     return login
@@ -809,7 +860,9 @@ class IdentityProviderClientKeycloak:
         logger.debug("Performing extended search for: %s", login)
 
         try:
-            users = self._keycloak_admin.get_users({"email": login.lower(), "exact": True})
+            users = self._keycloak_admin.get_users(
+                {"email": login.lower(), "exact": True}
+            )
             if users:
                 logger.debug("Found user by email (case-insensitive): %s", login)
                 return users[0].get("username")
@@ -877,7 +930,12 @@ class IdentityProviderClientKeycloak:
         digits = "".join(filter(str.isdigit, phone))
 
         if len(digits) >= 10:
-            if digits.startswith("77") and len(digits) == 11 or digits.startswith("87") and len(digits) == 11:
+            if (
+                digits.startswith("77")
+                and len(digits) == 11
+                or digits.startswith("87")
+                and len(digits) == 11
+            ):
                 return "+77" + digits[2:]
             elif digits.startswith("7") and len(digits) == 11:
                 return "+" + digits
@@ -887,7 +945,10 @@ class IdentityProviderClientKeycloak:
                 return "+7" + digits[1:]
 
         if phone.startswith("+") and (
-            phone.startswith("+77") and len(phone) == 12 or phone.startswith("+7") and len(phone) == 12
+            phone.startswith("+77")
+            and len(phone) == 12
+            or phone.startswith("+7")
+            and len(phone) == 12
         ):
             return phone
 
@@ -1018,7 +1079,9 @@ class IdentityProviderClientKeycloak:
     #         logger.exception("Error force clearing requirements: %s", str(e))
     #         raise
 
-    def update_user_subscription(self, user_id: UUID, plan: PlanType, expires_at: datetime | None = None) -> None:
+    def update_user_subscription(
+        self, user_id: UUID, plan: PlanType, expires_at: datetime | None = None
+    ) -> None:
         """
         Обновить подписку пользователя в Keycloak
         """
@@ -1159,8 +1222,12 @@ class IdentityProviderClientKeycloak:
                 raise ValueError(f"Role {role_name} not found")
             role_id = role["id"]
             logger.debug("Found role id: %s", role_id)
-            self._keycloak_admin.assign_realm_roles(str(user_id), [{"id": role_id, "name": role_name}])
+            self._keycloak_admin.assign_realm_roles(
+                str(user_id), [{"id": role_id, "name": role_name}]
+            )
             logger.info("Added role %s to user %s", role_name, user_id)
         except Exception as e:
-            logger.exception("Failed to add role %s to user %s: %s", role_name, user_id, e)
+            logger.exception(
+                "Failed to add role %s to user %s: %s", role_name, user_id, e
+            )
             raise

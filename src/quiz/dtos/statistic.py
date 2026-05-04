@@ -47,16 +47,29 @@ class StatisticRequestDTO(BaseModel):
         description="Тип периода для статистики",
     )
 
-    week_date: date | None = Field(default=None, description="Дата для определения календарной недели")
+    week_date: date | None = Field(
+        default=None, description="Дата для определения календарной недели"
+    )
 
-    month_year: str | None = Field(default=None, description="Год и месяц в формате 'YYYY-MM'")
+    month_year: str | None = Field(
+        default=None, description="Год и месяц в формате 'YYYY-MM'"
+    )
 
-    custom_start_date: date | None = Field(default=None, description="Начальная дата для произвольного периода")
-    custom_end_date: date | None = Field(default=None, description="Конечная дата для произвольного периода")
+    custom_start_date: date | None = Field(
+        default=None, description="Начальная дата для произвольного периода"
+    )
+    custom_end_date: date | None = Field(
+        default=None, description="Конечная дата для произвольного периода"
+    )
 
-    subject_id: int | None = Field(default=None, description="ID предмета для фильтрации статистики тренажеров")
+    subject_id: int | None = Field(
+        default=None, description="ID предмета для фильтрации статистики тренажеров"
+    )
 
-    exam_type: ExamType | None = Field(default=ExamType.by_subject, description="Тип экзамена ЕНТ")
+    exam_type: ExamType | None = Field(
+        default=ExamType.by_subject, description="Тип экзамена ЕНТ"
+    )
+    user_id: UUID | None = None
 
 
 class TopicStatisticGetServiceDTO(BaseModel):
@@ -99,7 +112,11 @@ class SubjectProgressDTO(BaseModel):
     @property
     def percentage(self) -> float:
         return round(
-            ((self.correct_answers / self.total_questions * 100) if self.total_questions > 0 else 0),
+            (
+                (self.correct_answers / self.total_questions * 100)
+                if self.total_questions > 0
+                else 0
+            ),
             2,
         )
 
@@ -118,7 +135,11 @@ class TopicProgressDTO(BaseModel):
     @property
     def percentage(self) -> float:
         return round(
-            ((self.correct_answers / self.total_questions * 100) if self.total_questions > 0 else 0),
+            (
+                (self.correct_answers / self.total_questions * 100)
+                if self.total_questions > 0
+                else 0
+            ),
             2,
         )
 
@@ -191,13 +212,23 @@ class EntStatisticSummaryDTO(BaseModel):
 
     period_attempts_count: int
     period_total_questions: int = Field(default=0, description="Вопросов за период")
-    period_correct_answers: int = Field(default=0, description="Правильных ответов за период")
+    period_correct_answers: int = Field(
+        default=0, description="Правильных ответов за период"
+    )
     period_accuracy: float = Field(default=0.0, description="Точность за период")
 
-    overall_total_questions: int = Field(default=0, description="Всего вопросов за всё время")
-    overall_correct_answers: int = Field(default=0, description="Всего правильных ответов за всё время")
-    overall_accuracy: float = Field(default=0.0, description="Общая точность за всё время")
-    overall_average_score: float = Field(default=0.0, description="Средний балл за все попытки")
+    overall_total_questions: int = Field(
+        default=0, description="Всего вопросов за всё время"
+    )
+    overall_correct_answers: int = Field(
+        default=0, description="Всего правильных ответов за всё время"
+    )
+    overall_accuracy: float = Field(
+        default=0.0, description="Общая точность за всё время"
+    )
+    overall_average_score: float = Field(
+        default=0.0, description="Средний балл за все попытки"
+    )
 
     period_progress_by_subject: list[SubjectProgressDTO] = Field(
         default_factory=list, description="Прогресс по предметам за период"
@@ -206,8 +237,12 @@ class EntStatisticSummaryDTO(BaseModel):
         default_factory=list, description="Общий прогресс по предметам за всё время"
     )
     current_streak: int = Field(default=0, ge=0)
-    total_spend_time_seconds: int = Field(default=0, description="Общее время, затраченное на ENT тесты (в секундах)")
-    total_spend_time_formatted: str = Field(default="0s", description="Форматированное время ENT тестов")
+    total_spend_time_seconds: int = Field(
+        default=0, description="Общее время, затраченное на ENT тесты (в секундах)"
+    )
+    total_spend_time_formatted: str = Field(
+        default="0s", description="Форматированное время ENT тестов"
+    )
     exam_type: str | None = Field(default=None, description="Тип экзамена")
 
 
@@ -290,12 +325,20 @@ class TrainerStatisticSummaryDTO(BaseModel):
 
     period_attempts_count: int
     period_total_questions: int = Field(default=0, description="Вопросов за период")
-    period_correct_answers: int = Field(default=0, description="Правильных ответов за период")
+    period_correct_answers: int = Field(
+        default=0, description="Правильных ответов за период"
+    )
     period_accuracy: float = Field(default=0.0, description="Точность за период")
 
-    overall_total_questions: int = Field(default=0, description="Всего вопросов за всё время")
-    overall_correct_answers: int = Field(default=0, description="Всего правильных ответов за всё время")
-    overall_accuracy: float = Field(default=0.0, description="Общая точность за всё время")
+    overall_total_questions: int = Field(
+        default=0, description="Всего вопросов за всё время"
+    )
+    overall_correct_answers: int = Field(
+        default=0, description="Всего правильных ответов за всё время"
+    )
+    overall_accuracy: float = Field(
+        default=0.0, description="Общая точность за всё время"
+    )
 
     period_progress_by_topic: list[TopicProgressDTO] = Field(
         default_factory=list, description="Прогресс по темам за период"
@@ -313,7 +356,9 @@ class TrainerStatisticSummaryDTO(BaseModel):
     total_spend_time_seconds: int = Field(
         default=0, description="Общее время, затраченное на Trainer тесты (в секундах)"
     )
-    total_spend_time_formatted: str = Field(default="0s", description="Форматированное время Trainer тестов")
+    total_spend_time_formatted: str = Field(
+        default="0s", description="Форматированное время Trainer тестов"
+    )
 
 
 # ==================== DAILY DTOs ====================
@@ -324,12 +369,20 @@ class DailyStatisticSummaryDTO(BaseModel):
 
     period_attempts_count: int
     period_total_questions: int = Field(default=0, description="Вопросов за период")
-    period_correct_answers: int = Field(default=0, description="Правильных ответов за период")
+    period_correct_answers: int = Field(
+        default=0, description="Правильных ответов за период"
+    )
     period_accuracy: float = Field(default=0.0, description="Точность за период")
 
-    overall_total_questions: int = Field(default=0, description="Всего вопросов за всё время")
-    overall_correct_answers: int = Field(default=0, description="Всего правильных ответов за всё время")
-    overall_accuracy: float = Field(default=0.0, description="Общая точность за всё время")
+    overall_total_questions: int = Field(
+        default=0, description="Всего вопросов за всё время"
+    )
+    overall_correct_answers: int = Field(
+        default=0, description="Всего правильных ответов за всё время"
+    )
+    overall_accuracy: float = Field(
+        default=0.0, description="Общая точность за всё время"
+    )
 
     period_progress_by_subject: list[SubjectProgressDTO] = Field(
         default_factory=list, description="Прогресс по предметам за период"
@@ -338,8 +391,12 @@ class DailyStatisticSummaryDTO(BaseModel):
         default_factory=list, description="Общий прогресс по предметам за всё время"
     )
     current_streak: int = Field(default=0, description="Текущая серия дней")
-    total_spend_time_seconds: int = Field(default=0, description="Общее время, затраченное на Daily тесты (в секундах)")
-    total_spend_time_formatted: str = Field(default="0s", description="Форматированное время Daily тестов")
+    total_spend_time_seconds: int = Field(
+        default=0, description="Общее время, затраченное на Daily тесты (в секундах)"
+    )
+    total_spend_time_formatted: str = Field(
+        default="0s", description="Форматированное время Daily тестов"
+    )
 
 
 # ==================== GLOBAL DTOs ====================
@@ -374,7 +431,9 @@ class GlobalStatisticDTO(BaseModel):
     def overall_accuracy_percentage(self) -> float:
         total_correct = self.total_correct_answers
         total_questions = self.total_questions
-        return round((total_correct / total_questions * 100) if total_questions > 0 else 0, 2)
+        return round(
+            (total_correct / total_questions * 100) if total_questions > 0 else 0, 2
+        )
 
 
 class StreakHistoryItemDTO(BaseModel):
@@ -420,9 +479,15 @@ class EnhancedGlobalStatisticDTO(BaseModel):
         default_factory=dict,
         description="Экранное время по типам активности (ent_subject, ent_full, trainer, daily, other)",
     )
-    total_screen_time_seconds: int = Field(default=0, description="Общее экранное время за период в секундах")
-    average_daily_screen_time_seconds: int = Field(default=0, description="Среднее экранное время в день в секундах")
-    average_daily_screen_time: str = Field(default="0m", description="Среднее экранное время в день (форматированное)")
+    total_screen_time_seconds: int = Field(
+        default=0, description="Общее экранное время за период в секундах"
+    )
+    average_daily_screen_time_seconds: int = Field(
+        default=0, description="Среднее экранное время в день в секундах"
+    )
+    average_daily_screen_time: str = Field(
+        default="0m", description="Среднее экранное время в день (форматированное)"
+    )
     activity_level: str
     engagement_score: float
     recommendations: list[str]

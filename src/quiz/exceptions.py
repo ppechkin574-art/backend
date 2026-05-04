@@ -206,7 +206,9 @@ class TopicSameNameService(TopicAlreadyExists):
 class SubjectAlreadyExists(Exception):
     """Исключение когда предмет с таким именем уже существует"""
 
-    def __init__(self, message="Subject with this name already exists", existing_subject_id=None):
+    def __init__(
+        self, message="Subject with this name already exists", existing_subject_id=None
+    ):
         self.message = message
         self.existing_subject_id = existing_subject_id
         super().__init__(self.message)
@@ -350,3 +352,23 @@ class TestQuestionAlreadyExistsError(Exception):
 
 class LessonNotPublishedError(Exception):
     """Урок не опубликован"""
+
+
+class InvitationNotFound(Exception):
+    pass
+
+
+class AlreadyInvited(Exception):
+    pass
+
+
+class CannotInviteSelf(Exception):
+    pass
+
+
+class UserNotChild(Exception):
+    pass
+
+
+class InvalidAction(Exception):
+    pass

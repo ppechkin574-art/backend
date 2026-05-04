@@ -1,15 +1,19 @@
 from datetime import date, datetime, time
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from starlette import status
 
 from api.dependencies import (
+    get_family_service,
     get_statistic_service,
     get_student,
     get_user,
     require_active_subscription,
 )
 from api.exceptions.documentation import get_common_responses, get_error_responses
+from auth.dtos.users import UserDTO
+from quiz.services.family import FamilyService
 from quiz.dtos.enums import ExamType
 from quiz.dtos.statistic import (
     EnhancedGlobalStatisticDTO,
@@ -308,17 +312,34 @@ async def get_topic_statistics_by_subject(
     responses=get_common_responses("read"),
 )
 def get_enhanced_global_statistic(
-    period_type: StatisticPeriodType = Query(StatisticPeriodType.LAST_7_DAYS, description="Тип периода для статистики"),
-    week_date: date = Query(None, description="Дата для определения календарной недели (формат: YYYY-MM-DD)"),
-    month_year: str = Query(None, description="Год и месяц для календарного месяца (формат: YYYY-MM)"),
-    custom_start_date: date = Query(None, description="Начальная дата для произвольного периода"),
-    custom_end_date: date = Query(None, description="Конечная дата для произвольного периода"),
-    subject_id: int = Query(None, description="ID предмета для фильтрации статистики тренажеров"),
-    exam_type: ExamType = Query(ExamType.by_subject, description="Тип экзамена ЕНТ"),
-    student: StudentDTO = Depends(get_student),
+    period_type: StatisticPeriodType = Query(StatisticPeriodType.LAST_7_DAYS),
+    week_date: date = Query(None),
+    month_year: str = Query(None),
+    custom_start_date: date = Query(None),
+    custom_end_date: date = Query(None),
+    subject_id: int = Query(None),
+    exam_type: ExamType = Query(ExamType.by_subject),
+    user_id: UUID | None = Query(None, description="ID ребёнка (только для родителей)"),
+    user: UserDTO = Depends(get_user),
     service: StatisticService = Depends(get_statistic_service),
+    family_service: FamilyService = Depends(get_family_service),
 ):
-    """Получить расширенную глобальную статистику"""
+    student_id = user.id
+
+    if user_id is not None:
+        if "parent" not in user.roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only parents can request statistics for another user",
+            )
+        children = family_service.get_children(user)
+        if not any(child["user_id"] == user_id for child in children):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You are not connected to this child",
+            )
+        student_id = user_id
+
     request = StatisticRequestDTO(
         period_type=period_type,
         week_date=week_date,
@@ -327,24 +348,16 @@ def get_enhanced_global_statistic(
         custom_end_date=custom_end_date,
         subject_id=subject_id,
         exam_type=exam_type,
+        user_id=user_id,
     )
 
     if period_type == StatisticPeriodType.CALENDAR_WEEK and not week_date:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Для календарной недели требуется параметр week_date",
-        )
-
+        raise HTTPException(400, "week_date required")
     if period_type == StatisticPeriodType.CALENDAR_MONTH and not month_year:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Для календарного месяца требуется параметр month_year",
-        )
+        raise HTTPException(400, "month_year required")
+    if period_type == StatisticPeriodType.CUSTOM and (
+        not custom_start_date or not custom_end_date
+    ):
+        raise HTTPException(400, "custom_start_date and custom_end_date required")
 
-    if period_type == StatisticPeriodType.CUSTOM and (not custom_start_date or not custom_end_date):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Для произвольного периода требуются параметры custom_start_date и custom_end_date",
-        )
-
-    return service.get_enhanced_global_statistic(student.id, request)
+    return service.get_enhanced_global_statistic(student_id, request)

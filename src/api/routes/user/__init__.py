@@ -10,6 +10,9 @@ from .subjects import router as subjects_router
 from .subscription import router as subscription_router
 from .topics import router as topics_router
 from .trainers import router as trainers_router
+from .leaderboard import router as leaderboard_router
+from .users import router as users_router
+from .family import router as family_router
 
 routers = [
     subjects_router,
@@ -24,4 +27,7 @@ routers = [
     subscription_router,
     cashback_router,
     bank_router,
+    leaderboard_router,
+    users_router,
+    family_router,
 ]

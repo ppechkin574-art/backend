@@ -78,7 +78,9 @@ public_router = APIRouter()
 protected_router = APIRouter()
 
 
-def perform_login(params: AuthLoginDTO, service: AuthServiceInterface) -> AuthSessionDTO:
+def perform_login(
+    params: AuthLoginDTO, service: AuthServiceInterface
+) -> AuthSessionDTO:
     try:
         tokens = service.login(params)
         log_info(
@@ -109,7 +111,9 @@ def perform_login(params: AuthLoginDTO, service: AuthServiceInterface) -> AuthSe
     return tokens
 
 
-@public_router.post("/login-swagger", response_model=TokensDTO, responses=login_responses)
+@public_router.post(
+    "/login-swagger", response_model=TokensDTO, responses=login_responses
+)
 def swagger_login(
     username: str = Form(),
     password: str = Form(),
@@ -143,7 +147,9 @@ async def request_code(
     )
 
     try:
-        verification_id = service.request_code(request_data.contact, request_data.platform, request_data.action)
+        verification_id = service.request_code(
+            request_data.contact, request_data.platform, request_data.action
+        )
 
         log_info(
             "Code requested successfully",
@@ -207,7 +213,9 @@ async def check_code(
         action_type=request_data.action.value,
     )
 
-    is_valid = service.check_code(request_data.verification_id, request_data.code, request_data.action)
+    is_valid = service.check_code(
+        request_data.verification_id, request_data.code, request_data.action
+    )
 
     if is_valid:
         log_info(
@@ -248,7 +256,9 @@ async def registration_complete(
     )
 
     try:
-        tokens = service.complete_registration(request_data.verification_id, request_data.password, request_data.name)
+        tokens = service.complete_registration(
+            request_data.verification_id, request_data.password, request_data.name
+        )
 
         log_info(
             "Registration completed successfully",
@@ -292,7 +302,9 @@ async def password_reset_complete(
     )
 
     try:
-        service.complete_password_reset(request_data.verification_id, request_data.new_password)
+        service.complete_password_reset(
+            request_data.verification_id, request_data.new_password
+        )
 
         log_info(
             "Password reset completed successfully",
@@ -302,7 +314,9 @@ async def password_reset_complete(
             verification_id=str(request_data.verification_id),
         )
 
-        return PasswordResetResponse(success=True, message="Password has been reset successfully")
+        return PasswordResetResponse(
+            success=True, message="Password has been reset successfully"
+        )
 
     except (
         AuthInvalidConfirmationCodeError,
@@ -320,7 +334,9 @@ async def password_reset_complete(
         raise e
 
 
-@public_router.get("/oauth/{provider}", summary="Start OAuth flow", response_model=OAuthStartResponse)
+@public_router.get(
+    "/oauth/{provider}", summary="Start OAuth flow", response_model=OAuthStartResponse
+)
 async def oauth_start(
     provider: OAuthProviders,
     next: str | None = Query(None),
@@ -330,7 +346,9 @@ async def oauth_start(
     """Start OAuth authentication flow"""
     try:
         state = uuid.uuid4().hex
-        redirect_after_auth = next or auth_service.oauth_helper.get_frontend_redirect(provider)
+        redirect_after_auth = next or auth_service.oauth_helper.get_frontend_redirect(
+            provider
+        )
 
         state_data = {"provider": provider, "redirect_url": redirect_after_auth}
 
@@ -474,7 +492,11 @@ async def oauth_callback(
 
         redis.delete(key)
 
-        state_data = json.loads(state_data_str.decode() if isinstance(state_data_str, bytes) else state_data_str)
+        state_data = json.loads(
+            state_data_str.decode()
+            if isinstance(state_data_str, bytes)
+            else state_data_str
+        )
 
         stored_provider = state_data.get("provider")
         frontend = state_data.get("redirect_url")
@@ -523,7 +545,9 @@ async def oauth_callback(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@public_router.post("/refresh-token", response_model=TokensDTO, responses=refresh_responses)
+@public_router.post(
+    "/refresh-token", response_model=TokensDTO, responses=refresh_responses
+)
 def refresh_token(
     refresh_params: RefreshTokenParamsDTO,
     service: AuthServiceInterface = Depends(get_auth_service),
@@ -589,7 +613,9 @@ def get_current_user(user: UserDTO = Depends(get_user)):
     return user
 
 
-@protected_router.patch("/profile", response_model=UserDTO, responses=profile_put_responses)
+@protected_router.patch(
+    "/profile", response_model=UserDTO, responses=profile_put_responses
+)
 async def update_current_user(
     name: str | None = Form(None),
     email: str | None = Form(None),
@@ -701,7 +727,9 @@ async def update_current_user(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
-@protected_router.post("/change-password", status_code=204, responses=change_password_responses)
+@protected_router.post(
+    "/change-password", status_code=204, responses=change_password_responses
+)
 def change_password(
     request_data: ChangePasswordDTO,
     user: UserDTO = Depends(get_user),
@@ -716,7 +744,9 @@ def change_password(
     )
 
     try:
-        service.change_password(user.id, request_data.old_password, request_data.new_password)
+        service.change_password(
+            user.id, request_data.old_password, request_data.new_password
+        )
 
         log_info(
             "Password changed successfully",
@@ -735,7 +765,9 @@ def change_password(
             auth_method="password",
             error_type="AuthBadCredentialsError",
         )
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid current password")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid current password"
+        )
     except AuthUserNotFoundError as e:
         log_warning(
             "User not found during password change",
@@ -851,7 +883,7 @@ def delete_account(
                 action="delete_account",
                 auth_method="token",
             )
-        service.delete_account(user, file_service)
+        service.delete_account(user)
         log_info(
             "Account deleted successfully",
             user_id=user.id,

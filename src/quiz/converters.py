@@ -221,7 +221,10 @@ def to_variant_create_repo(
 ) -> VariantCreateRepositoryDTO:
     return VariantCreateRepositoryDTO(
         blocks=[
-            TextBlockRepositoryDTO(order=block.order, type=block.type, value=block.value) for block in variant.blocks
+            TextBlockRepositoryDTO(
+                order=block.order, type=block.type, value=block.value
+            )
+            for block in variant.blocks
         ],
         is_correct=variant.is_correct,
         weight=variant.weight,
@@ -230,7 +233,12 @@ def to_variant_create_repo(
 
 def to_hint_create_repo(hint: HintCreateServiceDTO) -> HintCreateRepositoryDTO:
     return HintCreateRepositoryDTO(
-        blocks=[TextBlockRepositoryDTO(order=block.order, type=block.type, value=block.value) for block in hint.blocks]
+        blocks=[
+            TextBlockRepositoryDTO(
+                order=block.order, type=block.type, value=block.value
+            )
+            for block in hint.blocks
+        ]
     )
 
 
@@ -255,12 +263,18 @@ def to_question_create_repo(
 
 def to_question_service(question_repo: QuestionRepositoryDTO) -> QuestionServiceDTO:
     """Convert QuestionRepositoryDTO to QuestionServiceDTO"""
-    question_blocks = [TextBlockServiceDTO.model_validate(b) for b in question_repo.blocks]
+    question_blocks = [
+        TextBlockServiceDTO.model_validate(b) for b in question_repo.blocks
+    ]
 
     hint_service = None
     if question_repo.hint:
-        hint_blocks = [TextBlockServiceDTO.model_validate(b) for b in question_repo.hint.blocks]
-        hint_service = HintServiceDTO(id=question_repo.hint.id, guid=question_repo.hint.guid, blocks=hint_blocks)
+        hint_blocks = [
+            TextBlockServiceDTO.model_validate(b) for b in question_repo.hint.blocks
+        ]
+        hint_service = HintServiceDTO(
+            id=question_repo.hint.id, guid=question_repo.hint.guid, blocks=hint_blocks
+        )
 
     variants_service = []
     for variant in question_repo.variants:
@@ -309,17 +323,25 @@ def to_topic_service(topic: TopicRepositoryDTO) -> TopicServiceDTO:
 
 
 def to_subject_service(subject: SubjectRepositoryDTO) -> SubjectServiceDTO:
+    print("subject.image: ", subject.image)
+    print("image_url = http://localhost:8000/uploads%s", subject.image)
     return SubjectServiceDTO(
         id=subject.id,
         name=subject.name,
         type=subject.type,
-        image=(f"https://lumi-unt.kz/uploads{subject.image}" if subject.image else ""),
+        image=(
+            f"http://localhost:8000/uploads{subject.image}" if subject.image else ""
+        ),
     )
 
 
 def to_hint_update_repo(hint: HintUpdateServiceDTO) -> HintUpdateRepositoryDTO:
     return HintUpdateRepositoryDTO(
-        blocks=([TextBlockRepositoryDTO.model_validate(b) for b in hint.blocks] if hint.blocks else None)
+        blocks=(
+            [TextBlockRepositoryDTO.model_validate(b) for b in hint.blocks]
+            if hint.blocks
+            else None
+        )
     )
 
 
@@ -327,7 +349,11 @@ def to_variant_update_repo(
     variant: VariantUpdateServiceDTO,
 ) -> VariantUpdateRepositoryDTO:
     return VariantUpdateRepositoryDTO(
-        blocks=([TextBlockRepositoryDTO.model_validate(b) for b in variant.blocks] if variant.blocks else None),
+        blocks=(
+            [TextBlockRepositoryDTO.model_validate(b) for b in variant.blocks]
+            if variant.blocks
+            else None
+        ),
         is_correct=variant.is_correct,
         weight=variant.weight,
     )
@@ -341,16 +367,26 @@ def to_question_update_repo(
         topic_id=question.topic_id,
         difficulty=question.difficulty,
         type=question.type,
-        blocks=([TextBlockRepositoryDTO.model_validate(b) for b in question.blocks] if question.blocks else None),
+        blocks=(
+            [TextBlockRepositoryDTO.model_validate(b) for b in question.blocks]
+            if question.blocks
+            else None
+        ),
         hint=to_hint_update_repo(question.hint) if question.hint else None,
-        variants=([to_variant_update_repo(variant) for variant in question.variants] if question.variants else None),
+        variants=(
+            [to_variant_update_repo(variant) for variant in question.variants]
+            if question.variants
+            else None
+        ),
     )
 
 
 def to_subject_update_repository(
     subject_update_service: SubjectUpdateServiceDTO,
 ) -> SubjectUpdateRepositoryDTO:
-    return SubjectUpdateRepositoryDTO(**subject_update_service.model_dump(exclude_unset=True))
+    return SubjectUpdateRepositoryDTO(
+        **subject_update_service.model_dump(exclude_unset=True)
+    )
 
 
 def to_subject_create_repository(
@@ -375,11 +411,15 @@ def to_service_question(question: QuestionRepositoryDTO) -> QuestionServiceDTO:
     return QuestionServiceDTO.model_validate(question)
 
 
-def to_ent_attempt_service(ent_attempt: EntAttemptRepositoryDTO, questions: list) -> EntAttemptServiceDTO:
+def to_ent_attempt_service(
+    ent_attempt: EntAttemptRepositoryDTO, questions: list
+) -> EntAttemptServiceDTO:
     from quiz.dtos.ent_attempts import SubjectQuestionsDTO
 
     if questions and isinstance(questions[0], SubjectQuestionsDTO):
-        question_count = sum(len(subject_group.questions) for subject_group in questions)
+        question_count = sum(
+            len(subject_group.questions) for subject_group in questions
+        )
     else:
         question_count = len(questions)
 

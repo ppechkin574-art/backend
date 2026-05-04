@@ -79,6 +79,11 @@ from quiz.exceptions import (
     TrainerNotFound,
     VariantNotExist,
     WrongStudent,
+    InvitationNotFound,
+    AlreadyInvited,
+    CannotInviteSelf,
+    UserNotChild,
+    InvalidAction,
 )
 from subscription.exceptions import InsufficientPlanError, SubscriptionRequired
 
@@ -396,6 +401,32 @@ EXCEPTION_DOCS: dict[type[Exception], dict] = {
         "status_code": status.HTTP_403_FORBIDDEN,
         "description": "Higher subscription plan required",
         "model": SubscriptionErrorResponse,
+    },
+    # Family (user relationships) exceptions
+    InvitationNotFound: {
+        "status_code": status.HTTP_404_NOT_FOUND,
+        "description": "Invitation not found",
+        "model": NotFoundErrorResponse,
+    },
+    AlreadyInvited: {
+        "status_code": status.HTTP_409_CONFLICT,
+        "description": "Invitation already pending or already connected",
+        "model": ConflictErrorResponse,
+    },
+    CannotInviteSelf: {
+        "status_code": status.HTTP_400_BAD_REQUEST,
+        "description": "Cannot invite yourself",
+        "model": SimpleErrorResponse,
+    },
+    UserNotChild: {
+        "status_code": status.HTTP_400_BAD_REQUEST,
+        "description": "User is not a child",
+        "model": SimpleErrorResponse,
+    },
+    InvalidAction: {
+        "status_code": status.HTTP_400_BAD_REQUEST,
+        "description": "Invalid action on invitation",
+        "model": SimpleErrorResponse,
     },
 }
 

@@ -2,16 +2,20 @@
 
 Документ описывает все шаги, необходимые для перевода backend из текущего «staging» состояния в полноценный production. Создан 01.05.2026, обновлён там же.
 
-**Состояние стека на сейчас:**
+**Состояние стека на сейчас (04.05.2026):**
 - ✅ Backend, Admin, Postgres, Redis, **Keycloak**, **MinIO** — все подняты на Railway, Active.
 - ✅ Контент Романа залит из дампа: 12 предметов / 555 тем / 2821 вопрос.
-- ✅ Авторизация работает (Keycloak realm `lumi`).
+- ✅ Авторизация работает (Keycloak realm `lumi`, login по номеру + Google OAuth).
 - ✅ Хранилище файлов работает (MinIO, через переписанный `FileService`).
-- ❌ Внешние интеграции: Firebase, Apple/Google OAuth, FreedomPay, SMTP/SMS/WhatsApp/Telegram — стоят заглушки. Без них приложение не сможет:
-  - регистрировать пользователей через email/SMS-коды,
-  - принимать оплату подписок,
-  - отправлять push,
-  - логиниться через Apple/Google.
+- ✅ **Email** через Resend HTTP API (домен `aima.kz` Verified).
+- ✅ **SMS** через SMSC.kz (DEBUG mode, баланс 0₸).
+- ✅ **Firebase Cloud Messaging** инициализирован (`aima-prod-67f9d`), backend → FCM pipeline работает.
+- ✅ **Google OAuth** end-to-end (creds в Cloud Console проекте `aima-prod`).
+- ✅ Романовский фич-дроп смержен (Family/Leaderboard/Users + 3 миграции).
+- ⏸ **Apple Sign-In** — отложено по решению заказчика; креды есть, код готов.
+- ⏸ **FreedomPay** — отложено по решению заказчика; договор подписан, код готов.
+- 🟡 Wazzup (WhatsApp) и Telegram-бот alerts — заглушки `changeme`.
+- 🟡 SMSC: пополнить баланс + зарегистрировать sender `AIMA` для прода.
 
 **URL'ы:**
 - Backend API: `https://backend-production-f2a1.up.railway.app/docs`
@@ -23,11 +27,37 @@
 
 ## Содержание
 
+- [Сводка внешних сервисов](#сводка-внешних-сервисов)
 - [🔴 Критично — без этого нет рабочего прода](#-критично)
 - [🟡 Желательно — для полноценного прода](#-желательно)
 - [🟢 Инфраструктура и код](#-инфраструктура-и-код)
 - [Сводка переменных](#сводка-переменных)
 - [История фиксов (что было сломано в репо изначально)](#история-фиксов)
+
+---
+
+## Сводка внешних сервисов
+
+| # | Сервис | Назначение | Статус | Зависит от |
+|---|---|---|---|---|
+| 1 | **PostgreSQL** | Главная реляционная БД (контент ЕНТ, юзеры, попытки, платежи) | ✅ Active | Railway |
+| 2 | **Redis** | Кэш, WebSocket-токены, коды подтверждения | ✅ Active | Railway |
+| 3 | **Keycloak** | OIDC-сервер: realms, юзеры, OAuth flows | ✅ Active | Railway + отдельный Postgres |
+| 4 | **MinIO** | S3-совместимое хранилище (аватары, картинки предметов) | ✅ Active | Railway + volume |
+| 5 | **Resend** | Транзакционные email через HTTP API | ✅ Active | Resend.com (3000/мес free) |
+| 6 | **SMSC.kz** | SMS-коды подтверждения для KZ-номеров | ⚠️ DEBUG mode | smsc.kz (баланс 0₸) |
+| 7 | **Firebase Cloud Messaging** | Push-уведомления (ежедневные тесты, новости) | ✅ Active | aima-prod-67f9d project |
+| 8 | **Google OAuth** | Sign-in через Google аккаунт | ✅ Active | aima-prod-495307 Cloud project |
+| 9 | **Apple Sign-In** | Sign-in через Apple ID (iOS требование App Store) | ⏸ Отложено | Apple Developer ($99/год) |
+| 10 | **FreedomPay** | Приём платежей за подписку (Halyk/Forte/Jusan) | ⏸ Отложено | Юр.лицо + договор |
+| 11 | Wazzup24 | WhatsApp-канал доставки кодов (альтернатива SMS) | 🟡 Stub `changeme` | wazzup24.com (опц.) |
+| 12 | Telegram Bot | Канал dev-alerts + fallback доставки кодов | 🟡 Stub `changeme` | @BotFather (опц.) |
+
+**Что значат статусы:**
+- ✅ **Active** — настроено, протестировано смоук-тестом, работает в проде.
+- ⚠️ **DEBUG mode** — код подключен, но сервис в тестовом режиме (для прода нужны доп.шаги).
+- ⏸ **Отложено** — код готов, креды/ресурсы у заказчика есть, подключение перенесено на следующую итерацию.
+- 🟡 **Stub** — заглушка `changeme` в env, никакой работы; не критично, можно жить без.
 
 ---
 
@@ -104,56 +134,56 @@ keycloak__open_id__CLIENT_SECRET_KEY → (реальный из Keycloak)
 
 ### 4. Apple Sign-In
 
-**Сейчас:** заглушки. Авторизация через Apple падает.
+**Сейчас:** ⏸ **отложено по решению заказчика (04.05.2026)**. Креды у заказчика есть (Apple Developer аккаунт активный), но подключение перенесено на следующую итерацию — фокус сейчас на core flows + Google OAuth.
 
-**Как получить ключи:**
+**Реальный статус кода:** клиент `src/clients/apple/client.py` готов, lazy-load приватного ключа реализован (коммит `5cce03b`). Endpoint `/auth/oauth/apple` отвечает 200 с правильным URL Apple ID. Если в Railway записать рабочие creds + положить `.p8` — заработает без изменений в коде.
+
+**Когда возвращаться:**
 - developer.apple.com → Account → Keys → Create a key → Sign in with Apple → скачать `.p8`.
 - Записать `Key ID`, `Team ID`, `Services ID` (это `CLIENT_ID`).
-
-**Заменить:**
+- В Railway → backend → Variables:
 ```
-apple_oauth__CLIENT_ID         → com.lumi.lumiapp.signin  (Services ID)
+apple_oauth__CLIENT_ID         → com.lumi.lumiapp.signin   (Services ID)
 apple_oauth__TEAM_ID           → (10-значный из Apple Dev)
 apple_oauth__KEY_ID            → (10-значный)
 apple_oauth__PRIVATE_KEY_FILE  → /app/secrets/apple_private_key.p8
 apple_oauth__REDIRECT_URI      → https://api.aima.kz/auth/oauth/apple/callback
+apple_oauth__FRONTEND_REDIRECT → com.lumi.lumiapp://oauth2redirect
 ```
-
-И **залить `.p8` в volume** `/app/secrets/`.
+- Залить `.p8` в Railway volume `/app/secrets/` (или передать содержимое через env-переменную как сделали для Firebase в `c78c7b4`).
 
 ---
 
 ### 5. Google OAuth
 
-**Где взять:** console.cloud.google.com → APIs & Services → Credentials → OAuth client ID → Web application.
+**Сейчас:** ✅ **подключён и протестирован end-to-end (04.05.2026)**. Юзер залогинился через "Продолжить с Google" в эмуляторе, бэк создал юзера в Keycloak realm `lumi`, мобильный app получил access_token и открыл главный экран.
 
-**Заменить:**
-```
-google_oauth__CLIENT_ID      → xxxxx.apps.googleusercontent.com
-google_oauth__CLIENT_SECRET  → GOCSPX-xxxxx
-google_oauth__REDIRECT_URI   → https://api.aima.kz/auth/oauth/google/callback
-```
+**Проект в Cloud Console:** `aima-prod` (project ID `aima-prod-495307`). Owner: `ppechkin574@gmail.com`. 3 OAuth client'а:
+- Web (`aima-backend-web`) — для backend code-grant flow
+- Android (`aima-android`) — package `com.lumi.lumiapp`, SHA-1 от debug keystore
+- iOS (`aima-ios`) — bundle `com.lumi.lumiapp`
 
-В Google Console добавить этот redirect_uri в Authorized redirect URIs.
+**Что осталось перед прод-релизом:**
+- Перевести OAuth consent screen в `Production` mode (сейчас `Testing`, доступен только test users). Процедура: Google Auth Platform → Audience → `Publish app`. Если запрашиваются sensitive scopes — потребует Verification (~2-4 недели).
+- Добавить в Web client SHA-1 release keystore (когда будет prod-сборка APK).
 
 ---
 
 ### 6. FreedomPay (платежи)
 
-**Сейчас:** заглушки. Оплата подписок не работает.
+**Сейчас:** ⏸ **отложено по решению заказчика (04.05.2026)**. Креды у заказчика есть (договор с FreedomPay подписан, merchant_id выдан), но подключение перенесено на следующую итерацию — фокус сейчас на core flows.
 
-**Шаги:**
-- Зарегистрировать юрлицо у FreedomPay.kz, заключить договор.
-- Получить `MERCHANT_ID` и `SECRET`.
+**Реальный статус кода:** клиент `src/clients/freedom_pay/` готов, payment poller запускается в lifespan и опрашивает каждые 25 минут (`Found 0 pending payments` в логах). Webhook handler `/payments/callback` принимает HMAC-MD5 подписи. Если в Railway записать рабочий `MERCHANT_ID` + `SECRET` — заработает без изменений в коде.
 
-**Заменить:**
+**Когда возвращаться:**
+- В Railway → backend → Variables:
 ```
-freedom_pay__MERCHANT_ID  → (реальный)
-freedom_pay__SECRET       → (реальный)
+freedom_pay__MERCHANT_ID  → (реальный merchant ID от банка)
+freedom_pay__SECRET       → (реальный HMAC secret)
 freedom_pay__CALLBACK_URL → https://api.aima.kz/payments/callback
 ```
-
-В кабинете FreedomPay тоже зарегистрировать callback URL.
+- В кабинете FreedomPay зарегистрировать callback URL `https://api.aima.kz/payments/callback`.
+- Прогнать тестовый платёж в sandbox-окружении (FreedomPay даёт тестовые карты), убедиться что callback приходит и подпись валидируется.
 
 ---
 
@@ -161,20 +191,9 @@ freedom_pay__CALLBACK_URL → https://api.aima.kz/payments/callback
 
 ### 7a. Email — заменить упоминания старого бренда в шаблонах писем
 
-**Сейчас в `src/clients/notification/templates/email_verification.html`:**
-- Заголовок: **«Lumi»** / **«Lumi App»**
-- Subject: **«Код подтверждения AIMA»** (это уже актуально, но шапка в письме всё ещё Lumi)
-- Support email: **`support@lumi-unt.kz`** (это домен Романа, нерабочий для нас)
-- Сайт: **`tesla-education.kz`** (тоже Романа)
+**Статус:** ✅ выполнено в коммите `755acdc` (PR #2). `Lumi → AIMA`, `lumi-unt.kz → aima.kz`, `support@lumi-unt.kz → support@aima.kz`, copyright `2025 → 2026`. Проверять при добавлении новых шаблонов.
 
-**Что заменить:**
-- Все упоминания `Lumi` → `AIMA`
-- `support@lumi-unt.kz` → `support@aima.kz`
-- `tesla-education.kz` → `aima.kz`
-
-⚠️ Параллельно нужно **завести почтовый ящик `support@aima.kz`** на хостере (через Hoster.kz — у пользователя `mail.aima.kz` MX уже настроен на хостер). Сам ящик создать в их панели управления почтой.
-
-Проверять при правке: `email_verification.html` — основной файл. Если будут добавлены другие шаблоны (`password_reset.html`, `subscription_expired.html` и т.д.) — пройти по всем.
+⚠️ Не забыть **завести почтовый ящик `support@aima.kz`** на хостере (через Hoster.kz — `mail.aima.kz` MX уже настроен). Сам ящик создать в их панели управления почтой, сейчас письма от пользователей упадут в никуда.
 
 ---
 
@@ -306,6 +325,18 @@ cloudflare_customer_code → (из Cloudflare account)
 ---
 
 ## 🟢 Инфраструктура и код
+
+### 11a. SubjectServiceDTO.image — fallback на FileService.get_subject_image_url
+
+**Найдено в аудите 04.05.2026:** `src/quiz/converters.py:to_subject_service` возвращал hardcoded `http://localhost:8000/uploads{path}` (плюс два debug `print()`). Очевидно никем не работал в проде — мобила на Pixel_7 не достучится до `localhost`.
+
+**Минимальный фикс уже сделан** (этот коммит): `image=subject.image or ""`. Теперь возвращается raw поле из БД (либо абсолютный URL, либо относительный путь).
+
+**Полный fix (TODO):** обернуть в каждом вызывающем сервисе через `self._file_service.get_subject_image_url(subject.image)` (как уже сделано в `subjects.py:499` для AdminSubjectDTO). Места применения: `src/quiz/services/subjects.py:195, 215, 240, 302, 333, 349, 367, 388`. Альтернатива: модифицировать `to_subject_service(subject, file_service)` — принимать file_service как параметр, и обновить все 8 вызовов.
+
+**Симптом без фикса:** в мобиле на user-facing экранах вместо иконок предметов будут broken image placeholders (т.к. URL вроде `/images/subjects/physics.png` без domain prefix невалиден для Flutter).
+
+---
 
 ### 12. CORS — закрыть `allowed_origins`
 

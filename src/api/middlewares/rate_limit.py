@@ -21,14 +21,34 @@ import logging
 import os
 
 from slowapi import Limiter
-from slowapi.util import get_remote_address
+from starlette.requests import Request
 
 logger = logging.getLogger(__name__)
 
 
+def _real_client_ip(request: Request) -> str:
+    """Return the real client IP, taking Railway's proxy headers into account.
+
+    slowapi.util.get_remote_address uses request.client.host which on Railway
+    is the IP of one of their edge proxies. The pool rotates → each request
+    can come from a different host, breaking per-IP counters. We honour
+    X-Forwarded-For (first hop is the original client) and X-Real-IP as a
+    fallback. If neither is present (local dev), fall back to client.host.
+    """
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    xri = request.headers.get("x-real-ip")
+    if xri:
+        return xri.strip()
+    if request.client and request.client.host:
+        return request.client.host
+    return "127.0.0.1"
+
+
 def _build_limiter() -> Limiter:
     storage_uri = os.getenv("RATELIMIT_STORAGE_URI") or os.getenv("REDIS_URL")
-    kwargs: dict = {"key_func": get_remote_address}
+    kwargs: dict = {"key_func": _real_client_ip}
     if storage_uri:
         kwargs["storage_uri"] = storage_uri
     return Limiter(**kwargs)

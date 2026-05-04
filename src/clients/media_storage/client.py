@@ -55,6 +55,16 @@ class MediaStorageClientMinio:
         self._client = Minio(settings.endpoint, settings.access_key, settings.secret_key, secure=False)
         self._bucket = settings.bucket
         self._expires = settings.expires
+        self._public_client = (
+            Minio(
+                settings.public_endpoint,
+                settings.access_key,
+                settings.secret_key,
+                secure=settings.public_secure,
+            )
+            if settings.public_endpoint
+            else None
+        )
 
     def save(self, name: str, content: io.BytesIO) -> None:
         try:
@@ -65,7 +75,8 @@ class MediaStorageClientMinio:
 
     def link(self, name: str) -> str:
         try:
-            return self._client.presigned_get_object(self._bucket, name, expires=self._expires)
+            client = self._public_client or self._client
+            return client.presigned_get_object(self._bucket, name, expires=self._expires)
         except Exception as e:
             logging.exception("Failed to get link for media(%s): %s", name, e)
             raise MediaStorageError from e

@@ -3,14 +3,13 @@ import logging
 from fastapi import FastAPI
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.cors import CORSMiddleware
 
 from api.containers import Container
 from api.exceptions.handlers import setup_exception_handlers
 from api.lifespan import lifespan
 from api.middlewares.exception_logging_middleware import ExceptionLoggingMiddleware
-from api.middlewares.rate_limit import limiter
+from api.middlewares.rate_limit import limiter, log_storage_choice
 from settings import Settings
 from utils.monitoring import (
     LoggingContextMiddleware,
@@ -60,7 +59,11 @@ def create_app() -> FastAPI:
     app.state.container = container
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
-    app.add_middleware(SlowAPIMiddleware)
+    log_storage_choice()
+    logging.getLogger(__name__).info(
+        "[rate-limit] limiter wired: %s",
+        [(r.path, r.methods) for r in app.routes if hasattr(r, "path") and "code/request" in r.path or (hasattr(r, "path") and "/auth/login" in r.path)] or "no-routes-yet (registered after include_router)",
+    )
 
     app.add_middleware(LoggingContextMiddleware)
     app.add_middleware(

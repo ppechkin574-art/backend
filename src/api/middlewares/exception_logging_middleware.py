@@ -2,6 +2,7 @@ import logging
 import traceback
 from collections.abc import Awaitable, Callable
 
+from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -31,6 +32,20 @@ class ExceptionLoggingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         try:
             return await call_next(request)
+        except RateLimitExceeded as exc:
+            logger.warning(
+                "[rate-limit] %s %s — limit=%s",
+                request.method,
+                request.url.path,
+                getattr(exc, "detail", str(exc)),
+            )
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "detail": f"Rate limit exceeded: {getattr(exc, 'detail', str(exc))}",
+                },
+                headers={"Retry-After": "60"},
+            )
         except Exception as e:
             status_code = next(
                 (doc["status_code"] for exc_type, doc in EXCEPTION_DOCS.items() if isinstance(e, exc_type)),

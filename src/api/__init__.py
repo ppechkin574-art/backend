@@ -1,4 +1,5 @@
 import logging
+import os
 
 from fastapi import FastAPI
 from slowapi import _rate_limit_exceeded_handler
@@ -20,8 +21,50 @@ from utils.monitoring import (
 from .routes import routers
 
 
+def _init_sentry() -> None:
+    """Initialise Sentry SDK if SENTRY_DSN is configured.
+
+    No-op if the env var is missing — for local dev / first deploy before
+    the Sentry project exists. Safe to leave unset; sampling defaults are
+    cost-conservative.
+    """
+    dsn = os.getenv("SENTRY_DSN")
+    if not dsn:
+        logging.getLogger(__name__).info(
+            "[sentry] SENTRY_DSN not set — skipping Sentry init"
+        )
+        return
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.starlette import StarletteIntegration
+
+        sentry_sdk.init(
+            dsn=dsn,
+            environment=os.getenv("RAILWAY_ENVIRONMENT_NAME", "production"),
+            release=os.getenv("RAILWAY_GIT_COMMIT_SHA", "unknown")[:8],
+            traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.05")),
+            profiles_sample_rate=0.0,
+            send_default_pii=False,
+            integrations=[
+                StarletteIntegration(transaction_style="endpoint"),
+                FastApiIntegration(transaction_style="endpoint"),
+            ],
+        )
+        logging.getLogger(__name__).info(
+            "[sentry] initialised — env=%s release=%s",
+            os.getenv("RAILWAY_ENVIRONMENT_NAME", "production"),
+            (os.getenv("RAILWAY_GIT_COMMIT_SHA") or "unknown")[:8],
+        )
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "[sentry] init failed (non-fatal): %s", exc
+        )
+
+
 def create_app() -> FastAPI:
     setup_logging()
+    _init_sentry()
     settings = Settings()
     container = Container()
     container.init_resources()

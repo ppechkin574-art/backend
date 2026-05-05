@@ -12,12 +12,13 @@ concurrency:
 
 jobs:
   lint:
-    name: ruff lint + format check (advisory)
+    name: ruff lint (BLOCKING)
     runs-on: ubuntu-latest
-    # NOTE: continue-on-error until the legacy backlog of warnings (~few
-    # hundred from Roman's import era) is cleared. New PRs see warnings
-    # in the CI tab but merge is not blocked. Tracked in TECH_DEBT.
-    continue-on-error: true
+    # BLOCKING since M4 cleanup. Ruff config in pyproject.toml has surgical
+    # ignores for legacy patterns + per-file-ignores for alembic/tests, so
+    # the rules that remain catch real bugs. Format check is still advisory
+    # (separate `ruff format --check` step) — many files diverge from black
+    # style and full reformat is a follow-up.
     steps:
       - uses: actions/checkout@v4
 
@@ -31,8 +32,9 @@ jobs:
       - name: Lint (style + suspicious patterns)
         run: ruff check src
 
-      - name: Format check
+      - name: Format check (advisory — black-style reflow not done yet)
         run: ruff format --check src
+        continue-on-error: true
 
   security-audit:
     name: pip-audit (CVE scan, BLOCKING)

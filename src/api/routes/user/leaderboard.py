@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, Query
-from typing import List
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from api.dependencies import get_db_session, get_identity_provider_client_keycloak
@@ -17,7 +16,7 @@ class LeaderboardEntry(BaseModel):
     total_points: int
 
 
-@router.get("", response_model=List[LeaderboardEntry])
+@router.get("", response_model=list[LeaderboardEntry])
 async def get_leaderboard(
     limit: int = Query(100, ge=1, le=500),
     session: Session = Depends(get_db_session),

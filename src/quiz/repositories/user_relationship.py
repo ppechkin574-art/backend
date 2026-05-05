@@ -3,7 +3,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 from quiz.models.user_relationship import UserRelationship
 from uuid import UUID
-from typing import List, Optional
+from typing import Optional
 
 
 class UserRelationshipRepository:
@@ -37,7 +37,7 @@ class UserRelationshipRepository:
 
     def get_sent_invitations(
         self, user_id: UUID, status: Optional[str] = None
-    ) -> List[UserRelationship]:
+    ) -> list[UserRelationship]:
         q = self._session.query(UserRelationship).filter_by(inviter_id=user_id)
         if status:
             q = q.filter_by(status=status)
@@ -45,7 +45,7 @@ class UserRelationshipRepository:
 
     def get_received_invitations(
         self, user_id: UUID, status: Optional[str] = None
-    ) -> List[UserRelationship]:
+    ) -> list[UserRelationship]:
         q = self._session.query(UserRelationship).filter(
             (UserRelationship.parent_id == user_id)
             | (UserRelationship.child_id == user_id),
@@ -55,14 +55,14 @@ class UserRelationshipRepository:
             q = q.filter_by(status=status)
         return q.all()
 
-    def get_confirmed_children(self, parent_id: UUID) -> List[UserRelationship]:
+    def get_confirmed_children(self, parent_id: UUID) -> list[UserRelationship]:
         return (
             self._session.query(UserRelationship)
             .filter_by(parent_id=parent_id, status="confirmed")
             .all()
         )
 
-    def get_confirmed_parents(self, child_id: UUID) -> List[UserRelationship]:
+    def get_confirmed_parents(self, child_id: UUID) -> list[UserRelationship]:
         return (
             self._session.query(UserRelationship)
             .filter_by(child_id=child_id, status="confirmed")

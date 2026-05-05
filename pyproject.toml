@@ -15,20 +15,41 @@ exclude = [
 src = ["src"]
 
 [tool.ruff.lint]
-# Conservative core-quality rules. The wider set (style hints I/UP/B/SIM/T20/G/YTT/S/C4/ARG)
-# is documented in TECH_DEBT M4 as a follow-up cleanup — currently 89+ legacy
-# warnings would block every PR on existing files.
+# Production-quality lint set after M4 cleanup. Wide net of bug-likely + style
+# rules with surgical ignores for legacy patterns we deliberately keep.
 select = [
-    "E",  # pycodestyle errors (syntax-adjacent)
-    "F",  # pyflakes (undefined names, unused imports — real bugs)
-    "W",  # pycodestyle warnings (deprecation)
+    "E",   # pycodestyle errors
+    "F",   # pyflakes (undefined names, unused imports)
+    "W",   # pycodestyle warnings
+    "I",   # isort (import order)
+    "UP",  # pyupgrade (modern syntax)
+    "B",   # flake8-bugbear (likely bugs)
+    "C4",  # comprehensions
+    "SIM", # simplifications
+    "G",   # logging format
+    "YTT", # sys.version checks
 ]
 ignore = [
-    "E501",  # line too long
-    "E402",  # module-level import not at top — legacy logger placement
-    "F401",  # unused imports — legacy DI plumbing pulls many "unused" names
-    "F811",  # redefined-while-unused — legacy duplicate decorators
+    "E501",  # line too long — black/format owns this
+    "E402",  # legacy logger placement between imports (api/dependencies.py)
+    "F401",  # DI plumbing imports look unused statically
+    "F811",  # redefined-while-unused — legacy duplicate decorator artifacts
+    "B008",  # function-call-in-default-argument — fine for FastAPI Depends()
+    "B904",  # raise-without-from-inside-except — many legacy spots, low value
+    "B017",  # pytest.raises Exception — tests use this on purpose
+    "SIM108",  # ternary-instead-of-if-else — readability subjective
+    "SIM117",  # combine-if — too aggressive
+    "UP007",  # X | Y typing — let pyright/mypy own this, not stylistic
+    "UP035",  # deprecated-import — typing.X stays for now
+    "I001",  # import block sorting — purely cosmetic, auto-fix in M4 follow-up
+    "W291",  # trailing whitespace — purely cosmetic, ditto
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# Migrations are auto-generated and import-heavy — silence noise.
+"alembic/versions/*" = ["I001", "F401", "B"]
+# Tests intentionally use loose patterns (asserts, fixtures, broad except).
+"tests/**/*" = ["B", "SIM"]
 
 [tool.ruff.lint.isort]
 # known-first-party not needed because isort is called before ruff

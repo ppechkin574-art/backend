@@ -101,8 +101,8 @@
 
 ### Тестовые креды
 
-- **Keycloak admin** (для самого Keycloak): `admin` / `<KEYCLOAK_ADMIN_PASSWORD>` (в Variables сервиса `keycloak`).
-- **App admin** (для backend/admin-panel через Keycloak realm `lumi`): `admin@aima.kz` / `ChangeMeAdmin123!` (temporary; при первом логине через Account Console попросит сменить).
+- **Keycloak admin** (для самого Keycloak, master realm): `admin` / `<KEYCLOAK_ADMIN_PASSWORD>` (в Variables сервиса `keycloak`). Ротирован 04.05.2026 — раньше был `admin1234AIMA`. Backend читает из своего env `keycloak__admin__PASSWORD` — обе переменные синхронизированы.
+- **App admin** (для backend/admin-panel через Keycloak realm `lumi`): `admin@aima.kz`. Пароль ротирован 04.05.2026 — хранится у заказчика в password manager и в Railway env `keycloak__admin__PASSWORD` (для master) — берёт оттуда. Раньше был `ChangeMeAdmin123!` — больше не работает.
 - **Mobile test user** (Keycloak realm `lumi`): `+77001234567` / `Test12345!` — для логина по номеру в Flutter-приложении.
 - **MinIO Console root**: `aima_admin` / `Aima2026MinioStrongPassXyz`.
 - **MinIO Service Account для backend** (используется в env): Access Key `8DIGUUC4A3ZZTTFNDTV1`, Secret Key хранится в Railway Variables `minio__secret_key`.

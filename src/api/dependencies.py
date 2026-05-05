@@ -5,13 +5,13 @@ from uuid import UUID
 
 from dependency_injector.wiring import Provide, inject
 from fastapi import HTTPException, status
-
-logger = logging.getLogger(__name__)
 from fastapi.params import Depends
 from fastapi.security import OAuth2PasswordBearer
 from redis import Redis
 from sqlalchemy.orm import Session
 from starlette.status import HTTP_401_UNAUTHORIZED, HTTP_403_FORBIDDEN
+
+logger = logging.getLogger(__name__)
 
 from analytics.service import AnalyticService, AnalyticServiceInterface
 from analytics.uow import UnitOfWorkAnalytics

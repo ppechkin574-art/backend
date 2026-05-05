@@ -69,7 +69,7 @@
 
 **Остающийся минор для прод-ready:**
 - Сменить пароль временного admin-юзера Keycloak (`KEYCLOAK_ADMIN_PASSWORD`) на постоянный сильный.
-- Сменить пароль `admin@aima.kz` (был temporary `ChangeMeAdmin123!`).
+- ✅ Пароль `admin@aima.kz` ротирован 04.05.2026 (через Keycloak Admin API). Старый `ChangeMeAdmin123!` больше не работает. Новый — у заказчика в password manager + Railway env.
 - Включить email-verification в realm `lumi → Realm settings → Login`, заполнить SMTP в `Realm settings → Email`.
 - Защитить `master` realm — отключить self-registration на нём (по умолчанию отключено, проверить).
 

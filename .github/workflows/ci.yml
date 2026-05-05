@@ -95,14 +95,12 @@ jobs:
           print(f"alembic head OK: {heads[0]}")
           PY
 
-  smoke-tests:
-    name: pytest smoke (against live Railway prod)
+  pytest:
+    name: pytest (unit + smoke against live backend)
     runs-on: ubuntu-latest
-    # Smoke tests hit the real backend at BASE_URL. They are advisory while
-    # we figure out how to share the GitHub Actions runner IP without bumping
-    # rate limits — current strategy uses 65s windows between rate-limit
-    # tests which is slow but deterministic.
-    continue-on-error: true
+    # BLOCKING: a regression in core logic (HMAC sig, OAuth audience, rate
+    # limit IP, cache keys) or in any of the smoke endpoints fails the
+    # build and prevents merge to main.
     steps:
       - uses: actions/checkout@v4
 
@@ -110,20 +108,21 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install Alembic + dev deps
+      - name: Install runtime + dev deps
+        # Unit tests import from src/ → need full requirements.txt. Cached
+        # layer is fast on subsequent runs.
         run: |
-          pip install --no-cache-dir "alembic==1.14.0" "sqlalchemy==2.0.36"
+          pip install --no-cache-dir -r requirements.txt
           pip install --no-cache-dir -r requirements-dev.txt
 
-      - name: Run pytest
+      - name: Run unit tests (pure logic, fast)
+        run: pytest tests/unit/ -v --tb=short
+
+      - name: Run smoke tests (against live Railway)
         env:
           BASE_URL: "https://backend-production-f2a1.up.railway.app"
-          # admin@aima.kz password is required as a GitHub Actions secret —
-          # if absent the admin tests will be skipped/error, but other smoke
-          # tests still run.
           TEST_ADMIN_PASSWORD: ${{ secrets.TEST_ADMIN_PASSWORD }}
         run: |
-          if [ -z "$TEST_ADMIN_PASSWORD" ]; then
-            echo "::warning::TEST_ADMIN_PASSWORD secret not set — admin tests will fail. Add it under repo Settings → Secrets and variables → Actions."
-          fi
-          pytest tests/ -v --tb=short -x
+          # Run only top-level test_*.py (smoke), exclude tests/unit/ which
+          # was just executed.
+          pytest tests/ -v --tb=short --ignore=tests/unit

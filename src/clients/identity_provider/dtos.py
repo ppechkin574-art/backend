@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
@@ -12,8 +12,8 @@ class KeycloakAttributesDTO(BaseModel):
     phone: list[KZPhone] | None = Field(default_factory=list)
     role: list[str] = Field(default=["user"])
     allowed_subject_ids: list[str] = Field(default_factory=list)
-    plan: list[str] = Field(default=[PlanType.PRO.value])
-    subscription_end: list[str] = Field(default_factory=lambda: [datetime.now(UTC).isoformat()])
+    plan: list[str] = Field(default_factory=lambda: [PlanType.FREE.value])
+    subscription_end: list[str] = Field(default_factory=list)
     avatar: list[str] | None = Field(default_factory=list)
 
 

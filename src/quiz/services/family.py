@@ -1,6 +1,5 @@
 import logging
 from uuid import UUID
-from typing import List
 from sqlalchemy.orm import Session
 from clients.identity_provider.dtos import KeycloakUserQueryDTO
 from quiz.repositories.user_relationship import UserRelationshipRepository
@@ -116,7 +115,7 @@ class FamilyService:
         self._session.commit()
         return {"invitation_id": invitation_id, "status": new_status}
 
-    def get_sent_invitations(self, user: UserDTO) -> List[dict]:
+    def get_sent_invitations(self, user: UserDTO) -> list[dict]:
         invitations = self._repo.get_sent_invitations(user.id, status="pending")
         result = []
         for inv in invitations:
@@ -134,7 +133,7 @@ class FamilyService:
             )
         return result
 
-    def get_received_invitations(self, user: UserDTO) -> List[dict]:
+    def get_received_invitations(self, user: UserDTO) -> list[dict]:
         invitations = self._repo.get_received_invitations(user.id, status="pending")
         result = []
         for inv in invitations:
@@ -150,7 +149,7 @@ class FamilyService:
             )
         return result
 
-    def get_children(self, parent: UserDTO) -> List[dict]:
+    def get_children(self, parent: UserDTO) -> list[dict]:
         relationships = self._repo.get_confirmed_children(parent.id)
         result = []
         for rel in relationships:
@@ -165,7 +164,7 @@ class FamilyService:
             )
         return result
 
-    def get_parents(self, child: UserDTO) -> List[dict]:
+    def get_parents(self, child: UserDTO) -> list[dict]:
         relationships = self._repo.get_confirmed_parents(child.id)
         result = []
         for rel in relationships:

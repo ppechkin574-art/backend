@@ -191,9 +191,7 @@ freedom_pay__CALLBACK_URL → https://api.aima.kz/payments/callback
 
 ### 7a. Email — заменить упоминания старого бренда в шаблонах писем
 
-**Статус:** ✅ выполнено в коммите `755acdc` (PR #2). `Lumi → AIMA`, `lumi-unt.kz → aima.kz`, `support@lumi-unt.kz → support@aima.kz`, copyright `2025 → 2026`. Проверять при добавлении новых шаблонов.
-
-⚠️ Не забыть **завести почтовый ящик `support@aima.kz`** на хостере (через Hoster.kz — `mail.aima.kz` MX уже настроен). Сам ящик создать в их панели управления почтой, сейчас письма от пользователей упадут в никуда.
+**Статус:** ✅ выполнено в коммите `755acdc` (PR #2). `Lumi → AIMA`, `lumi-unt.kz → aima.kz`, copyright `2025 → 2026`. Поддержка-контакт обновлён до `info@sab.com.kz` (рабочая корп.почта заказчика, PR от 04.05.2026). Проверять при добавлении новых шаблонов.
 
 ---
 
@@ -211,8 +209,8 @@ freedom_pay__CALLBACK_URL → https://api.aima.kz/payments/callback
 **Почему не Gmail SMTP:** Railway блокирует исходящий SMTP-трафик (порты 25/465/587). Проверено 02.05.2026: `OSError: [Errno 101] Network is unreachable` уже на этапе TCP-connect к `smtp.gmail.com`. Это политика большинства cloud-провайдеров против спама — изменить нельзя.
 
 **Остающиеся задачи перед прод-релизом:**
-- Поправить шаблон `email_verification.html` (см. п. 7a — `Lumi` → `AIMA`, `support@lumi-unt.kz` → `support@aima.kz`).
-- Завести почтовый ящик `support@aima.kz` на хостере (MX `mail.aima.kz` уже настроен).
+- ✅ Поправить шаблон `email_verification.html`: `Lumi` → `AIMA`, support-email → `info@sab.com.kz` (рабочая корп.почта SAB).
+- _(не нужно)_ заводить отдельный mailbox на хостере — `info@sab.com.kz` уже существует у заказчика.
 - Когда счётчик 3000/мес превысит — перейти на платный тариф Resend ($20/мес за 50k писем) или мигрировать.
 - Убрать fallback с печатью кода в Deploy Logs (security: на проде не должно светиться).
 
@@ -222,10 +220,10 @@ freedom_pay__CALLBACK_URL → https://api.aima.kz/payments/callback
 
 В `src/clients/notification/templates/email_verification.html` остались:
 - Заголовок `Lumi` → нужно `AIMA`
-- `support@lumi-unt.kz` → `support@aima.kz`
+- `support@lumi-unt.kz` → `info@sab.com.kz`
 - `tesla-education.kz` → `aima.kz`
 
-Параллельно завести почтовый ящик `support@aima.kz` на хостере (через панель Hoster.kz — MX уже настроен).
+_(не требуется заводить отдельный mailbox — `info@sab.com.kz` уже работает у заказчика SAB.)_
 
 ---
 

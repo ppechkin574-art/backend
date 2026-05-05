@@ -3,6 +3,7 @@ uvicorn[standard]==0.32.1
 starlette==0.41.3
 slowapi==0.1.9
 limits==3.13.0
+sentry-sdk[fastapi]==2.18.0
 
 pydantic[email]==2.10.3
 pydantic-settings==2.7.0

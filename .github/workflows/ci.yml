@@ -20,7 +20,7 @@ jobs:
     # (separate `ruff format --check` step) — many files diverge from black
     # style and full reformat is a follow-up.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v5
         with:
@@ -43,7 +43,7 @@ jobs:
     # CVE will fail the build until either (a) bumped to a fixed version,
     # or (b) explicitly suppressed via `--ignore-vuln GHSA-...`.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v5
         with:
@@ -59,7 +59,7 @@ jobs:
     name: byte-compile (catches typos, missing imports)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v5
         with:
@@ -74,7 +74,7 @@ jobs:
     name: alembic single head (no diverging migrations)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v5
         with:
@@ -102,7 +102,7 @@ jobs:
     # limit IP, cache keys) or in any of the smoke endpoints fails the
     # build and prevents merge to main.
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-python@v5
         with:

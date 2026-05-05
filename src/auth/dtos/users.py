@@ -16,7 +16,7 @@ class UserCreateDTO(BaseModel):
     role: str
     is_active: bool
     allowed_subject_ids: list[int] = Field(default_factory=list)
-    plan: PlanType = PlanType.PRO
+    plan: PlanType = PlanType.FREE
     subscription_end: datetime | None = None
     used_trial: bool = False
 

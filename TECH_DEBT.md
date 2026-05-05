@@ -326,6 +326,39 @@ cloudflare_customer_code → (из Cloudflare account)
 
 ## 🟢 Инфраструктура и код
 
+### M1. Sentry — error monitoring (отложено, код готов)
+
+**Сейчас:** ⏸ Код подключён в проде (PR #14, файл `src/api/__init__.py:_init_sentry`), но `SENTRY_DSN` env не задан — backend стартует с `[sentry] SENTRY_DSN not set — skipping Sentry init`. Это no-op, безопасно.
+
+**Зачем включить (когда выйдем в Play/App Store):**
+- Все 500-ошибки автоматически уходят в Sentry с полным stack trace, request body, browser/device info, user context.
+- Группировка похожих exceptions, alerts в Slack/email.
+- Performance monitoring (slow endpoints, p95 latency).
+- Release tracking — видно в каком commit'е появилась новая ошибка.
+
+**Free tier:** 5000 events/мес, 10к performance transactions/мес, 1 пользователь. Хватит на ~200-500 активных юзеров.
+
+**Как включить (5 минут):**
+
+1. **Регистрация:** https://sentry.io/signup/ → email `info@sab.com.kz` → создать аккаунт → подтвердить email.
+2. **Создать проект:** Platform = Python/FastAPI, name = `aima-backend`. Не подключать SDK через onboarding (он уже в коде).
+3. **Скопировать DSN** на странице "Get started" — вид `https://<key>@o<orgid>.ingest.us.sentry.io/<projectid>`.
+4. **Railway:** service `backend` → Variables → Raw editor → добавить:
+   ```
+   SENTRY_DSN="<paste DSN>"
+   SENTRY_TRACES_SAMPLE_RATE="0.05"
+   ```
+   (5% трасс достаточно для performance picture без перегруза free tier'а)
+5. Update Variables → Railway передеплоит → в Deploy Logs появится `[sentry] initialised — env=production release=<sha>`.
+6. **Проверка:** триггернуть искусственный 500 (например, SQL injection попытка) → событие должно появиться в Sentry → Issues в течение 30 секунд.
+
+**Опциональные настройки в Sentry UI после первой пары событий:**
+- Alerts → создать правило "High error count" (alert когда >10 событий/час).
+- Settings → Integrations → Slack/Discord webhook (если есть рабочий канал).
+- Settings → Sampling → если 5000 events/мес кончаются — поднять `SENTRY_TRACES_SAMPLE_RATE` до 0.01.
+
+---
+
 ### 11a. SubjectServiceDTO.image — fallback на FileService.get_subject_image_url
 
 **Найдено в аудите 04.05.2026:** `src/quiz/converters.py:to_subject_service` возвращал hardcoded `http://localhost:8000/uploads{path}` (плюс два debug `print()`). Очевидно никем не работал в проде — мобила на Pixel_7 не достучится до `localhost`.

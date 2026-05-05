@@ -1,3 +1,5 @@
+import base64
+import binascii
 import logging
 import time
 from urllib.parse import urlencode
@@ -18,20 +20,56 @@ class AppleOAuthClient:
         self.private_key_content: str | None = None
 
     def _load_private_key(self) -> str:
+        """Resolve the Apple .p8 contents from one of two env-driven sources.
+
+        Preference order:
+          1. APPLE_OAUTH__PRIVATE_KEY_PEM — raw PEM contents OR a base64
+             encoding of the PEM. Works on Railway without a volume.
+          2. APPLE_OAUTH__PRIVATE_KEY_FILE — file path inside the container,
+             requires Volume mount (legacy).
+
+        Cached after first successful load.
+        """
         if self.private_key_content is not None:
             return self.private_key_content
-        if not self.settings.private_key_file:
-            raise ValueError("Apple OAuth is not configured: private_key_file is empty")
+
+        pem_inline = (self.settings.private_key_pem or "").strip()
+        if pem_inline:
+            self.private_key_content = self._decode_pem(pem_inline)
+            return self.private_key_content
+
+        if self.settings.private_key_file:
+            try:
+                with open(self.settings.private_key_file) as f:
+                    self.private_key_content = f.read()
+                return self.private_key_content
+            except FileNotFoundError:
+                logger.exception(
+                    "Apple private key file not found: %s",
+                    self.settings.private_key_file,
+                )
+                raise
+            except Exception as e:
+                logger.exception("Error reading Apple private key: %s", e)
+                raise
+
+        raise ValueError(
+            "Apple OAuth is not configured: set APPLE_OAUTH__PRIVATE_KEY_PEM "
+            "(inline / base64) or APPLE_OAUTH__PRIVATE_KEY_FILE (mounted .p8)."
+        )
+
+    @staticmethod
+    def _decode_pem(value: str) -> str:
+        """If `value` already looks like a PEM (begins with '-----BEGIN'),
+        return as-is. Otherwise treat it as base64(PEM) and decode."""
+        if value.lstrip().startswith("-----BEGIN"):
+            return value
         try:
-            with open(self.settings.private_key_file) as f:
-                self.private_key_content = f.read()
-        except FileNotFoundError:
-            logger.exception("Apple private key file not found: %s", self.settings.private_key_file)
-            raise
-        except Exception as e:
-            logger.exception("Error reading Apple private key: %s", e)
-            raise
-        return self.private_key_content
+            return base64.b64decode(value, validate=True).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError) as exc:
+            raise ValueError(
+                "APPLE_OAUTH__PRIVATE_KEY_PEM is neither raw PEM nor valid base64."
+            ) from exc
 
     def generate_client_secret(self) -> str:
         """Генерирует JWT client secret для Apple OAuth"""

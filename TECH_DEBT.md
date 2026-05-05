@@ -324,30 +324,32 @@ cloudflare_customer_code → (из Cloudflare account)
 
 ## 🟢 Инфраструктура и код
 
-### M3. Smoke tests — добавлены, но advisory; нужны улучшения
+### M3. Изолированный testcontainer-стейдж (отложено в postпрод 04.05.2026)
 
-**Сейчас:** PR #17 принёс `tests/` директорию с 12 smoke-тестами против live Railway prod. Запускаются в GitHub Actions job `smoke-tests` (continue-on-error: true).
+**Текущее состояние (04.05.2026):** ✅ pytest job уже **BLOCKING**, 38 тестов проходят на каждом PR (22 unit + 4 service-layer + 12 smoke). Тесты живые против Railway prod через httpx.
 
-**Покрытие:**
-- `test_health.py` — `/health` 200
-- `test_auth_login.py` — phone-login happy path + 401 на bad password
-- `test_auth_oauth_start.py` — `/auth/oauth/google` + `/auth/oauth/apple` отдают корректные authorize URLs
-- `test_admin_cache.py` — admin auth boundary (anon → 401, admin → 200)
-- `test_user_subjects.py` — Romanовский dump доступен (12 предметов)
-- `test_rate_limit.py` — slowapi реально режет 2-й запрос на /auth/code/request
-- `test_alembic.py` — миграции имеют 1 head, цепочка линейная без merge-веток
+**Что НЕ закрывает текущая инфраструктура:**
+- Тесты делают реальные SMSC DEBUG calls и Keycloak grants — на CI runner это OK (DEBUG mode, без денег), но в идеальной схеме должны быть моки.
+- Если Railway упадёт — все CI зелёные превратятся в красные хотя код OK.
+- Сервисный слой покрыт только частично: `AuthService.login` (4 unit), `FreedomPay HMAC` (10 unit), `Google OAuth audience` (6 unit), `_real_client_ip` (5 unit), `cache_keys` (5 unit). НЕ покрыто: `FamilyService` permissions/invitations/role-checks, `EntAttemptService` подсчёт балла, `PaymentService.process_callback` бизнес-логика, `SubscriptionService.is_active`, `CashbackService`, `AttendanceService`, `DailyTestService`, `QuestionService`.
 
-**Что нужно для блокирующего CI:**
+**Что включает M3 (4-6 часов работы):**
 
-1. **Зарегистрировать `TEST_ADMIN_PASSWORD` как GitHub Actions secret.** Это пароль `admin@aima.kz`. Положить в Repo Settings → Secrets and variables → Actions → New repository secret. Без secret тесты на admin (cache flush) пропускаются.
+1. **testcontainers**: Postgres + Redis в Docker, поднимается в `conftest.py` сессионно. Каждый тест получает чистую БД.
+2. **Моки внешних сервисов**: Keycloak (через `respx` для HTTP-моков), Resend (capture'ed emails), SMSC (capture'ed codes), Firebase (no-op stub).
+3. **+20-30 unit-тестов на сервисный слой:**
+   - `FamilyService.send_invitation` — все правила (cannot-invite-self, parent↔child only, no duplicates, transitions pending→confirmed/rejected)
+   - `FamilyService.respond_to_invitation` — accept/reject paths
+   - `EntAttemptService.create` — full-exam vs subject, deadline calculation, existing active attempt detection
+   - `EntAttemptService.answer` — score calculation, points granted only when score>0
+   - `PaymentService.process_freedompay_callback` — happy path + invalid signature rejection + duplicate-callback dedup
+   - `SubscriptionService` — FREE/LITE/PRO transitions, expiry handling
+   - `CacheService.@cached` — decorator behaviour (cache hit, cache miss, params change)
+4. **Снять `continue-on-error: true`** с format-check (последний advisory job).
 
-2. **Заменить smoke на изолированные unit-тесты** (4-6 часов работы):
-   - testcontainers (Postgres + Redis в Docker)
-   - моки Keycloak / Resend / SMSC через `pytest-mock` или `respx`
-   - 20-30 unit-тестов на сервисный слой
-   - Сейчас тесты делают реальные SMSC DEBUG calls и Keycloak grants — норма для smoke, но не для масштаба.
+**Зачем отложено:** текущее состояние достаточно для прод-релиза для базовой нагрузки. M3 — это скейл-задача для момента когда у нас будет много контрибьюторов / много изменений в день. Сейчас приоритет ниже (acceptance tests от 4-6h, лучше потратить эту инвестицию когда станут видны конкретные регрессии).
 
-3. **Снять `continue-on-error: true`** с smoke-tests job когда (1) выполнен и rate-limit-aware sleeps оптимизированы.
+**Кто берёт:** один разработчик за один заход в 4-6 часов. Можно делать частично — каждые 5 unit-тестов в отдельный PR.
 
 ---
 

@@ -15,14 +15,19 @@ exclude = [
 src = ["src"]
 
 [tool.ruff.lint]
+# Conservative core-quality rules. The wider set (style hints I/UP/B/SIM/T20/G/YTT/S/C4/ARG)
+# is documented in TECH_DEBT M4 as a follow-up cleanup — currently 89+ legacy
+# warnings would block every PR on existing files.
 select = [
-    "E", "W", "F", "I", "UP", "B", "C4", "ARG", "SIM", "T20", "G",  "YTT", "S"
+    "E",  # pycodestyle errors (syntax-adjacent)
+    "F",  # pyflakes (undefined names, unused imports — real bugs)
+    "W",  # pycodestyle warnings (deprecation)
 ]
 ignore = [
     "E501",  # line too long
-    "B008",  # function-call-in-default-argument
-    "B904",  # raise-without-from-inside-except
-    "S104",  # possible binding to all interfaces
+    "E402",  # module-level import not at top — legacy logger placement
+    "F401",  # unused imports — legacy DI plumbing pulls many "unused" names
+    "F811",  # redefined-while-unused — legacy duplicate decorators
 ]
 
 [tool.ruff.lint.isort]

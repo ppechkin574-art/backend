@@ -35,13 +35,11 @@ jobs:
         run: ruff format --check src
 
   security-audit:
-    name: pip-audit (CVE scan, advisory)
+    name: pip-audit (CVE scan, BLOCKING)
     runs-on: ubuntu-latest
-    # NOTE: continue-on-error while we have unpatched CVEs in pinned deps
-    # (starlette, requests, python-multipart, etc — see TECH_DEBT 'security
-    # patches batch'). Reports are visible in the CI tab even if green —
-    # this is the on-ramp before flipping to strict.
-    continue-on-error: true
+    # BLOCKING since PR #26 (all 12 known CVEs cleared). New deps with known
+    # CVE will fail the build until either (a) bumped to a fixed version,
+    # or (b) explicitly suppressed via `--ignore-vuln GHSA-...`.
     steps:
       - uses: actions/checkout@v4
 

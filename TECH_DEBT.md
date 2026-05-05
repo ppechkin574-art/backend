@@ -353,7 +353,29 @@ cloudflare_customer_code → (из Cloudflare account)
 
 ---
 
+### M4. ruff full-strict re-enable (after legacy cleanup)
+
+**Сейчас (PR #26):** ruff config в `pyproject.toml` сильно урезан — оставлены только `E + F + W` правила (syntax errors, undefined/unused names, deprecation). Отключены `I/UP/B/SIM/T20/G/YTT/S/C4/ARG` потому что Романовский legacy код имел 89+ нарушений и каждый PR блокировался бы.
+
+Также в ignore list:
+- `E402` (import not at top) — у нас logger placement legacy в нескольких файлах
+- `F401`, `F811` — DI plumbing pulls names that look unused statically
+
+**Когда вернуть:**
+1. Запустить `ruff check src --fix` — половина ошибок (`I001 imports order`) починится автоматически.
+2. Остальные (`B*`, `S*`, `T20`) — пройти руками файл за файлом, ~2-4 часа.
+3. Снять урезание из `pyproject.toml`, вернуть полный select.
+4. Снять `continue-on-error: true` с ruff job в `.github/workflows/ci.yml`.
+
+После этого CI начинает блокировать стиль-нарушения и security-хинты на новых PR.
+
+---
+
 ### M2. CI cleanup — fix legacy ruff warnings + bump deps with security patches
+
+**04.05.2026 update:** CVE-bumps **закрыты** в PR #26 (12 known vulnerabilities → 0). pip-audit job переведён в BLOCKING — новые CVE-подверженные deps больше не пройдут. Ruff cleanup отложен в M4 (выше).
+
+(Историческая запись ниже сохранена для контекста.)
 
 **Сейчас:** GitHub Actions `ci.yml` (PR #16) запускает 4 чека на каждый PR:
 - ✅ `byte-compile` (blocking) — pure syntax pass on `src/` + `alembic/`

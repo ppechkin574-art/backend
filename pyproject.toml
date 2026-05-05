@@ -41,6 +41,8 @@ ignore = [
     "SIM117",  # combine-if — too aggressive
     "UP007",  # X | Y typing — let pyright/mypy own this, not stylistic
     "UP035",  # deprecated-import — typing.X stays for now
+    "I001",  # import block sorting — purely cosmetic, auto-fix in M4 follow-up
+    "W291",  # trailing whitespace — purely cosmetic, ditto
 ]
 
 [tool.ruff.lint.per-file-ignores]

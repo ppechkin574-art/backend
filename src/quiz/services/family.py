@@ -26,7 +26,8 @@ class FamilyService:
 
     def _get_user_role(self, user_id: UUID) -> str:
         try:
-            user = self._idp.get(KeycloakUserQueryDTO(id=user_id))
+            # Existence check — raises AuthUserNotFoundError on miss.
+            self._idp.get(KeycloakUserQueryDTO(id=user_id))
             roles = self._idp.get_roles(user_id)
             if "parent" in roles:
                 return "parent"

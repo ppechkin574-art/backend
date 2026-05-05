@@ -94,3 +94,36 @@ jobs:
           assert len(heads) == 1, f"Expected 1 head, got {len(heads)}: {heads}"
           print(f"alembic head OK: {heads[0]}")
           PY
+
+  smoke-tests:
+    name: pytest smoke (against live Railway prod)
+    runs-on: ubuntu-latest
+    # Smoke tests hit the real backend at BASE_URL. They are advisory while
+    # we figure out how to share the GitHub Actions runner IP without bumping
+    # rate limits — current strategy uses 65s windows between rate-limit
+    # tests which is slow but deterministic.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Alembic + dev deps
+        run: |
+          pip install --no-cache-dir "alembic==1.14.0" "sqlalchemy==2.0.36"
+          pip install --no-cache-dir -r requirements-dev.txt
+
+      - name: Run pytest
+        env:
+          BASE_URL: "https://backend-production-f2a1.up.railway.app"
+          # admin@aima.kz password is required as a GitHub Actions secret —
+          # if absent the admin tests will be skipped/error, but other smoke
+          # tests still run.
+          TEST_ADMIN_PASSWORD: ${{ secrets.TEST_ADMIN_PASSWORD }}
+        run: |
+          if [ -z "$TEST_ADMIN_PASSWORD" ]; then
+            echo "::warning::TEST_ADMIN_PASSWORD secret not set — admin tests will fail. Add it under repo Settings → Secrets and variables → Actions."
+          fi
+          pytest tests/ -v --tb=short -x

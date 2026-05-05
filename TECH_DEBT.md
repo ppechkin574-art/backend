@@ -326,6 +326,33 @@ cloudflare_customer_code → (из Cloudflare account)
 
 ## 🟢 Инфраструктура и код
 
+### M3. Smoke tests — добавлены, но advisory; нужны улучшения
+
+**Сейчас:** PR #17 принёс `tests/` директорию с 12 smoke-тестами против live Railway prod. Запускаются в GitHub Actions job `smoke-tests` (continue-on-error: true).
+
+**Покрытие:**
+- `test_health.py` — `/health` 200
+- `test_auth_login.py` — phone-login happy path + 401 на bad password
+- `test_auth_oauth_start.py` — `/auth/oauth/google` + `/auth/oauth/apple` отдают корректные authorize URLs
+- `test_admin_cache.py` — admin auth boundary (anon → 401, admin → 200)
+- `test_user_subjects.py` — Romanовский dump доступен (12 предметов)
+- `test_rate_limit.py` — slowapi реально режет 2-й запрос на /auth/code/request
+- `test_alembic.py` — миграции имеют 1 head, цепочка линейная без merge-веток
+
+**Что нужно для блокирующего CI:**
+
+1. **Зарегистрировать `TEST_ADMIN_PASSWORD` как GitHub Actions secret.** Это пароль `admin@aima.kz`. Положить в Repo Settings → Secrets and variables → Actions → New repository secret. Без secret тесты на admin (cache flush) пропускаются.
+
+2. **Заменить smoke на изолированные unit-тесты** (4-6 часов работы):
+   - testcontainers (Postgres + Redis в Docker)
+   - моки Keycloak / Resend / SMSC через `pytest-mock` или `respx`
+   - 20-30 unit-тестов на сервисный слой
+   - Сейчас тесты делают реальные SMSC DEBUG calls и Keycloak grants — норма для smoke, но не для масштаба.
+
+3. **Снять `continue-on-error: true`** с smoke-tests job когда (1) выполнен и rate-limit-aware sleeps оптимизированы.
+
+---
+
 ### M2. CI cleanup — fix legacy ruff warnings + bump deps with security patches
 
 **Сейчас:** GitHub Actions `ci.yml` (PR #16) запускает 4 чека на каждый PR:

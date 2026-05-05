@@ -38,6 +38,7 @@ line-ending = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-ra"
+pythonpath = ["src"]
 
 [tool.vulture]
 exclude = [

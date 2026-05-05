@@ -7,6 +7,7 @@ __pycache__/
 *.sh
 *.txt
 !requirements.txt
+!requirements-dev.txt
 *.json
 !docs/*.json
 *.sql

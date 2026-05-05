@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: ruff lint + format check (advisory)
+    runs-on: ubuntu-latest
+    # NOTE: continue-on-error until the legacy backlog of warnings (~few
+    # hundred from Roman's import era) is cleared. New PRs see warnings
+    # in the CI tab but merge is not blocked. Tracked in TECH_DEBT.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install ruff
+        run: pip install --no-cache-dir "ruff==0.7.4"
+
+      - name: Lint (style + suspicious patterns)
+        run: ruff check src
+
+      - name: Format check
+        run: ruff format --check src
+
+  security-audit:
+    name: pip-audit (CVE scan, advisory)
+    runs-on: ubuntu-latest
+    # NOTE: continue-on-error while we have unpatched CVEs in pinned deps
+    # (starlette, requests, python-multipart, etc — see TECH_DEBT 'security
+    # patches batch'). Reports are visible in the CI tab even if green —
+    # this is the on-ramp before flipping to strict.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install pip-audit
+        run: pip install --no-cache-dir "pip-audit==2.7.3"
+
+      - name: Audit requirements.txt
+        run: pip-audit --requirement requirements.txt --strict
+
+  syntax-check:
+    name: byte-compile (catches typos, missing imports)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Compile every .py
+        # No deps install — pure syntax/parse pass. Doesn't catch type errors
+        # but catches typos, broken indents, unclosed brackets, missing __init__.py.
+        run: python -m compileall -q src alembic
+
+  alembic-heads:
+    name: alembic single head (no diverging migrations)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install Alembic only
+        run: pip install --no-cache-dir "alembic==1.14.0" "sqlalchemy==2.0.36"
+
+      - name: Verify there is exactly one alembic head
+        run: |
+          python - <<'PY'
+          from alembic.script import ScriptDirectory
+          from alembic.config import Config
+          cfg = Config("alembic.ini")
+          script = ScriptDirectory.from_config(cfg)
+          heads = script.get_heads()
+          assert len(heads) == 1, f"Expected 1 head, got {len(heads)}: {heads}"
+          print(f"alembic head OK: {heads[0]}")
+          PY

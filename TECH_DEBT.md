@@ -326,6 +326,37 @@ cloudflare_customer_code → (из Cloudflare account)
 
 ## 🟢 Инфраструктура и код
 
+### M2. CI cleanup — fix legacy ruff warnings + bump deps with security patches
+
+**Сейчас:** GitHub Actions `ci.yml` (PR #16) запускает 4 чека на каждый PR:
+- ✅ `byte-compile` (blocking) — pure syntax pass on `src/` + `alembic/`
+- ✅ `alembic-heads` (blocking) — exactly one alembic head, no diverging migration branches
+- ⚠️ `lint` (advisory, `continue-on-error: true`) — ruff check + format
+- ⚠️ `security-audit` (advisory, `continue-on-error: true`) — pip-audit `--strict`
+
+`continue-on-error` оба advisory чека потому что existing legacy code на момент 04.05.2026 имел:
+- ~150 ruff warnings из Романовского era (E402 import-not-at-top, I001 unsorted imports, S* security hints).
+- 12 known CVEs в pinned deps (starlette 0.41.3 → 0.49.1, requests 2.32.3 → 2.33.0, python-multipart 0.0.20 → 0.0.26, и др.).
+
+**Задачи перед prod:**
+
+1. **Зачистить ruff warnings** (1-2 часа):
+   ```bash
+   ruff check src --fix  # auto-fixable: I001 sort, format issues
+   ruff check src         # вручную пофиксить остаток (E402, S*)
+   ruff format src        # унифицирует style
+   ```
+   После — снять `continue-on-error: true` с lint job.
+
+2. **Bump deps c security patches** (1 час):
+   - В `requirements.txt` поднять: `starlette` → `0.49.1+`, `requests` → `2.33.0+`, `python-multipart` → `0.0.26+`, и остальные из `pip-audit` отчёта.
+   - `pip-audit -r requirements.txt --strict` локально → должно быть зелёным.
+   - После — снять `continue-on-error: true` с security-audit job.
+
+После этих двух шагов CI становится **полностью blocking** — ни один PR не пройдёт без чистого lint + 0 known CVE. Это правильное состояние для prod.
+
+---
+
 ### M1. Sentry — error monitoring (отложено, код готов)
 
 **Сейчас:** ⏸ Код подключён в проде (PR #14, файл `src/api/__init__.py:_init_sentry`), но `SENTRY_DSN` env не задан — backend стартует с `[sentry] SENTRY_DSN not set — skipping Sentry init`. Это no-op, безопасно.

@@ -18,7 +18,7 @@ class PlanFeaturesDTO(BaseModel):
     duration_days: int
     is_recurring: bool = True
     trial_days: int = 0
-    features: dict[str, bool]
+    features: dict[str, Any]
     limitations: dict[str, Any]
     is_active: bool = True
     is_visible: bool = True

@@ -37,10 +37,18 @@ class SubscriptionService:
             result: dict[PlanType, PlanFeaturesDTO] = {}
             for plan in plans:
                 try:
-                    plan_type = PlanType(plan.plan_type)
+                    raw_type = (plan.plan_type or "").strip()
+                    matched = next(
+                        (pt for pt in PlanType if pt.value.upper() == raw_type.upper()),
+                        None,
+                    )
+                    if matched is None:
+                        logger.warning("Unknown plan type in DB: %s", raw_type)
+                        continue
+                    plan_type = matched
 
-                    features = plan.features or {}
-                    limitations = plan.limitations or {}
+                    features = plan.features if isinstance(plan.features, dict) else {}
+                    limitations = plan.limitations if isinstance(plan.limitations, dict) else {}
 
                     plan_dto = PlanFeaturesDTO(
                         id=plan.id,
@@ -60,8 +68,8 @@ class SubscriptionService:
                     )
 
                     result[plan_type] = plan_dto
-                except ValueError:
-                    logger.warning("Unknown plan type in DB: %s", plan.plan_type)
+                except Exception as e:
+                    logger.warning("Failed to load plan %s: %s", plan.plan_type, e)
                     continue
 
             return result

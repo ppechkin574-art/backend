@@ -222,6 +222,7 @@ class SubscriptionService:
                     "is_recurring": features.is_recurring,
                     "trial_days": features.trial_days,
                     "display_order": features.display_order,
+                    "benefit_items": features.features.get("benefit_items") or [] if features.features else [],
                 }
                 result.append(plan_dict)
 

@@ -9,6 +9,7 @@ from .questions import router as questions_router
 from .statistics import router as statistics_router
 from .subject_combinations import router as subject_combinations_router
 from .subjects import router as subjects_router
+from .subscription import router as subscription_router
 from .topics import router as topics_router
 from .trainers import router as trainers_router
 from .users import router as users_router
@@ -28,4 +29,5 @@ routers = [
     users_router,
     bank_router,
     cache_router,
+    subscription_router,
 ]

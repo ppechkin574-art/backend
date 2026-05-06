@@ -61,6 +61,7 @@ class SubscriptionPlanResponse(BaseModel):
     is_recurring: bool | None = Field(None, description="Автопродление")
     trial_days: int | None = Field(None, description="Пробный период в днях")
     display_order: int | None = Field(None, description="Порядок отображения")
+    benefit_items: list[dict[str, Any]] = Field(default_factory=list, description="Список преимуществ подписки")
 
 
 class ActivateSubscriptionRequest(BaseModel):

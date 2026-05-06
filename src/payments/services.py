@@ -72,6 +72,12 @@ class PaymentService:
             order_id,
         )
 
+        # Pre-fill phone/email if user has them (skip None to avoid 'None' string)
+        user_phone = getattr(self.user, "phone", None)
+        user_email = getattr(self.user, "email", None)
+        # FreedomPay form accepts phone in 11-digit format without '+' (e.g. 77001234567)
+        clean_phone = str(user_phone).lstrip("+").strip() if user_phone else None
+
         params = {k: v for k, v in {
             "pg_merchant_id": self.freedom_pay_settings.merchant_id,
             "pg_order_id": order_id,
@@ -82,7 +88,9 @@ class PaymentService:
             "pg_success_url": f"{self.freedom_pay_settings.callback_url}/payment/success",
             "pg_failure_url": f"{self.freedom_pay_settings.callback_url}/payment/failed",
             "pg_user_id": f"{str(self.user.id)}",
-        }.items() if v is not None}
+            "pg_user_phone": clean_phone,
+            "pg_user_contact_email": str(user_email) if user_email else None,
+        }.items() if v is not None and str(v).strip() != "" and str(v).strip().lower() != "none"}
 
         if pg_card_token:
             params["pg_card_token"] = pg_card_token

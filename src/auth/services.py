@@ -851,7 +851,7 @@ class AuthService:
         return phone
 
     def _send_confirmation_code(self, contact: str, code: int, platform: CodePlatform) -> None:
-        message_text = f"Код подтверждения Lumi: {code}"
+        message_text = f"Код подтверждения AIMA: {code}"
 
         try:
             message = NotificationMessageDTO(

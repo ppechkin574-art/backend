@@ -24,7 +24,7 @@ class FirebaseSettings(BaseModel):
         description="Заголовок уведомления по умолчанию",
     )
     default_body: str = Field(
-        default="Открывай приложение Lumi и решай свежий тест!",
+        default="Открывай приложение AIMA и решай свежий тест!",
         description="Текст уведомления по умолчанию",
     )
     batch_send_size: int = Field(

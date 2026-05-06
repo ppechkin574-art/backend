@@ -84,7 +84,7 @@ def create_app() -> FastAPI:
         logger.setLevel(logging.CRITICAL)
 
     app = FastAPI(
-        title="Lumi API",
+        title="AIMA API",
         version="0.1.3",
         docs_url="/docs",
         redoc_url="/redoc",

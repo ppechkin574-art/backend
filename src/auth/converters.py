@@ -124,11 +124,18 @@ def to_keycloak_create_user_dto(user: UserCreateDTO) -> "KeycloakCreateUserDTO":
 
     subscription_end = user.subscription_end or datetime.now(UTC) + timedelta(days=3)
 
+    # Phone-only users get a synthetic email so Keycloak User Profile validation passes
+    email = user.email
+    if not email and user.phone:
+        digits = "".join(filter(str.isdigit, user.phone))
+        email = f"phone.{digits}@aima.internal"
+
     return KeycloakCreateUserDTO(
         username=username,
-        email=user.email,
+        email=email,
         firstName=user.name or username,
-        lastName=" ",
+        lastName=username,
+        emailVerified=True,
         attributes=KeycloakAttributesDTO(
             name=[user.name],
             phone=[user.phone] if user.phone else [],

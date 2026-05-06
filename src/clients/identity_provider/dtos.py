@@ -38,6 +38,7 @@ class KeycloakCreateUserDTO(BaseModel):
     email: EmailStr | None = None
     firstName: str | None = None
     lastName: str | None = None
+    emailVerified: bool = Field(default=False)
     enabled: bool = Field(default=True)
     attributes: KeycloakAttributesDTO
     credentials: list[KeycloakCredentialDTO]

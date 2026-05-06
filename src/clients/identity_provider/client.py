@@ -584,13 +584,19 @@ class IdentityProviderClientKeycloak:
             logger.info("  - Email Verified: %s", user_before.get("emailVerified"))
             logger.info("  - Required Actions: %s", user_before.get("requiredActions"))
 
+            payload = {
+                "enabled": active,
+                "emailVerified": active,
+                "requiredActions": [],
+                "username": user_before.get("username"),
+                "attributes": user_before.get("attributes") or {},
+            }
+            if user_before.get("email"):
+                payload["email"] = user_before.get("email")
+
             self._keycloak_admin.update_user(
                 user_id=str(user_id),
-                payload={
-                    "enabled": active,
-                    "emailVerified": active,
-                    "requiredActions": [],
-                },
+                payload=payload,
             )
 
             user_after = self._keycloak_admin.get_user(str(user_id))

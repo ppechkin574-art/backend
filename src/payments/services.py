@@ -72,12 +72,19 @@ class PaymentService:
             order_id,
         )
 
-        # Pre-fill email if real (skip synthetic .internal addresses generated
-        # for phone-only registrations — FreedomPay rejects them).
-        # Phone is NOT pre-filled: FreedomPay's form auto-adds '+' to the
-        # displayed value and then rejects it on submit. Letting the user type
-        # via the form's own input mask avoids this validation conflict.
+        # Pass user phone and email so FreedomPay can hide / pre-validate those
+        # fields on its customer page. We strip None / empty / 'None' / synthetic
+        # internal-only emails before sending.
+        user_phone = getattr(self.user, "phone", None)
         user_email = getattr(self.user, "email", None)
+
+        # FreedomPay form expects phone in 11-digit format without '+'
+        clean_phone = None
+        if user_phone:
+            clean_phone = "".join(c for c in str(user_phone) if c.isdigit())
+            if not clean_phone:
+                clean_phone = None
+
         clean_email = str(user_email).strip() if user_email else None
         if clean_email and (clean_email.endswith(".internal") or "@aima.internal" in clean_email):
             clean_email = None
@@ -92,7 +99,11 @@ class PaymentService:
             "pg_success_url": f"{self.freedom_pay_settings.callback_url}/payment/success",
             "pg_failure_url": f"{self.freedom_pay_settings.callback_url}/payment/failed",
             "pg_user_id": f"{str(self.user.id)}",
+            "pg_user_phone": clean_phone,
             "pg_user_contact_email": clean_email,
+            "pg_user_ip": "127.0.0.1",
+            # Hide user form fields that we already provide
+            "pg_skip_user_form": "1",
         }.items() if v is not None and str(v).strip() != "" and str(v).strip().lower() != "none"}
 
         if pg_card_token:

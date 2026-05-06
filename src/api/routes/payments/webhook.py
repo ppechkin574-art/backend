@@ -191,7 +191,13 @@ async def result_notify(
 
             # Обновляем Keycloak через IdentityProviderClient
             try:
-                plan_type = PlanType(subscription.plan)
+                raw_plan = (subscription.plan or "").strip()
+                plan_type = next(
+                    (pt for pt in PlanType if pt.value.upper() == raw_plan.upper()),
+                    None,
+                )
+                if plan_type is None:
+                    raise ValueError(f"Unknown plan: {raw_plan}")
 
                 identity_provider_client.update_user_subscription(
                     user_id=UUID(payment.user_id),

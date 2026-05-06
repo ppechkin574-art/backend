@@ -51,7 +51,7 @@ class SubscriptionStatusDTO(BaseModel):
     plan_description: str
     is_active: bool
     expires_at: str | None
-    features: dict[str, bool]
+    features: dict[str, Any]
     limitations: dict[str, Any]
     price: float
     is_expired: bool = False

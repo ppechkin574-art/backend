@@ -234,9 +234,12 @@ def to_user_dto(keycloak_user: "KeycloakUserDTO", roles: list[str]) -> UserDTO:
         if plan_list and len(plan_list) > 0:
             plan_str = plan_list[0]
 
-    try:
-        plan = PlanType(plan_str) if plan_str else PlanType.FREE
-    except (ValueError, KeyError):
+    if plan_str:
+        plan = next(
+            (pt for pt in PlanType if pt.value.upper() == plan_str.strip().upper()),
+            PlanType.FREE,
+        )
+    else:
         plan = PlanType.FREE
 
     subscription_end_str = None

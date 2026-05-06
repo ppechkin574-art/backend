@@ -82,7 +82,7 @@ class PaymentService:
             "pg_success_url": f"{self.freedom_pay_settings.callback_url}/payment/success",
             "pg_failure_url": f"{self.freedom_pay_settings.callback_url}/payment/failed",
             "pg_user_id": f"{str(self.user.id)}",
-            "pg_user_phone": f"{str(self.user.phone)}" if self.user.phone else None,
+            "pg_user_phone": self.user.phone.lstrip('+') if self.user.phone else None,
             "pg_user_contact_email": (f"{str(self.user.email)}" if self.user.email else None),
         }
 

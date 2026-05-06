@@ -620,7 +620,7 @@ class AuthService:
             self._confirmation_codes.delete(confirmation_code.id)
 
             try:
-                tokens = self._users.create_tokens(contact, password)
+                tokens = self._users.create_tokens(user.username, password)
                 logger.info("Tokens created for user: %s", user.id)
             except Exception as e:
                 logger.exception("Error creating tokens: %s", e)

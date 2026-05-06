@@ -72,14 +72,12 @@ class PaymentService:
             order_id,
         )
 
-        # Pre-fill phone/email if user has them (skip None to avoid 'None' string)
-        user_phone = getattr(self.user, "phone", None)
+        # Pre-fill email if real (skip synthetic .internal addresses generated
+        # for phone-only registrations — FreedomPay rejects them).
+        # Phone is NOT pre-filled: FreedomPay's form auto-adds '+' to the
+        # displayed value and then rejects it on submit. Letting the user type
+        # via the form's own input mask avoids this validation conflict.
         user_email = getattr(self.user, "email", None)
-        # FreedomPay form accepts phone in 11-digit format without '+' (e.g. 77001234567)
-        clean_phone = str(user_phone).lstrip("+").strip() if user_phone else None
-        # Synthetic emails (e.g. phone.77001234567@aima.internal) generated for
-        # phone-only registrations are rejected by FreedomPay's email validator.
-        # Skip them so the user can fill in a real email manually.
         clean_email = str(user_email).strip() if user_email else None
         if clean_email and (clean_email.endswith(".internal") or "@aima.internal" in clean_email):
             clean_email = None
@@ -94,7 +92,6 @@ class PaymentService:
             "pg_success_url": f"{self.freedom_pay_settings.callback_url}/payment/success",
             "pg_failure_url": f"{self.freedom_pay_settings.callback_url}/payment/failed",
             "pg_user_id": f"{str(self.user.id)}",
-            "pg_user_phone": clean_phone,
             "pg_user_contact_email": clean_email,
         }.items() if v is not None and str(v).strip() != "" and str(v).strip().lower() != "none"}
 

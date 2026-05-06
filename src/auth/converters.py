@@ -127,6 +127,8 @@ def to_keycloak_create_user_dto(user: UserCreateDTO) -> "KeycloakCreateUserDTO":
     return KeycloakCreateUserDTO(
         username=username,
         email=user.email,
+        firstName=user.name or username,
+        lastName=" ",
         attributes=KeycloakAttributesDTO(
             name=[user.name],
             phone=[user.phone] if user.phone else [],

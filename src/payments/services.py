@@ -77,6 +77,12 @@ class PaymentService:
         user_email = getattr(self.user, "email", None)
         # FreedomPay form accepts phone in 11-digit format without '+' (e.g. 77001234567)
         clean_phone = str(user_phone).lstrip("+").strip() if user_phone else None
+        # Synthetic emails (e.g. phone.77001234567@aima.internal) generated for
+        # phone-only registrations are rejected by FreedomPay's email validator.
+        # Skip them so the user can fill in a real email manually.
+        clean_email = str(user_email).strip() if user_email else None
+        if clean_email and (clean_email.endswith(".internal") or "@aima.internal" in clean_email):
+            clean_email = None
 
         params = {k: v for k, v in {
             "pg_merchant_id": self.freedom_pay_settings.merchant_id,
@@ -89,7 +95,7 @@ class PaymentService:
             "pg_failure_url": f"{self.freedom_pay_settings.callback_url}/payment/failed",
             "pg_user_id": f"{str(self.user.id)}",
             "pg_user_phone": clean_phone,
-            "pg_user_contact_email": str(user_email) if user_email else None,
+            "pg_user_contact_email": clean_email,
         }.items() if v is not None and str(v).strip() != "" and str(v).strip().lower() != "none"}
 
         if pg_card_token:

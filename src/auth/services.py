@@ -630,6 +630,8 @@ class AuthService:
 
         except ConfirmationCodeNotFoundError:
             raise AuthInvalidConfirmationCodeError("Code not found or expired")
+        except (AuthUserExistsError, AuthInvalidConfirmationCodeError, AuthConfirmationCodeExpiredError):
+            raise
         except Exception as e:
             logger.exception(
                 "Error completing registration: %s",

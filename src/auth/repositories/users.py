@@ -199,11 +199,26 @@ class UserRepositoryKeycloak:
         self.identity_provider_client = identity_provider_client
 
     def create(self, user: UserCreateDTO) -> UserDTO:
-        keycloak_user, is_created = self.identity_provider_client.get_or_create(to_keycloak_create_user_dto(user))
+        kc_dto = to_keycloak_create_user_dto(user)
+        keycloak_user, is_created = self.identity_provider_client.get_or_create(kc_dto)
         roles = self.identity_provider_client.get_roles(keycloak_user.id)
         _user = to_user_dto(keycloak_user, roles)
         if not is_created:
-            raise UserExistsError(is_active=_user.is_active, user_id=_user.id)
+            # If phone-only user was found by synthetic email but has no phone attribute,
+            # it's a zombie from a previous failed registration — delete and recreate.
+            if user.phone and not _user.phone:
+                logger.info(
+                    "Zombie user detected (no phone attr on %s), deleting and retrying",
+                    _user.id,
+                )
+                self.identity_provider_client.delete(_user.id)
+                keycloak_user, is_created = self.identity_provider_client.get_or_create(kc_dto)
+                roles = self.identity_provider_client.get_roles(keycloak_user.id)
+                _user = to_user_dto(keycloak_user, roles)
+                if not is_created:
+                    raise UserExistsError(is_active=_user.is_active, user_id=_user.id)
+            else:
+                raise UserExistsError(is_active=_user.is_active, user_id=_user.id)
         return _user
 
     def get(self, user: UserQueryDTO) -> UserDTO:

@@ -72,7 +72,7 @@ class PaymentService:
             order_id,
         )
 
-        params = {
+        params = {k: v for k, v in {
             "pg_merchant_id": self.freedom_pay_settings.merchant_id,
             "pg_order_id": order_id,
             "pg_amount": str(amount),
@@ -82,9 +82,7 @@ class PaymentService:
             "pg_success_url": f"{self.freedom_pay_settings.callback_url}/payment/success",
             "pg_failure_url": f"{self.freedom_pay_settings.callback_url}/payment/failed",
             "pg_user_id": f"{str(self.user.id)}",
-            "pg_user_phone": None,
-            "pg_user_contact_email": (f"{str(self.user.email)}" if self.user.email else None),
-        }
+        }.items() if v is not None}
 
         if pg_card_token:
             params["pg_card_token"] = pg_card_token

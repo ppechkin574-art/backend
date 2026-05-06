@@ -169,21 +169,79 @@ apple_oauth__FRONTEND_REDIRECT → com.lumi.lumiapp://oauth2redirect
 
 ---
 
-### 6. FreedomPay (платежи)
+### 6. FreedomPay (платежи) — 🚨 BLOCKER на форме оплаты (07.05.2026)
 
-**Сейчас:** ⏸ **отложено по решению заказчика (04.05.2026)**. Креды у заказчика есть (договор с FreedomPay подписан, merchant_id выдан), но подключение перенесено на следующую итерацию — фокус сейчас на core flows.
+**TL;DR:** бэкенд работает идеально, FreedomPay принимает запросы, redirect_url возвращается, WebSocket подключается. **Платёж застревает на customer-форме FreedomPay** (`https://customer.freedompay.kz/pay.html`): после нажатия «Оплатить» поле телефона помечается красным с ошибкой «Введите ваш номер телефона», сабмит не происходит. Воспроизводится **на iOS Simulator И на реальном iPhone** (TestFlight 1.2.0+11). Проблема не в нашем коде — это либо баг конкретного тестового мерчанта (#584797), либо особенность их frontend-валидации с pre-fill. Ждём ответа менеджера FreedomPay.
 
-**Реальный статус кода:** клиент `src/clients/freedom_pay/` готов, payment poller запускается в lifespan и опрашивает каждые 25 минут (`Found 0 pending payments` в логах). Webhook handler `/payments/callback` принимает HMAC-MD5 подписи. Если в Railway записать рабочий `MERCHANT_ID` + `SECRET` — заработает без изменений в коде.
-
-**Когда возвращаться:**
-- В Railway → backend → Variables:
+#### Текущий конфиг (Railway env, бэкенд)
 ```
-freedom_pay__MERCHANT_ID  → (реальный merchant ID от банка)
-freedom_pay__SECRET       → (реальный HMAC secret)
-freedom_pay__CALLBACK_URL → https://api.aima.kz/payments/callback
+freedom_pay__MERCHANT_ID   = 584797
+freedom_pay__SECRET        = tawJQQsOHV03wwnn   (Секретный ключ для приёма)
+freedom_pay__API_URL       = https://api.freedompay.kz
+freedom_pay__PAYMENT_PAGE  = https://api.freedompay.kz/init_payment.php
+freedom_pay__CALLBACK_URL  = https://backend-production-f2a1.up.railway.app
 ```
-- В кабинете FreedomPay зарегистрировать callback URL `https://api.aima.kz/payments/callback`.
-- Прогнать тестовый платёж в sandbox-окружении (FreedomPay даёт тестовые карты), убедиться что callback приходит и подпись валидируется.
+Магазин в FreedomPay: ТОО «SARY ARQA BELT», статус **Тестовый**. Менеджер `+7 777 802 0018`. В кабинете магазина (`my.freedompay.kz` → Магазины → #584797) поля `CHECK URL`, `RESULT URL`, `SUCCESS URL` **пустые** — мы передаём их в каждом запросе через `pg_*_url` параметры, так что это не блокер. Тестовые карты (доступны в кабинете «Разработчикам»): `4111 1111 1111 1111`, `4444 4444 4444 6666`, `5555 5555 5555 5557` и др. (CVC `123`, expire `12/26`).
+
+#### Что точно работает (подтверждено логами Railway)
+- `POST /user/subscription/create-payment` → 201 Created
+- Запрос в FreedomPay `init_payment` → 200 OK с `pg_status=ok` и валидным `pg_redirect_url`
+- DB-запись Payment создаётся, `pg_payment_id` пишется
+- WebSocket-токен генерируется, клиент подключается, heartbeats летают
+- На фронте `PaymentWebViewScreen` загружает `https://customer.freedompay.kz/pay.html?customer=<UUID>`, страница рендерится
+
+#### В чём именно блокер
+FreedomPay's customer page — Vue.js приложение, для номера телефона использует библиотеку `vue-tel-input`. После нажатия «Оплатить»:
+- Через JS-инъекцию в WebView (см. `payment_webview_screen.dart::_injectDebugScript`) видно: `Forms count: 0` (не классическая HTML-форма, а Vue-приложение).
+- В DOM вешаются классы ошибок `tel__wr--error`, `tel__label--error :: Введите ваш номер телефона` независимо от формата ввода.
+- В preferred-странах **два элемента с `iti-flag kz`** (оба Казахстан, странно), `data-country-code` отсутствует, в `<span class="dropdown__text">` обрезается при дампе.
+- Программный `click()` по preferred-элементам не помогает (Vue реактивность игнорирует DOM-клик без user-gesture).
+- `__vue__` и `__vueParentComponent` хуки на `.vue-tel-input` элементе пустые → доступ к Vue-инстансу заблокирован.
+
+Форматы которые пробовали (все отвергаются):
+- `+77031234567`
+- `77031234567`
+- `7031234567`
+- `+7 (703) 123-45-67`
+- Pre-filled через `pg_user_phone` (форма показывает корректный `+7 703 123 4567`, но валидация всё равно падает).
+
+#### Что мы сделали сегодня (07.05.2026)
+**Backend (`src/payments/services.py`)**, итерации в коммитах `407a9b9` → `c8be996` → `8e76090` → `3d6c102` → `9a042da` → `04b21b8` → `1261b22`:
+1. Стрипали `+` из телефона → не помогло
+2. Полностью убирали `pg_user_phone` и `pg_user_contact_email` → форма требует ручного ввода и ругается
+3. Возвращали оба параметра, фильтруя `None` и `'None'` строки → форма красит phone красным
+4. Фильтруем синтетические email с доменом `.internal` (Keycloak их генерит для phone-only регистрации) → email-поле перестало ругаться, проблема локализована к телефону
+5. **Финальный текущий стейт (`1261b22`):** шлём `pg_user_phone` (только цифры), `pg_user_contact_email` (real только), `pg_user_ip=127.0.0.1`, `pg_skip_user_form=1`. Параметр `pg_skip_user_form` похоже игнорируется FreedomPay'ем — форма показывается всё равно.
+
+**Frontend (`lib/features/promocode/presentation/screens/payment_webview_screen.dart`)**:
+- Чинили баг `clearPaymentEntity()` который не очищал `paymentEntity` из-за бага в `copyWith` — это вызывало двойной push WebView (см. `subscription_state.dart` и `subscription_cubit.dart`)
+- Возвращали Android User-Agent в WebView (был временно убран)
+- Добавили `JavaScriptChannel('FlutterDebug')` + injection-скрипт для перехвата `console.log`, `window.error`, кликов, ошибок валидации
+- Скрипт пытается автоматически кликнуть Казахстан в дропдауне — без эффекта
+
+**Версии собранных билдов:**
+- TestFlight `1.2.0+10` — со старыми багами `clearPaymentEntity`
+- TestFlight `1.2.0+11` — все фиксы + JS-инъекция (тестировался юзером 07.05.2026 на реальном iPhone — та же проблема)
+
+#### Что попробовать завтра
+1. **Связаться с менеджером FreedomPay** (`+7 777 802 0018`) — текст готов в чате, отправить в Telegram/Whatsapp.
+2. **Тестовые карты конкретно от FreedomPay** (не стандартные Visa) — попробовать `4444 4444 4444 6666` вместо `4111 1111 1111 1111`. Возможно тестовый мерчант принимает только их собственные.
+3. **Перевести магазин в боевой режим** (через менеджера) — в проде форма часто работает иначе. Договор уже подписан, статус «Тестовый» в кабинете нужно сменить.
+4. **Альтернатива — Apple Pay через FreedomPay** — у них есть SDK для нативного ApplePayButton, обходит customer-форму вообще. См. `https://docs.freedompay.kz/`.
+5. **Альтернатива 2** — JS-widget вместо redirect URL. FreedomPay даёт виджет (`pg_form_skin`?), может встраивается лучше в WebView.
+6. **Webhook test** — независимо от UI, проверить что callback на `/fp/result_notify` реально приходит когда платёж оплачивается через тестовую карту в браузере (не через WebView).
+
+#### Файлы где трогали
+- Backend: `src/payments/services.py:75-99` (params построение)
+- Frontend: `lib/features/subscription/presentation/cubit/subscription_state.dart` (фикс `copyWith`)
+- Frontend: `lib/features/subscription/presentation/cubit/subscription_cubit.dart` (`clearPaymentEntity`)
+- Frontend: `lib/features/profile/presentation/screens/subscription_profile_screen.dart` (показ ошибок payment в UI)
+- Frontend: `lib/features/promocode/presentation/screens/payment_webview_screen.dart:59-200` (User-Agent + JS-инъекция)
+
+#### Что НЕ нужно делать
+- Не трогать `pg_skip_user_form` — параметр кажется не поддерживается, но и вреда не наносит
+- Не убирать `pg_user_phone`/`pg_user_contact_email` снова — без них форма требует ручной ввод и юзеру это совсем не дружелюбно
+- Не амендить старые коммиты — оставить аудит-трейл всех попыток
 
 ---
 

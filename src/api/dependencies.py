@@ -251,11 +251,9 @@ def get_subscription_plan_service(
 
 def get_subscription_service(
     auth_service: AuthServiceInterface = Depends(get_auth_service),
-    plan_repository: SubscriptionPlanRepository = Depends(
-        get_subscription_plan_repository
-    ),
+    database: Database = Depends(get_database),
 ) -> SubscriptionService:
-    return SubscriptionService(auth_service, plan_repository)
+    return SubscriptionService(auth_service, database)
 
 
 # def get_user_with_subscription_check(

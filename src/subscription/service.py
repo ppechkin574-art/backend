@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from auth.dtos.users import UserDTO, UserUpdateDTO
 from auth.services import AuthServiceInterface
 from common.enums import FeatureType, PlanType
+from database import Database
 from subscription.dtos import PlanFeaturesDTO, SubscriptionStatusDTO
 from subscription.plan_repository import SubscriptionPlanRepository
 
@@ -17,10 +18,10 @@ class SubscriptionService:
     def __init__(
         self,
         auth_service: AuthServiceInterface,
-        plan_repository: SubscriptionPlanRepository,
+        database: Database,
     ):
         self.auth_service = auth_service
-        self.plan_repository = plan_repository
+        self._database = database
         self._plan_features_cache = {}
         self._last_cache_update = None
         self._cache_ttl = 300
@@ -28,7 +29,11 @@ class SubscriptionService:
     def _load_plan_features_from_db(self) -> dict[PlanType, PlanFeaturesDTO]:
         """Загрузить фичи планов из БД"""
         try:
-            plans = self.plan_repository.get_active_plans()
+            session = self._database.session
+            try:
+                plans = SubscriptionPlanRepository(session).get_active_plans()
+            finally:
+                session.close()
             result: dict[PlanType, PlanFeaturesDTO] = {}
             for plan in plans:
                 try:
@@ -86,12 +91,10 @@ class SubscriptionService:
         if plan_type in cached:
             return cached[plan_type]
 
-        plan = self.plan_repository.get_plan_by_type(plan_type)
-        if plan:
-            self._plan_features_cache = self._load_plan_features_from_db()
-            cached_plan = self._plan_features_cache.get(plan_type)
-            if cached_plan:
-                return cached_plan
+        self._plan_features_cache = self._load_plan_features_from_db()
+        cached_plan = self._plan_features_cache.get(plan_type)
+        if cached_plan:
+            return cached_plan
 
         default_features = self._get_default_plan_features(plan_type)
 

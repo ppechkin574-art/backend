@@ -169,8 +169,8 @@ class Container(containers.DeclarativeContainer):
 
     subscription_service = providers.Singleton(
         SubscriptionService,
-        user_repository=user_repository,
         auth_service=auth_service,
+        database=database,
     )
 
     attendance_service = providers.Singleton(AttendanceService, uow=unit_of_work_tests, cache_service=cache_service)

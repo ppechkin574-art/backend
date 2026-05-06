@@ -445,54 +445,70 @@ class IdentityProviderClientKeycloak:
         return self._format_keycloak_user(user_rep)
 
     def _find_user_by_phone(self, phone: str) -> dict | None:
-        """Ищет пользователя по телефону среди всех пользователей Keycloak"""
+        """Ищет пользователя по телефону через Keycloak attribute search."""
         start_time = time.time()
         logger.info("Starting phone search for: %s", phone)
 
+        normalized_search_phone = self._normalize_phone_for_search(phone)
+
+        try:
+            # Primary: Keycloak native attribute search (fast, returns full attrs)
+            candidates = self._keycloak_admin.get_users({"q": f"phone:{normalized_search_phone}"})
+            logger.info("Attribute search returned %s candidates", len(candidates))
+
+            for candidate in candidates:
+                # get_users with q= may return brief repr — fetch full user to confirm
+                try:
+                    full_user = self._keycloak_admin.get_user(candidate.get("id"))
+                except Exception:
+                    full_user = candidate
+
+                attrs = full_user.get("attributes") or {}
+                phone_list = attrs.get("phone", [])
+                if isinstance(phone_list, str):
+                    phone_list = [phone_list]
+
+                for user_phone in phone_list:
+                    if self._normalize_phone_for_search(user_phone) == normalized_search_phone:
+                        elapsed = time.time() - start_time
+                        logger.info("Phone found via attr search! User: %s, time: %ss", full_user.get("id"), elapsed)
+                        return full_user
+
+        except Exception as e:
+            logger.warning("Attribute search failed, falling back to full scan: %s", e)
+
+        # Fallback: full scan — fetch each user individually to get full attributes
         try:
             all_users = self._keycloak_admin.get_users({})
-            logger.info("Retrieved %s users from Keycloak", len(all_users))
-
-            normalized_search_phone = self._normalize_phone_for_search(phone)
-            logger.debug("Normalized search phone: %s", normalized_search_phone)
+            logger.info("Fallback: scanning %s users from Keycloak", len(all_users))
 
             for user in all_users:
-                attrs = user.get("attributes") or {}
+                try:
+                    full_user = self._keycloak_admin.get_user(user.get("id"))
+                except Exception:
+                    full_user = user
 
-                if not isinstance(attrs, dict):
-                    try:
-                        attrs = dict(attrs)
-                    except Exception:
-                        attrs = {}
-
+                attrs = full_user.get("attributes") or {}
                 phone_list = attrs.get("phone", [])
                 if not phone_list:
                     continue
-
                 if isinstance(phone_list, str):
                     phone_list = [phone_list]
 
                 for user_phone in phone_list:
                     if not user_phone:
                         continue
-
-                    normalized_user_phone = self._normalize_phone_for_search(user_phone)
-                    if normalized_search_phone == normalized_user_phone:
+                    if self._normalize_phone_for_search(user_phone) == normalized_search_phone:
                         elapsed = time.time() - start_time
-                        logger.info(
-                            "Phone found! User: %s, search time: %ss",
-                            user.get("id"),
-                            elapsed,
-                        )
-                        return user
-
-            elapsed = time.time() - start_time
-            logger.info("Phone not found. Search time: %ss", elapsed)
-            return None
+                        logger.info("Phone found via full scan! User: %s, time: %ss", full_user.get("id"), elapsed)
+                        return full_user
 
         except Exception as e:
-            logger.exception("Error searching user by phone %s: %s", phone, str(e))
-            return None
+            logger.exception("Error in full scan for phone %s: %s", phone, str(e))
+
+        elapsed = time.time() - start_time
+        logger.info("Phone not found. Search time: %ss", elapsed)
+        return None
 
     def _format_keycloak_user(self, user_data: dict) -> KeycloakUserDTO:
         """Форматирует сырые данные Keycloak в KeycloakUserDTO"""

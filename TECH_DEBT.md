@@ -779,3 +779,65 @@ pip install slowapi
 ---
 
 _Документ создан 01.05.2026. Последнее обновление — 01.05.2026 (после деплоя всех инфраструктурных сервисов и наката контента)._
+
+---
+
+## 🗺️ Roadmap to Production — аудит 07.05.2026
+
+> Полный системный аудит mobile-приложения, бэкенда и админки на предмет заглушек, незаконченной логики и сервисов в нерабочем/тестовом режиме. Составлен 07.05.2026 после iOS-сессий.
+
+### Приоритет 1 — БЛОКЕРЫ ПРОДАКШНА
+
+Без этих пунктов запуск технически невозможен / нарушаются правила сторов.
+
+| # | Пункт | Где | Что делать |
+|---|---|---|---|
+| 1 | **SMS реально отправляются** | Railway env `SMSC__DEBUG=true`, баланс SMSC 0₸ | Пополнить SMSC, зарегистрировать sender `AIMA`, переключить `SMSC__DEBUG=false`. Без этого новый юзер не зарегистрируется (не получит код). |
+| 2 | **FreedomPay платежи проходят** | TECH_DEBT секция 6, форма-блокер | См. секцию 6. Контакт менеджера + перевод в боевой режим. Без этого никто не купит подписку. |
+| 3 | **Cancel subscription реально работает** | `aima-app/lib/features/profile/presentation/screens/subscription_profile_screen.dart:292` — `// TODO: implement cancel API call` | Реализовать backend-эндпоинт + подключить во Flutter. **App Store отклонит** приложение с подпиской без работающего cancel. |
+| 4 | **Удалить остатки бренда «Lumi» из UI** | `aima-app/lib/core/presentation/src/l10n/app_localizations*.dart` | Минимум 5 строк: «Начать путь вместе с LUMI», «LUMI teacher», «Здесь будет LUMI teacher...», «LUMI-bank». Решить с заказчиком — переименовать в AIMA или скрыть/убрать. |
+
+### Приоритет 2 — ВАЖНО, НЕ БЛОКЕР
+
+| # | Пункт | Текущее состояние | Что делать |
+|---|---|---|---|
+| 5 | **Wazzup (WhatsApp-коды)** | env `WAZZUP__API_KEY=changeme`, `WAZZUP__TEMPLATE_ID=changeme`, `WAZZUP__DEBUG=true` | Завести в кабинете Wazzup24 + получить API key/template ID. Альтернативный канал кодов на случай если SMS лагает. |
+| 6 | **Telegram-бот алертов админам** | env `telegram_bot__TOKEN=changeme` | Создать бота через `@BotFather`, прописать в env. Используется для уведомлений о критичных ошибках бэкенда. |
+| 7 | **Sentry error tracking** | env `SENTRY_DSN` не установлен | Создать проект на Sentry.io, прописать DSN в Railway env. Сейчас все ошибки видны только в Railway logs (которые трудно искать). |
+| 8 | **Cloudflare Stream** (если используется для видеоуроков) | env `cloudflare_customer_code=changeme` | Если фича видео-уроков планируется в проде — настроить Cloudflare Stream аккаунт. Если нет — выпилить интеграцию. |
+| 9 | **Admin panel** | Задеплоен на Railway (Online), но git локально показывает только `init`+`gitignore` (203 файла без истории) | Проверить что Roman/админ может зайти, протестировать CRUD-операции, настроить роли. |
+| 10 | **Backend TODOs** | `src/quiz/services/modules.py:1399` `start_score=0  # TODO: get from progress` | Реализовать чтение start_score из progress/test_results вместо хардкода. Влияет на корректность стартового балла модуля. |
+| 11 | **`training_screen.dart` пустой initState** | `aima-app/lib/features/training/presentation/screens/training_screen.dart:30` `// TODO: implement initState` | Проверить нужен ли — возможно экран не загружает данные при первом открытии. |
+| 12 | **Захардкоженные mock-данные в Statistics** | `aima-app/lib/features/statistics/presentation/screens/statistics_screen.dart` — массив `[15.0, 25.0, ...]` для mini-bar-chart в карточке «Ср. время» | Заменить на реальные данные из `state.globalStatistics` или скрыть карточку до готовности фичи. |
+| 13 | **Лидерборд** | Empty state «Лидерборд скоро появится» | Реализовать backend-эндпоинт + UI. Сейчас юзеру обещают, что появится — но никто не работает над фичей. |
+
+### Приоритет 3 — ЖЕЛАТЕЛЬНО
+
+| # | Пункт | Действие |
+|---|---|---|
+| 14 | Balance pill на Profile/Home (скрыт коммитом `ee004b9`) | Решить: вернуть когда фича готова или удалить из кода |
+| 15 | Universities/specialties recommendations | Placeholder «Эта функция ещё в разработке... 🎉» — доделать или убрать |
+| 16 | Family/QR feature | Placeholder «А пока вы можете добавить через QR-код» — доделать |
+| 17 | Bank card styles | TODO: добавить остальные стили карт (`bank_card.dart:181`) |
+| 18 | Тестирование на Android | См. отдельный `ANDROID_GUIDE.md`. На Android приложение не тестировалось в этой сессии. |
+| 19 | End-to-end автотесты для critical paths | Сейчас 22 unit/widget тестов; нет integration тестов на login → home → buy subscription |
+
+### Приоритет 4 — ХАРДЕНИНГ
+
+| # | Пункт | Действие |
+|---|---|---|
+| 20 | Keycloak admin password | `gRv6grqO0OcQCnCCXRD4d2B90ZMsNquf` захардкожен в Railway env, никогда не ротировался. Сменить + перейти на Sealed variables. |
+| 21 | Apple OAuth private key | В env как base64-строка (`apple_oauth__PRIVATE_KEY_PEM`). Хорошо что не volume-файл, но ротация не отлажена. |
+| 22 | Backup стратегия Postgres | Включить Daily backups в Railway Postgres |
+| 23 | Rate limiting | Есть на `/auth/code/request`, проверить остальные критичные endpoints (особенно `/auth/login`, `/user/subscription/create-payment`) |
+| 24 | CORS | `allowed_origins` явный список — хорошо. Перепроверить что нет `*` в проде. |
+| 25 | Sealed variables | Перевести секреты (Apple key, Google secret, FreedomPay secret) на Railway sealed |
+
+### 📁 Где описаны полные процедуры
+
+- iOS-сборка и тесты — `IOS_GUIDE.md`
+- Android-сборка и риски — `ANDROID_GUIDE.md`
+- FreedomPay блокер — секция 6 этого документа
+- Бренд-перенос (что уже сделано) — коммиты `2a99a36`, `d30a8a6`, `608015d`, `b9bdb0a`, `e9c7f24`
+
+

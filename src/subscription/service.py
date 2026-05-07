@@ -206,6 +206,7 @@ class SubscriptionService:
             limitations=plan_features.limitations,
             price=plan_features.price,
             is_expired=is_expired,
+            cancelled=updated_user.subscription_cancelled,
         ).dict()
 
     async def get_subscription_plans(self) -> list[dict[str, Any]]:
@@ -278,3 +279,31 @@ class SubscriptionService:
         if user.used_trial:
             raise HTTPException(status_code=400, detail="Free trial already used")
         return self.auth_service.activate_free_trial(user)
+
+    async def cancel_subscription(self, user: UserDTO) -> UserDTO:
+        """Soft cancel: keep PRO active until subscription_end, then auto-FREE.
+
+        - Plan and subscription_end are NOT changed → user keeps paid time.
+        - Sets subscription_cancelled=True so the UI can show "active until X,
+          will not renew".
+        - No-op (HTTP 400) if there is no active PRO subscription to cancel.
+        - Idempotent: cancelling an already-cancelled subscription returns 400.
+        """
+        if user.plan == PlanType.FREE:
+            raise HTTPException(
+                status_code=400,
+                detail="Нет активной подписки для отмены",
+            )
+        if user.subscription_cancelled:
+            raise HTTPException(
+                status_code=400,
+                detail="Подписка уже отменена",
+            )
+        update_data = UserUpdateDTO(subscription_cancelled=True)
+        updated_user = self.auth_service.update_user_profile(user, update_data)
+        logger.info(
+            "Subscription cancelled (soft) for user %s, period valid until %s",
+            user.id,
+            user.subscription_end,
+        )
+        return updated_user

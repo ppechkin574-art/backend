@@ -14,6 +14,9 @@ class KeycloakAttributesDTO(BaseModel):
     allowed_subject_ids: list[str] = Field(default_factory=list)
     plan: list[str] = Field(default_factory=lambda: [PlanType.FREE.value])
     subscription_end: list[str] = Field(default_factory=list)
+    # "true" / "false" string in Keycloak attribute form. Set when user
+    # taps Cancel; not auto-cleared on new purchase (Q8-B).
+    subscription_cancelled: list[str] = Field(default_factory=list)
     avatar: list[str] | None = Field(default_factory=list)
 
 
@@ -63,6 +66,7 @@ class KeycloakAttributesUpdateDTO(BaseModel):
     allowed_subject_ids: list[str] | None = None
     plan: list[str] | None = None
     subscription_end: list[str] | None = None
+    subscription_cancelled: list[str] | None = None
 
 
 class KeycloakUserUpdateDTO(BaseModel):

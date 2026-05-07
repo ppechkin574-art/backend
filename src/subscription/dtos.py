@@ -56,6 +56,7 @@ class SubscriptionStatusDTO(BaseModel):
     price: float
     is_expired: bool = False
     days_left: int | None = None
+    cancelled: bool = False
 
     @field_validator("is_expired", mode="before")
     @classmethod

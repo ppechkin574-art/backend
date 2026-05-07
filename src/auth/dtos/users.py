@@ -42,6 +42,11 @@ class UserDTO(BaseModel):
     plan: PlanType = PlanType.FREE
     used_trial: bool = False
     subscription_end: datetime | None = None
+    # True if the user has tapped "Cancel subscription" — current period
+    # remains active until subscription_end, then auto-downgrades to FREE.
+    # Persists across new purchases (Q8-B): user must explicitly resume
+    # auto-renewal in settings (UI not yet implemented).
+    subscription_cancelled: bool = False
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -91,6 +96,7 @@ class UserUpdateDTO(BaseModel):
     plan: PlanType | None = None
     used_trial: bool | None = None
     subscription_end: datetime | None = None
+    subscription_cancelled: bool | None = None
     username: str | None = None
 
 

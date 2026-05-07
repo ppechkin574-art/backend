@@ -201,6 +201,19 @@ def to_keycloak_user_update_dto(
     elif user.subscription_end:
         attributes_dict["subscription_end"] = [user.subscription_end.isoformat()]
 
+    # subscription_cancelled: only write when explicitly set in update_data,
+    # otherwise carry over user.subscription_cancelled to avoid wiping it
+    # during unrelated updates (e.g. avatar change).
+    if (
+        "subscription_cancelled" in update_data
+        and update_data["subscription_cancelled"] is not None
+    ):
+        attributes_dict["subscription_cancelled"] = [
+            "true" if update_data["subscription_cancelled"] else "false"
+        ]
+    elif user.subscription_cancelled:
+        attributes_dict["subscription_cancelled"] = ["true"]
+
     email = update_data.get("email", user.email)
 
     attributes = (
@@ -265,6 +278,12 @@ def to_user_dto(keycloak_user: "KeycloakUserDTO", roles: list[str]) -> UserDTO:
                 int(id_str) for id_str in ids_list if id_str.isdigit()
             ]
 
+    subscription_cancelled = False
+    if keycloak_user.attributes and keycloak_user.attributes.subscription_cancelled:
+        cancelled_list = keycloak_user.attributes.subscription_cancelled
+        if cancelled_list and len(cancelled_list) > 0:
+            subscription_cancelled = cancelled_list[0].strip().lower() == "true"
+
     return UserDTO(
         id=keycloak_user.id,
         username=keycloak_user.username,
@@ -277,6 +296,7 @@ def to_user_dto(keycloak_user: "KeycloakUserDTO", roles: list[str]) -> UserDTO:
         allowed_subject_ids=allowed_subject_ids,
         plan=plan,
         subscription_end=subscription_end,
+        subscription_cancelled=subscription_cancelled,
         created_at=keycloak_user.createdTimestamp,
         updated_at=keycloak_user.createdTimestamp,
     )

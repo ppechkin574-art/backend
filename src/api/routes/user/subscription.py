@@ -45,6 +45,7 @@ class SubscriptionStatusResponse(BaseModel):
     expires_at: str | None
     features: dict[str, Any]
     is_expired: bool
+    cancelled: bool = False
 
 
 class SubscriptionPlanResponse(BaseModel):
@@ -256,6 +257,28 @@ async def activate_free_trial(
 ):
     """Активировать бесплатный пробный период на 7 дней"""
     updated_user = await subscription_service.activate_free_trial(user)
+    status_data = await subscription_service.check_subscription_status(updated_user)
+    return SubscriptionStatusResponse(**status_data)
+
+
+@router.post(
+    "/cancel",
+    response_model=SubscriptionStatusResponse,
+    summary="Отменить подписку (soft cancel)",
+)
+async def cancel_subscription(
+    user: UserDTO = Depends(get_user),
+    subscription_service: SubscriptionService = Depends(get_subscription_service),
+):
+    """Soft-отмена подписки.
+
+    Подписка остаётся активной до `subscription_end`, после чего юзер
+    автоматически становится FREE (см. refresh_subscription_status).
+    Флаг `subscription_cancelled=True` сохраняется в Keycloak attributes
+    и не сбрасывается автоматически при последующих покупках (требуется
+    явное возобновление через UI настроек).
+    """
+    updated_user = await subscription_service.cancel_subscription(user)
     status_data = await subscription_service.check_subscription_status(updated_user)
     return SubscriptionStatusResponse(**status_data)
 

@@ -8,14 +8,14 @@
 - ✅ Авторизация работает (Keycloak realm `lumi`, login по номеру + Google OAuth).
 - ✅ Хранилище файлов работает (MinIO, через переписанный `FileService`).
 - ✅ **Email** через Resend HTTP API (домен `aima.kz` Verified).
-- ✅ **SMS** через SMSC.kz (DEBUG mode, баланс 0₸).
+- ✅ **SMS** через SMSC.kz (07.05.2026 — реальные SMS, баланс ~1010 ₸, `SMSC__DEBUG=false`).
 - ✅ **Firebase Cloud Messaging** инициализирован (`aima-prod-67f9d`), backend → FCM pipeline работает.
 - ✅ **Google OAuth** end-to-end (creds в Cloud Console проекте `aima-prod`).
 - ✅ Романовский фич-дроп смержен (Family/Leaderboard/Users + 3 миграции).
 - ⏸ **Apple Sign-In** — отложено по решению заказчика; креды есть, код готов.
 - ⏸ **FreedomPay** — отложено по решению заказчика; договор подписан, код готов.
 - 🟡 Wazzup (WhatsApp) и Telegram-бот alerts — заглушки `changeme`.
-- 🟡 SMSC: пополнить баланс + зарегистрировать sender `AIMA` для прода.
+- 🟡 SMSC: остался опциональный sender `AIMA` (модерация 1-3 дня, нужны документы ИП/ТОО). Сейчас SMS приходят от стандартного `SMSC.KZ`.
 
 **URL'ы:**
 - Backend API: `https://backend-production-f2a1.up.railway.app/docs`
@@ -45,7 +45,7 @@
 | 3 | **Keycloak** | OIDC-сервер: realms, юзеры, OAuth flows | ✅ Active | Railway + отдельный Postgres |
 | 4 | **MinIO** | S3-совместимое хранилище (аватары, картинки предметов) | ✅ Active | Railway + volume |
 | 5 | **Resend** | Транзакционные email через HTTP API | ✅ Active | Resend.com (3000/мес free) |
-| 6 | **SMSC.kz** | SMS-коды подтверждения для KZ-номеров | ⚠️ DEBUG mode | smsc.kz (баланс 0₸) |
+| 6 | **SMSC.kz** | SMS-коды подтверждения для KZ-номеров | ✅ Active | smsc.kz (баланс ~1010 ₸, sender `SMSC.KZ`) |
 | 7 | **Firebase Cloud Messaging** | Push-уведомления (ежедневные тесты, новости) | ✅ Active | aima-prod-67f9d project |
 | 8 | **Google OAuth** | Sign-in через Google аккаунт | ✅ Active | aima-prod-495307 Cloud project |
 | 9 | **Apple Sign-In** | Sign-in через Apple ID (iOS требование App Store) | ⏸ Отложено | Apple Developer ($99/год) |
@@ -285,9 +285,41 @@ _(не требуется заводить отдельный mailbox — `info@
 
 ---
 
-### 8. SMSC.kz ✅ ПОДКЛЮЧЕНО в DEBUG (02.05.2026), осталось пополнить баланс для прода
+### 8. SMSC.kz ✅ ПОЛНОСТЬЮ В ПРОДЕ (07.05.2026)
 
-**Статус:** код связи backend ↔ SMSC работает, в DEBUG-режиме коды симулируются и пишутся в Deploy Logs. Для реальной отправки нужны 3 шага (минимум 30 минут).
+**Статус:** боевые SMS реально доставляются. Подтверждено end-to-end: 3 теста с `+77787943760`, ~51 ₸ списано, баланс ~1010 ₸.
+
+**Что добавлено сегодня:**
+- Баланс пополнен через PayBox (опция 4 в кассе SMSC), 970 ₸ + 93.75 ₸ верификационный бонус.
+- `SMSC__DEBUG=false` в Railway (через `railway variables --set`).
+- Frontend (`register_user_remote_source.dart`, `reset_password_remote_source.dart`) переключен с `platform: "whatsapp"` на `"sms"` — Wazzup был в DEBUG и тихо «глотал» все коды; см. секцию 9 ниже про возврат WA.
+- **Найден и починен баг в `sms_client.py`**: код использовал `apikey=`, но `SMSC__KEY` хранит дополнительный API-пароль (тип «API HTTP/S»), а не токен. SMSC возвращал error 2 «authorise error». Заменено на `login=+psw=`. Коммит `9f374b4`.
+- Метки error-кодов поправлены: `2` теперь «authorise error», `3` — «insufficient balance» (раньше были перепутаны и сбивали с толку при дебаге).
+
+**Хардендинг безопасности (07.05.2026, аудит после активации):**
+- `block:contact:<phone>` теперь реально SETEX'ится на 60 секунд после успешной отправки (per-phone rate limit). Ранее ключ только проверялся, не ставился — был no-op. Защищает от спама с IP-ферм против одного номера.
+- `_send_code_to_dev_channel` больше не пишет код подтверждения и полный контакт в Telegram dev-чат. Контакт маскируется через `_mask_contact` (`+7778***3760`, `us***@aima.kz`).
+- Лог `КОД ДЛЯ РАЗРАБОТКИ: %s (для %s)` (services.py:888 и :909) удалён — раньше код подтверждения попадал в Railway/Sentry stdout в открытом виде.
+- `_send_confirmation_code` теперь возвращает `bool` (success); rate-limit ставится только при успехе primary-канала, чтобы не банить юзера если SMSC сам упал. Коммит `a39aa5e`.
+
+**Что всё ещё опционально:**
+
+1. **Зарегистрировать sender `AIMA`** в SMSC ЛК → `Имена отправителей` → загрузить документы ИП/ТОО. Модерация 1-3 рабочих дня. Сейчас SMS приходят от `SMSC.KZ` — функционально ОК, но непрофессионально. Когда одобрят — Railway: `SMSC__SENDER=AIMA`.
+2. **IP whitelist** в SMSC → Настройки → Доступ. Усилит защиту если API-пароль утечёт.
+3. **Webhook доставки** — `https://backend-production-f2a1.up.railway.app/auth/sms/status`. Сейчас не используется.
+4. **Алерт при низком балансе.** Сейчас SMSC просто молча начнёт возвращать error 3 когда деньги кончатся, и юзеры перестанут получать коды без предупреждения.
+
+**Известные TODO из аудита 07.05.2026 (не блокеры, отложено):**
+- `services.py:474-492` — verification_id всё ещё возвращается клиенту даже если SMS не отправилась (выбор Q2=C при ревью). Низкий риск утечки кода, но если когда-нибудь поднимется Telegram dev fallback — пересмотреть.
+- `services.py:461` — `range(100000, 999999)` исключает 999999 (off-by-one). Криптографически нерелевантно (900k вариантов), но симптом code review gap.
+- `services.py:588` — `complete_register` хардкодит `platform=CodePlatform.WHATSAPP` хотя юзер пришёл по SMS. Audit trail врёт. Надо читать platform из verification metadata.
+- Phone normalization расходится: `sms_client._normalize_phone` (`77XXXXXXXXX`) vs `services._normalize_phone_for_search` (`+77XXXXXXXXX`). Если юзер введёт `8707…` (старый формат) — SMSC ОК, но lookup сломается.
+
+---
+
+#### Историческая справка (что было до 07.05.2026)
+
+Код связи backend ↔ SMSC работал в DEBUG-режиме, коды симулировались и писались в Deploy Logs.
 
 **Что сделано:**
 - Зарегистрирован аккаунт SMSC.kz: login `aima_app`, привязан к `ppechkin574@gmail.com`.
@@ -797,10 +829,10 @@ _Документ создан 01.05.2026. Последнее обновлени
 
 | # | Пункт | Где | Что делать |
 |---|---|---|---|
-| 1 | **SMS реально отправляются** | Railway env `SMSC__DEBUG=true`, баланс SMSC 0₸ | Пополнить SMSC, зарегистрировать sender `AIMA`, переключить `SMSC__DEBUG=false`. Без этого новый юзер не зарегистрируется (не получит код). |
-| 2 | **FreedomPay платежи проходят** | TECH_DEBT секция 6, форма-блокер | См. секцию 6. Контакт менеджера + перевод в боевой режим. Без этого никто не купит подписку. |
-| 3 | **Cancel subscription реально работает** | `aima-app/lib/features/profile/presentation/screens/subscription_profile_screen.dart:292` — `// TODO: implement cancel API call` | Реализовать backend-эндпоинт + подключить во Flutter. **App Store отклонит** приложение с подпиской без работающего cancel. |
-| 4 | **Удалить остатки бренда «Lumi» из UI** | `aima-app/lib/core/presentation/src/l10n/app_localizations*.dart` | Минимум 5 строк: «Начать путь вместе с LUMI», «LUMI teacher», «Здесь будет LUMI teacher...», «LUMI-bank». Решить с заказчиком — переименовать в AIMA или скрыть/убрать. |
+| 1 | ✅ **SMS реально отправляются** (закрыто 07.05.2026) | Backend SMSC активирован в проде | Баланс пополнен (~1010 ₸), `SMSC__DEBUG=false`, frontend переключен на `platform=sms`, баг `apikey→psw` починен, security-аудит пройден (`block_key`, маскировка кода в логах). См. секцию 8. |
+| 2 | 🚨 **FreedomPay платежи проходят** | TECH_DEBT секция 6, форма-блокер vue-tel-input | **Всё ещё блокер.** Контакт менеджера + перевод в боевой режим. Без этого никто не купит подписку. |
+| 3 | ✅ **Cancel subscription реально работает** (закрыто 07.05.2026) | `subscription_profile_screen.dart` | Backend-эндпоинт `/user/subscription/cancel` + клиентская UI с disabled-state «Подписка отменена. Активна до...». 2 бага найдены и починены через дополнительный аудит (DioException parsing + post-cancel UI). |
+| 4 | ✅ **Удалить остатки бренда «Lumi» из UI** (закрыто 06.05.2026) | `app_localizations*.dart` | Заменены на AIMA, AI-teacher tab скрыт. См. коммит `63997bf`. |
 
 ### Приоритет 2 — ВАЖНО, НЕ БЛОКЕР
 

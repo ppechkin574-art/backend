@@ -359,6 +359,11 @@ WAZZUP__TEMPLATE_ID → (реальный)
 WAZZUP__DEBUG       → false
 ```
 
+**⚠️ Зависимость от клиента (07.05.2026):** Flutter-клиент в [register_user_remote_source.dart](lib/features/auth/data/sources/register_user_remote_source.dart) и [reset_password_remote_source.dart](lib/features/auth/data/sources/reset_password_remote_source.dart) сейчас отправляет `"platform": "sms"` (изменено с `"whatsapp"` 07.05.2026 при активации SMSC прода — Wazzup был в DEBUG-режиме и тихо «глотал» все коды). Когда Wazzup поднимется в прод:
+1. Вернуть в обоих файлах `"platform": "whatsapp"` (или сделать UI-выбор канала)
+2. Либо в backend — умный fallback: при `platform=WHATSAPP` и `WAZZUP__DEBUG=true` автоматически использовать SMS
+3. Либо роутер: всегда WhatsApp first, SMS fallback при ошибке Wazzup (требует переписать `_send_confirmation_code`)
+
 ---
 
 ### 10. Telegram-бот для системных алёртов

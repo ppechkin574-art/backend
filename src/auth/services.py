@@ -69,6 +69,23 @@ from utils.file_service import FileService
 logger = logging.getLogger(__name__)
 
 
+def _mask_contact(contact: str) -> str:
+    """Return a partial mask of a contact for safe logging / dev-channel
+    alerts. Keeps the country prefix and the last 4 chars so support can
+    correlate complaints, but hides the bulk of the identifier.
+    Examples: '+77787943760' → '+7778***3760', 'user@aima.kz' → 'us***@aima.kz'.
+    """
+    if not contact:
+        return "?"
+    if "@" in contact:
+        local, _, domain = contact.partition("@")
+        head = local[:2] if len(local) > 2 else local
+        return f"{head}***@{domain}"
+    if len(contact) <= 8:
+        return f"{contact[:3]}***"
+    return f"{contact[:5]}***{contact[-4:]}"
+
+
 class AuthServiceInterface(Protocol):
     """Authentication and user management service interface."""
 
@@ -415,9 +432,18 @@ class AuthService:
 
         contact = self._normalize_contact(contact)
 
+        # Per-contact rate limit. block_key is set with TTL in _set_resend_block
+        # only after a successful primary-channel send (Q4=A: don't penalise the
+        # user when SMSC/email itself fails — they should be able to retry).
+        # The endpoint-level slowapi limit ("1/minute" per IP) is the first
+        # gate; this Redis key is the second gate per phone/email so an attacker
+        # rotating IPs can't burn through SMSC budget against a single number.
         block_key = f"block:contact:{contact}"
-        if self._confirmation_codes._redis.exists(block_key):
-            raise AuthInvalidConfirmationCodeError("Blocked from requesting new codes. Please try again later.")
+        ttl_remaining = self._confirmation_codes._redis.ttl(block_key)
+        if ttl_remaining > 0:
+            raise AuthInvalidConfirmationCodeError(
+                f"Слишком частые запросы. Попробуй через {ttl_remaining} сек."
+            )
 
         verification_id = uuid.uuid4()
         user_id = verification_id
@@ -489,13 +515,21 @@ class AuthService:
                 self._confirmation_codes.delete(e.confirmation_code_id)
             self._confirmation_codes.create(confirmation_code_dto)
 
-        self._send_confirmation_code(contact, code, platform)
+        sent_ok = self._send_confirmation_code(contact, code, platform)
+
+        # Q4=A: only block on a real successful send. If SMS failed and we fell
+        # back to dev channel, the user got nothing — let them retry without
+        # waiting 60s. Q2=C: even on failure we keep the verification_id and
+        # return it (so a later successful retry hits the same Redis entry).
+        if sent_ok:
+            self._confirmation_codes._redis.setex(block_key, 60, "1")
 
         logger.info(
-            "Code %s requested for contact: %s, verification_id: %s",
+            "Code %s requested for contact: %s, verification_id: %s, sent_ok: %s",
             action,
             contact,
             verification_id,
+            sent_ok,
         )
         return verification_id
 
@@ -850,7 +884,11 @@ class AuthService:
 
         return phone
 
-    def _send_confirmation_code(self, contact: str, code: int, platform: CodePlatform) -> None:
+    def _send_confirmation_code(self, contact: str, code: int, platform: CodePlatform) -> bool:
+        """Returns True iff the primary channel (SMS/Email/WhatsApp/Telegram)
+        accepted the message. False means the dev fallback ran (or even that
+        failed) — caller uses this to decide whether to apply the per-contact
+        resend block."""
         message_text = f"Код подтверждения AIMA: {code}"
 
         try:
@@ -863,37 +901,57 @@ class AuthService:
             if platform == CodePlatform.EMAIL:
                 self._email_client.notify(message)
                 logger.info("Code sent via Email: %s", contact)
+                return True
             elif platform == CodePlatform.SMS:
                 try:
                     self._sms_client.notify(message)
                     logger.info("Code sent via SMS: %s", contact)
+                    return True
                 except Exception as e:
                     logger.exception("Error sending SMS: %s", e)
                     self._send_code_to_dev_channel(contact, code, "SMS", str(e))
+                    return False
             elif platform == CodePlatform.WHATSAPP:
                 try:
                     self._whatsapp_client.notify(message)
                     logger.info("Code sent via WhatsApp: %s", contact)
+                    return True
                 except Exception as e:
                     logger.exception("Error sending WhatsApp: %s", e)
                     self._send_code_to_dev_channel(contact, code, "WhatsApp", str(e))
+                    return False
             elif platform == CodePlatform.TELEGRAM:
                 self._notification_client.notify(message)
                 logger.info("Code sent via Telegram: %s", contact)
+                return True
             else:
                 raise ValueError(f"Unsupported platform: {platform}")
 
         except Exception as e:
-            logger.exception("Error sending code to %s: %s", contact, e)
-            logger.info("КОД ДЛЯ РАЗРАБОТКИ: %s (для %s)", code, contact)
+            # Q3=B + same principle for logs: never persist the actual code
+            # in stdout/Sentry/Railway logs — that turned the dev-fallback
+            # into a free auth bypass for anyone with log access.
+            logger.exception("Error sending code (platform=%s): %s", platform, e)
+            return False
 
     def _send_code_to_dev_channel(self, contact: str, code: int, source: str, error_msg: str = "") -> None:
+        """Notify the dev/ops Telegram channel that primary delivery failed.
+        Q3=B: never include the actual confirmation code or full contact in
+        the message — anyone with read access to that channel could otherwise
+        replay any code on any phone. We send only a partial mask of the
+        contact for traceability + the underlying error.
+        `code` is kept in the signature for API compatibility with callers
+        but is intentionally NOT used in the body.
+        """
+        del code  # explicitly drop — never reaches Telegram or logs
+        masked = _mask_contact(contact)
         try:
             dev_message = f"🔧 [DEV FALLBACK - {source}]\n"
-            dev_message += f"📞 Контакт: {contact}\n"
-            dev_message += f"🔢 Код подтверждения: {code}\n"
+            dev_message += f"📞 Контакт (маска): {masked}\n"
             if error_msg:
-                dev_message += f"⚠️ Ошибка {source}: {error_msg[:100]}"
+                dev_message += f"⚠️ Ошибка {source}: {error_msg[:200]}"
+            else:
+                dev_message += f"⚠️ Доставка через {source} провалилась"
 
             telegram_message = NotificationMessageDTO(
                 to="",
@@ -902,11 +960,16 @@ class AuthService:
             )
 
             self._notification_client.notify(telegram_message)
-            logger.info("Code sent to dev channel (fallback %s): %s", source, contact)
+            logger.info("Dev-channel alert sent (fallback %s) for %s", source, masked)
 
         except Exception as tg_e:
-            logger.exception("Error sending to dev channel: %s", tg_e)
-            logger.info("КОД ДЛЯ РАЗРАБОТКИ: %s (для %s)", code, contact)
+            # Even when Telegram itself fails we must not log the code.
+            logger.exception(
+                "Error sending dev-channel alert for %s (fallback %s): %s",
+                masked,
+                source,
+                tg_e,
+            )
 
     # def request_registration_code(self, contact: str, platform: CodePlatform) -> UUID:
     #     return self.request_code(contact, platform, ConfirmationCodeAction.REGISTER)

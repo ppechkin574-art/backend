@@ -38,10 +38,16 @@ class SMSCClient:
                     "status": "DEBUG_MODE",
                 }
 
+            # SMSC supports two auth modes: apikey (token) OR login+psw (account
+            # password OR additional API password). Our `key` setting actually
+            # holds an additional API password created in SMSC LK → Settings →
+            # Аккаунт → дополнительные пароли (тип "API HTTP/S, SOAP, SMTP"),
+            # so we must send it as `psw` together with `login`. Sending it
+            # under `apikey` returns SMSC error 2 "authorise error".
             payload.update(
                 {
-                    "apikey": self.settings.key,
-                    # 'id': self.settings.key,
+                    "login": self.settings.login,
+                    "psw": self.settings.key,
                     "fmt": 3,
                 }
             )
@@ -122,11 +128,13 @@ class SMSCClient:
                 error_msg = result.get("error", "Unknown error")
                 logger.exception("SMSC Error %s: %s", error_code, error_msg)
 
-                # Специфичная обработка ошибок
+                # SMSC error codes per https://smsc.kz/api/http/#errors
                 if error_code == 2:
+                    logger.exception("🔐 Authorise error (login/psw/apikey/blocked IP)")
+                elif error_code == 3:
                     logger.exception("💸 Insufficient balance")
                 elif error_code == 4:
-                    logger.exception("📛 Invalid sender name")
+                    logger.exception("📛 Invalid sender name or IP not whitelisted")
                 elif error_code == 7:
                     logger.exception("📵 Invalid phone number")
 

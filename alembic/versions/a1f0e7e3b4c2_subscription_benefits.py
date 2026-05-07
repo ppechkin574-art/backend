@@ -1,9 +1,12 @@
 """subscription_benefits table + initial seed (RU + KZ)
 
 Adds the editable bullet-point list shown on the subscription screen.
-Also merges the two divergent heads we had before this commit
-(`420aa383195e` and `1338a104083a`) so future migrations have a single
-linear lineage to extend from.
+Also merges the THREE divergent heads we had before this commit
+(`420aa383195e`, `1338a104083a`, `2a5acb79a88d`) so future migrations
+have a single linear lineage to extend from.  The third head was
+missed in the initial pass and caused Railway to crash with
+"Multiple head revisions are present" — see the recovery commit
+referenced from this file.
 
 Seed contains the six bullets that used to be hardcoded in
 `subscription_profile_screen.dart::_benefits`. Kazakh translations are
@@ -11,7 +14,7 @@ Seed contains the six bullets that used to be hardcoded in
 through the new admin endpoints when desired.
 
 Revision ID: a1f0e7e3b4c2
-Revises: 420aa383195e, 1338a104083a
+Revises: 420aa383195e, 1338a104083a, 2a5acb79a88d
 Create Date: 2026-05-07
 """
 
@@ -22,7 +25,11 @@ from alembic import op
 
 
 revision: str = "a1f0e7e3b4c2"
-down_revision: Union[str, Sequence[str], None] = ("420aa383195e", "1338a104083a")
+down_revision: Union[str, Sequence[str], None] = (
+    "420aa383195e",
+    "1338a104083a",
+    "2a5acb79a88d",
+)
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

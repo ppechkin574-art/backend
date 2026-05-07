@@ -241,6 +241,19 @@ def get_subscription_plan_repository(
     return SubscriptionPlanRepository(db_session)
 
 
+def get_subscription_benefit_service(
+    db_session: Session = Depends(get_db_session),
+):
+    """Builds the content service that powers the editable subscription
+    bullets (admin CRUD + public list).  Imported lazily to keep the
+    api.dependencies import graph flat — the content module has no
+    cross-deps on auth/payments and shouldn't pull them in here."""
+    from content.repository import SubscriptionBenefitRepository
+    from content.service import SubscriptionBenefitService
+
+    return SubscriptionBenefitService(SubscriptionBenefitRepository(db_session))
+
+
 def get_subscription_plan_service(
     plan_repository: SubscriptionPlanRepository = Depends(
         get_subscription_plan_repository

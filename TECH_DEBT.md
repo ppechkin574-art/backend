@@ -69,7 +69,8 @@
 
 **Остающийся минор для прод-ready:**
 - Сменить пароль временного admin-юзера Keycloak (`KEYCLOAK_ADMIN_PASSWORD`) на постоянный сильный.
-- ✅ Пароль `admin@aima.kz` ротирован 04.05.2026 (через Keycloak Admin API). Старый `ChangeMeAdmin123!` больше не работает. Новый — у заказчика в password manager + Railway env.
+- ✅ Пароль `admin@aima.kz` ротирован 04.05.2026 (через Keycloak Admin API). Старый `ChangeMeAdmin123!` больше не работает.
+- ✅ Пароль `admin@aima.kz` повторно ротирован 07.05.2026 (заказчик потерял предыдущий). Сгенерирован 20-символьный alphanumeric, проверен на token grant против realm `lumi` — выдаётся access_token. Хранится у заказчика в password manager.
 - Включить email-verification в realm `lumi → Realm settings → Login`, заполнить SMTP в `Realm settings → Email`.
 - Защитить `master` realm — отключить self-registration на нём (по умолчанию отключено, проверить).
 
@@ -878,10 +879,17 @@ _Документ создан 01.05.2026. Последнее обновлени
 |---|---|---|
 | 14 | Balance pill на Profile/Home (скрыт коммитом `ee004b9`) | Решить: вернуть когда фича готова или удалить из кода |
 | 15 | Universities/specialties recommendations | Placeholder «Эта функция ещё в разработке... 🎉» — доделать или убрать |
-| 16 | Family/QR feature | Placeholder «А пока вы можете добавить через QR-код» — доделать |
+| 16 | Family/QR feature | Placeholder «А пока вы можете добавить через QR-код» — доделать. **07.05.2026:** плитка «Моя семья» в Профиле временно заглушена (`Скоро` badge + snackbar при тапе) — в коммите `e4aac35` aima-app. FamilyScreen и AddFamilyScreen остались в кодбейзе, но недоступны через UI. Восстановить можно одним коммитом — вернуть `_mockFamilyMembers` + GestureDetector → `/profile/family` в `profile_screen.dart::_buildFamilyTile`. До этого нужен реальный backend для приглашений / ролей parent-child / общей статистики семьи. |
 | 17 | Bank card styles | TODO: добавить остальные стили карт (`bank_card.dart:181`) |
 | 18 | Тестирование на Android | См. отдельный `ANDROID_GUIDE.md`. На Android приложение не тестировалось в этой сессии. |
 | 19 | End-to-end автотесты для critical paths | Сейчас 22 unit/widget тестов; нет integration тестов на login → home → buy subscription |
+
+### 📦 Контентные изменения (07.05.2026)
+
+| # | Пункт | Что сделано |
+|---|---|---|
+| C1 | **Фичи подписки → редактируются через админку** | Бэкенд: новая таблица `subscription_benefits` (`title_ru`, `title_kz`, `description_ru`, `description_kz`, `position`, `is_active`), seed 6 RU+KZ из миграции `a1f0e7e3b4c2`. Endpoints: public `GET /content/subscription-benefits?lang=ru\|kz`, admin CRUD `/admin/content/subscription-benefits` (роль `admin`). Flutter: `SubscriptionBenefit` entity + `SubscriptionCubit.getBenefits()` с автоопределением локали (`kk*`/`kz*` → kz, иначе ru), `_resolveBenefits` использует state.benefits с fallback на хардкод. Админка: страница `/content/subscription-benefits` с CRUD + sidebar пункт. Локаль казахского — «понятное» качество, заказчик может полировать через UI. |
+| C2 | Footer-ссылки → внешние документы на сайте | Раньше: `/privacy_policy` и `/terms_of_use` пушили на in-app пустые роуты. Теперь: открывают `https://www.aima.kz/docs.html#privacy` и `…#agreement` в новом `DocsWebViewScreen` (in-app WebView, требование Apple guideline 5.1.1). Коммит `e4aac35` aima-app. |
 
 ### Приоритет 4 — ХАРДЕНИНГ
 

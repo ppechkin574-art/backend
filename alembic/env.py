@@ -30,6 +30,7 @@ from clients.notification.models import *
 from promocodes.models import *
 
 from student import models
+from content import models  # noqa: F401 — discover SubscriptionBenefit table for autogen
 
 target_metadata = Base.metadata
 settings = Settings()  # noqa

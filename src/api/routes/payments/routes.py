@@ -48,6 +48,7 @@ async def api_create_payment(
 
     payment = await payment_service.create_payment(
         amount=body.amount,
+        user_ip=client_ip,
     )
     if payment.status == "failed":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Payment creation failed")

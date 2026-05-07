@@ -169,9 +169,33 @@ apple_oauth__FRONTEND_REDIRECT → com.lumi.lumiapp://oauth2redirect
 
 ---
 
-### 6. FreedomPay (платежи) — 🚨 BLOCKER на форме оплаты (07.05.2026)
+### 6. FreedomPay (платежи) — ✅ ЗАКРЫТО (07.05.2026 21:33)
 
-**TL;DR:** бэкенд работает идеально, FreedomPay принимает запросы, redirect_url возвращается, WebSocket подключается. **Платёж застревает на customer-форме FreedomPay** (`https://customer.freedompay.kz/pay.html`): после нажатия «Оплатить» поле телефона помечается красным с ошибкой «Введите ваш номер телефона», сабмит не происходит. Воспроизводится **на iOS Simulator И на реальном iPhone** (TestFlight 1.2.0+11). Проблема не в нашем коде — это либо баг конкретного тестового мерчанта (#584797), либо особенность их frontend-валидации с pre-fill. Ждём ответа менеджера FreedomPay.
+**TL;DR:** платёж 4990 KZT прошёл E2E, payment_id `1761666995`, webhook `/fp/result_notify` дошёл, Keycloak обновлён в PRO. Клиент после re-login видит «PRO подписка / Активна ещё 29 дней». Решение: пять одновременных правок в `init_payment` параметрах (см. коммит `7612d35`).
+
+**Что сработало (вероятно `pg_user_country=KZ` сделал основной импульс):**
+1. Добавлен `pg_user_country=KZ` — vue-tel-input на customer-странице больше не дефолтит на RU валидацию (`+7` коллидирует между KZ и RU)
+2. Реальный IP юзера из `request.client.host` вместо хардкода `127.0.0.1` — вышли из anti-fraud strict mode
+3. Удалён мёртвый `pg_skip_user_form=1` — параметр игнорировался FreedomPay'ем, только мутил подпись
+4. Добавлен `pg_currency=KZT` — явно вместо дефолта мерчанта
+5. `pg_testing_mode` вынесен в env (`FREEDOM_PAY__TESTING_MODE`, default `1`) — когда менеджер переведёт магазин в боевой режим, поставим `0` без релиза кода
+
+**Двойной `iti-flag kz` в их форме всё ещё виден в логах** (`preferred items count: 2`) — это их внутренний баг vue-tel-input, не зависит от наших параметров, но больше не блокирует submit раз форма теперь принимает наш ввод.
+
+**Что сделать когда мерчант перейдёт в прод:**
+- Railway env: `FREEDOM_PAY__TESTING_MODE=0`
+- Тестовая карта `4111 1111 1111 1111` перестанет работать, использовать реальные KZ-карты Halyk/Forte/Jusan
+- Опционально — ротировать `freedom_pay__SECRET` (старый засветился в TECH_DEBT/коммитах)
+
+**Малый UX-долг:**
+- После успешной оплаты приложение **не рефрешит access_token** автоматически. Юзер видит «Пробный TRIAL» в Профиле пока не выйдет-зайдёт. Решение: после WebSocket события `payment_success` клиент должен вызвать `/auth/refresh` через refresh_token, либо ProfileInfoCubit должен делать `getUser()` при возврате с PaymentWebViewScreen (сейчас делает `context.go(AppRoutes.profile)` который пересоздаёт cubit, но cached токен — старый).
+- Файл: `lib/features/profile/presentation/screens/subscription_profile_screen.dart:124-137` (`_handlePaymentState` после `PaymentResult.success`).
+
+---
+
+#### Историческая справка — что было до фикса
+
+**Бэкенд работал идеально** (FreedomPay принимал запросы, redirect_url возвращался, WebSocket подключался). **Платёж застревал на customer-форме** (`https://customer.freedompay.kz/pay.html`): после нажатия «Оплатить» поле телефона помечалось красным с ошибкой «Введите ваш номер телефона», сабмит не происходил. Воспроизводилось на iOS Simulator И на реальном iPhone (TestFlight 1.2.0+11).
 
 #### Текущий конфиг (Railway env, бэкенд)
 ```
@@ -830,7 +854,7 @@ _Документ создан 01.05.2026. Последнее обновлени
 | # | Пункт | Где | Что делать |
 |---|---|---|---|
 | 1 | ✅ **SMS реально отправляются** (закрыто 07.05.2026) | Backend SMSC активирован в проде | Баланс пополнен (~1010 ₸), `SMSC__DEBUG=false`, frontend переключен на `platform=sms`, баг `apikey→psw` починен, security-аудит пройден (`block_key`, маскировка кода в логах). См. секцию 8. |
-| 2 | 🚨 **FreedomPay платежи проходят** | TECH_DEBT секция 6, форма-блокер vue-tel-input | **Всё ещё блокер.** Контакт менеджера + перевод в боевой режим. Без этого никто не купит подписку. |
+| 2 | ✅ **FreedomPay платежи проходят** (закрыто 07.05.2026) | Форма vue-tel-input приняла submit и провела платёж до экрана успеха | Раcкрыли через `pg_user_country=KZ` + `pg_currency=KZT` + реальный IP вместо `127.0.0.1` + удаление `pg_skip_user_form` + перевод `pg_testing_mode` в env. Подтверждено E2E: payment_id `1761666995` 4990 KZT, webhook `/fp/result_notify` дошёл, Keycloak обновлён в PRO. См. коммит `7612d35` и секцию 6. **Малый UX-долг:** клиент не рефрешит токен после оплаты, юзеру надо выйти-зайти чтобы увидеть PRO статус. |
 | 3 | ✅ **Cancel subscription реально работает** (закрыто 07.05.2026) | `subscription_profile_screen.dart` | Backend-эндпоинт `/user/subscription/cancel` + клиентская UI с disabled-state «Подписка отменена. Активна до...». 2 бага найдены и починены через дополнительный аудит (DioException parsing + post-cancel UI). |
 | 4 | ✅ **Удалить остатки бренда «Lumi» из UI** (закрыто 06.05.2026) | `app_localizations*.dart` | Заменены на AIMA, AI-teacher tab скрыт. См. коммит `63997bf`. |
 

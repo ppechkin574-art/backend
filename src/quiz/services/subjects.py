@@ -271,6 +271,30 @@ class SubjectService(SubjectServiceInterface):
                 raise SubjectIdViolatesNotNullService
 
     @cached(strategy=CacheStrategy.GLOBAL, ttl=604800, resource="subjects")
+    def _list_with_filenames(
+        self,
+        page: int = 1,
+        page_size: int = 20,
+        search: str | None = None,
+        sort_by: str | None = None,
+        sort_order: str | None = "asc",
+    ) -> tuple[list[SubjectServiceDTO], int]:
+        """Cached query: only the raw filename ends up in the `image`
+        field. We deliberately pass `file_service=None` to the converter
+        so `get_subject_image_url()` is *not* called here — its output
+        (a presigned URL with 30-minute TTL) would otherwise sit inside
+        the 7-day cache and serve dead links to clients within an hour.
+        URL generation happens on every request inside `list` below.
+        """
+        with self._uow:
+            sort_columns = [sort_by] if sort_by else None
+            is_sort_ascendings = [sort_order == "asc"] if sort_by else None
+
+            offset = (page - 1) * page_size
+            subjects, total_count = self._uow.subjects.list(offset, page_size, search, sort_columns, is_sort_ascendings)
+
+            return [to_subject_service(subject, file_service=None) for subject in subjects], total_count
+
     def list(
         self,
         page: int = 1,
@@ -280,7 +304,12 @@ class SubjectService(SubjectServiceInterface):
         sort_order: str | None = "asc",
     ) -> tuple[list[SubjectServiceDTO], int]:
         """
-        Get paginated list of subjects with filtering and sorting
+        Get paginated list of subjects with filtering and sorting.
+
+        Wraps the cached `_list_with_filenames` and replaces the `image`
+        filename with a fresh presigned URL on every call. This keeps
+        the cache benefit (one DB query per 7 days) while ensuring the
+        URL's 30-minute TTL never bites the client.
 
         Args:
             page: Page number (1-based)
@@ -292,14 +321,23 @@ class SubjectService(SubjectServiceInterface):
         Returns:
             Tuple of (list of SubjectServiceDTO, total count)
         """
-        with self._uow:
-            sort_columns = [sort_by] if sort_by else None
-            is_sort_ascendings = [sort_order == "asc"] if sort_by else None
-
-            offset = (page - 1) * page_size
-            subjects, total_count = self._uow.subjects.list(offset, page_size, search, sort_columns, is_sort_ascendings)
-
-            return [to_subject_service(subject, self._file_service) for subject in subjects], total_count
+        cached_subjects, total_count = self._list_with_filenames(
+            page=page,
+            page_size=page_size,
+            search=search,
+            sort_by=sort_by,
+            sort_order=sort_order,
+        )
+        # Always re-resolve the image filename to a fresh presigned URL.
+        # Already-absolute URLs (legacy data) are returned unchanged by
+        # FileService.get_subject_image_url and won't trigger MinIO calls.
+        fresh = [
+            dto.model_copy(
+                update={"image": self._file_service.get_subject_image_url(dto.image) if dto.image else ""}
+            )
+            for dto in cached_subjects
+        ]
+        return fresh, total_count
 
     @cached(strategy=CacheStrategy.GLOBAL, ttl=604800, resource="subject_topics")
     def get_topics(self, subject_id: int) -> builtins.list[TopicServiceDTO]:

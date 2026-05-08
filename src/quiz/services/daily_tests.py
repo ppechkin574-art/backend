@@ -67,8 +67,12 @@ class DailyTestService:
         ttl=604800,
         resource="daily_test_subject_preferences",
     )
-    def get_subject_preferences(self, student_guid: UUID) -> SubjectPreferencesResponseDTO:
-        """Получить выбранные предметы для ежедневных тестов"""
+    def _get_subject_preferences_with_filenames(
+        self, student_guid: UUID
+    ) -> SubjectPreferencesResponseDTO:
+        """Cached query — `image` field stays as raw subject filename so
+        we don't bake a 30-min presigned URL into a 7-day cache (same
+        pattern as SubjectService._list_with_filenames)."""
         with self._uow:
             preferences = self._uow.daily_tests.get_subject_preferences(student_guid)
 
@@ -76,7 +80,8 @@ class DailyTestService:
                 SubjectPreferenceDTO(
                     subject_id=pref.subject.id,
                     subject_name=pref.subject.name,
-                    image=self._file_service.get_subject_image_url(pref.subject.image) if pref.subject.image else None,
+                    # store the raw filename (or None) — wrapper resolves it
+                    image=pref.subject.image or None,
                     is_default=pref.is_default,
                 )
                 for pref in preferences
@@ -85,6 +90,21 @@ class DailyTestService:
             can_add_more = len(preferences) < self.MAX_SUBJECTS
 
             return SubjectPreferencesResponseDTO(subjects=subject_dtos, can_add_more=can_add_more)
+
+    def get_subject_preferences(self, student_guid: UUID) -> SubjectPreferencesResponseDTO:
+        """Получить выбранные предметы для ежедневных тестов"""
+        cached = self._get_subject_preferences_with_filenames(student_guid)
+        # Re-resolve presigned URLs for each subject on every call so
+        # 30-minute MinIO TTL never bites.
+        fresh_subjects = [
+            pref.model_copy(
+                update={
+                    "image": self._file_service.get_subject_image_url(pref.image) if pref.image else None,
+                }
+            )
+            for pref in cached.subjects
+        ]
+        return cached.model_copy(update={"subjects": fresh_subjects})
 
     def update_subject_preferences(
         self, student_guid: UUID, data: UpdateSubjectPreferencesDTO

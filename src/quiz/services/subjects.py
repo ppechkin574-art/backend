@@ -197,6 +197,15 @@ class SubjectService(SubjectServiceInterface):
                 raise SubjectIntegrityErrorService
 
     @cached(strategy=CacheStrategy.GLOBAL, ttl=604800, resource="subject")
+    def _get_by_id_with_filename(self, subject_id: int) -> SubjectServiceDTO:
+        """Cached query — image stays as raw filename so we don't bake
+        a 30-minute presigned URL into a 7-day cache (see _list_with_filenames)."""
+        with self._uow:
+            try:
+                return to_subject_service(self._uow.subjects.get_by_id(subject_id), file_service=None)
+            except SubjectNotFoundRepository:
+                raise SubjectNotFoundService
+
     def get_by_id(self, subject_id: int) -> SubjectServiceDTO:
         """
         Get subject by ID
@@ -210,11 +219,16 @@ class SubjectService(SubjectServiceInterface):
         Raises:
             SubjectNotFoundService: If subject with given ID doesn't exist
         """
-        with self._uow:
-            try:
-                return to_subject_service(self._uow.subjects.get_by_id(subject_id), self._file_service)
-            except SubjectNotFoundRepository:
-                raise SubjectNotFoundService
+        # `_get_by_id_with_filename` is the cached layer; it returns either
+        # the raw filename in `image` or raises SubjectNotFoundService.
+        # We always re-resolve the URL afterwards so a 30-min presigned
+        # signature never sits in a 7-day cache.
+        cached_dto = self._get_by_id_with_filename(subject_id)
+        if cached_dto.image:
+            return cached_dto.model_copy(
+                update={"image": self._file_service.get_subject_image_url(cached_dto.image) or ""}
+            )
+        return cached_dto
 
     def update(self, subject_id: int, update_dto: SubjectUpdateServiceDTO) -> SubjectServiceDTO:
         """
@@ -407,6 +421,19 @@ class SubjectService(SubjectServiceInterface):
             ]
 
     @cached(strategy=CacheStrategy.GLOBAL, ttl=604800, resource="subject_detailed_stats")
+    def _get_detailed_stats_with_filename(self, subject_id: int) -> dict[str, Any]:
+        """Cached query — `subject` is stored with raw image filename
+        so the 7-day cache doesn't end up serving expired presigned URLs.
+        Public `get_detailed_stats` re-resolves the URL on every call."""
+        with self._uow:
+            subject = self._uow.subjects.get_by_id(subject_id)
+            return {
+                "subject": to_subject_service(subject, file_service=None),
+                "topic_count": self.count_topics(subject_id),
+                "question_count": self._uow.questions.count_by_subject(subject_id),
+                "topics": [to_topic_service(topic) for topic in subject.topics],
+            }
+
     def get_detailed_stats(self, subject_id: int) -> dict[str, Any]:
         """
         Get detailed statistics for a subject
@@ -420,14 +447,16 @@ class SubjectService(SubjectServiceInterface):
         Raises:
             SubjectNotFoundService: If subject with given ID doesn't exist
         """
-        with self._uow:
-            subject = self._uow.subjects.get_by_id(subject_id)
-            return {
-                "subject": to_subject_service(subject, self._file_service),
-                "topic_count": self.count_topics(subject_id),
-                "question_count": self._uow.questions.count_by_subject(subject_id),
-                "topics": [to_topic_service(topic) for topic in subject.topics],
+        cached_payload = self._get_detailed_stats_with_filename(subject_id)
+        sub: SubjectServiceDTO = cached_payload["subject"]
+        if sub.image:
+            cached_payload = {
+                **cached_payload,
+                "subject": sub.model_copy(
+                    update={"image": self._file_service.get_subject_image_url(sub.image) or ""}
+                ),
             }
+        return cached_payload
 
     @cached(strategy=CacheStrategy.GLOBAL, ttl=604800, resource="subject_topic_count")
     def count_topics(self, subject_id: int) -> int:
@@ -556,15 +585,29 @@ class SubjectService(SubjectServiceInterface):
             return self._uow.progress.get_subject_progress(user_id, subject_id, only_correct)
 
     @cached(strategy=CacheStrategy.USER, ttl=3600, resource="subjects_with_progress")
-    def get_subjects_with_progress(self, user_id: str, only_correct: bool = True) -> builtins.list[SubjectProgressDTO]:
+    def _get_subjects_with_progress_filenames(
+        self, user_id: str, only_correct: bool = True
+    ) -> builtins.list[dict[str, Any]]:
+        """Cached query — image stays as raw filename in the dict.
+        URL resolution is done in the public wrapper below so 30-min
+        presigned signatures don't get baked into the 1-hour cache."""
         with self._uow:
-            result = []
-            for subject_data in self._uow.progress.get_subjects_with_progress(user_id, only_correct):
-                image = subject_data.get("image")
-                subject_data["image"] = self._file_service.get_subject_image_url(image) if image else ""
-                result.append(SubjectProgressDTO(**subject_data))
+            return list(self._uow.progress.get_subjects_with_progress(user_id, only_correct))
 
-            return result
+    def get_subjects_with_progress(
+        self, user_id: str, only_correct: bool = True
+    ) -> builtins.list[SubjectProgressDTO]:
+        cached_rows = self._get_subjects_with_progress_filenames(user_id, only_correct)
+        result: builtins.list[SubjectProgressDTO] = []
+        for subject_data in cached_rows:
+            # Defensive copy — Redis cache returns a fresh deserialized
+            # dict each call so mutating it is safe in practice, but a
+            # local copy keeps intent obvious for the next reader.
+            row = dict(subject_data)
+            image = row.get("image")
+            row["image"] = self._file_service.get_subject_image_url(image) if image else ""
+            result.append(SubjectProgressDTO(**row))
+        return result
 
     @cached(strategy=CacheStrategy.USER, ttl=3600, resource="topics_with_progress")
     def get_topics_with_progress(

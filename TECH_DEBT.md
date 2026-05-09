@@ -699,6 +699,44 @@ pip install slowapi
 
 ---
 
+### 29. TestFlight build 14 — собран, не залит
+
+**Status:** ⏳ ожидает аплоада
+
+**Что готово:** локально собран IPA `build/ios/ipa/AIMA.ipa`, версия
+**1.2.0+14**. Подтверждена корректность entitlements:
+
+```
+codesign -d --entitlements - Payload/Runner.app
+→ application-identifier = 682LNLFMMN.kz.aima.aima
+→ aps-environment        = production    ✓
+→ (applesignin отсутствует, как и должно после d3dcf08)
+```
+
+**Что в этой сборке относительно build 12 (последней залитой 8.05.2026):**
+- LaTeX render safety + post-test logout fix (`f5e8287`)
+- Lumi → AIMA полная зачистка двух слоёв (`9e262f9`, `582176a`)
+- Apple + Google Sign-In удалены, только phone+SMS (`d3dcf08`)
+- PRO badge + кристалл сняты с главного экрана (`657d5e5`)
+- Android perms: POST_NOTIFICATIONS + CAMERA + дроп OAuth deep-link (`44da2d8`)
+- iOS APNs entitlement подключен, push заработает (`fbba69e`)
+
+**Что юзер должен сделать:**
+1. Открыть Transporter
+2. Drag-n-drop `build/ios/ipa/AIMA.ipa`
+3. Deliver — загрузка ~3-5 мин
+4. Подождать ~10-30 мин обработки в App Store Connect
+5. Билд появится в TestFlight → iOS Builds со статусом Ready to Test
+6. На iPhone в TestFlight: pull-to-refresh → Update
+
+**Build 13 в TestFlight (если ещё там):** игнорировать, в нём нет APNs
+entitlement → iOS push не работает. Build 14 его перекрывает.
+
+**Status:** ⏳ ожидает аплоада в TestFlight (отложено решением 2026-05-09:
+«проверим чуть позже, пока запиши в тех долг»).
+
+---
+
 ### 28. Postgres backups — апгрейд Railway на Pro plan
 
 **Почему важно:** на Hobby plan встроенные Daily Backups недоступны

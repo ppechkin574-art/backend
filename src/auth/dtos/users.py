@@ -39,6 +39,12 @@ class UserDTO(BaseModel):
     roles: list[str] = Field(default_factory=list)
     # role: str = Field(default="user", exclude=False)
     allowed_subject_ids: list[int] = Field(default_factory=list)
+    # Школьный класс (5..11). None для:
+    #   * родителей (роль parent — у них своего класса нет),
+    #   * учителей и админов,
+    #   * legacy-юзеров зарегистрированных до 09.05.2026 (поле введено
+    #     задним числом, для них Keycloak-атрибут пустой).
+    grade: int | None = None
     plan: PlanType = PlanType.FREE
     used_trial: bool = False
     subscription_end: datetime | None = None

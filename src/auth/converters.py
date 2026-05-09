@@ -284,6 +284,20 @@ def to_user_dto(keycloak_user: "KeycloakUserDTO", roles: list[str]) -> UserDTO:
         if cancelled_list and len(cancelled_list) > 0:
             subscription_cancelled = cancelled_list[0].strip().lower() == "true"
 
+    # Школьный класс. Поле введено 09.05.2026, у legacy-пользователей в
+    # Keycloak атрибута нет — оставляем None, тогда админка покажет «—».
+    # Аккуратно парсим: невалидное/пустое значение = None, не падаем.
+    grade: int | None = None
+    if keycloak_user.attributes and keycloak_user.attributes.grade:
+        grade_list = keycloak_user.attributes.grade
+        if grade_list and len(grade_list) > 0:
+            try:
+                parsed = int(grade_list[0].strip())
+                if 1 <= parsed <= 11:
+                    grade = parsed
+            except (ValueError, TypeError):
+                pass
+
     return UserDTO(
         id=keycloak_user.id,
         username=keycloak_user.username,
@@ -294,6 +308,7 @@ def to_user_dto(keycloak_user: "KeycloakUserDTO", roles: list[str]) -> UserDTO:
         is_active=keycloak_user.enabled,
         roles=roles,
         allowed_subject_ids=allowed_subject_ids,
+        grade=grade,
         plan=plan,
         subscription_end=subscription_end,
         subscription_cancelled=subscription_cancelled,

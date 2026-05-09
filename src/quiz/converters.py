@@ -638,7 +638,7 @@ def to_ent_option_get_repo(option_params_dto: EntOptionsGetServiceDTO):
 #         subject_id=preference.subject.id,
 #         subject_name=preference.subject.name,
 #         image=(
-#             f"https://lumi-unt.kz/uploads{preference.subject.image}"
+#             f"{LEGACY_CDN_BASE}{preference.subject.image}"
 #             if preference.subject.image
 #             else None
 #         ),

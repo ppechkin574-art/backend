@@ -115,19 +115,31 @@ def create_app() -> FastAPI:
         notifier_receiver_phone="",
     )
 
+    # CORS — production-safe whitelist only.
+    # `allowed_origins` env var must be a comma-separated list of explicit
+    # origins (e.g. "https://aima.kz,https://admin.aima.kz"). The wildcard
+    # fallback that previously kicked in when the env var was unset/`*` is
+    # deliberately gone: it allowed any site to hit the API on the user's
+    # behalf, which is a CSRF/credential-leak vector. If the variable is
+    # unset or contains "*", we hard-fail at boot rather than silently
+    # opening the door.
     origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
-    cors_kwargs: dict = {
-        "allow_methods": ["*"],
-        "allow_headers": ["*"],
-    }
     if not origins or "*" in origins:
-        cors_kwargs["allow_origin_regex"] = ".*"
-        cors_kwargs["allow_credentials"] = False
-    else:
-        cors_kwargs["allow_origins"] = origins
-        cors_kwargs["allow_credentials"] = True
+        raise RuntimeError(
+            "ALLOWED_ORIGINS env var must be set to an explicit "
+            "comma-separated list of origins. Wildcard ('*' or empty) is "
+            "rejected to prevent CORS-based credential theft. "
+            "Set it in Railway → Variables, e.g. "
+            "ALLOWED_ORIGINS=https://aima.kz,https://admin.aima.kz"
+        )
 
-    app.add_middleware(CORSMiddleware, **cors_kwargs)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     setup_exception_handlers(app)
     setup_metrics(app)

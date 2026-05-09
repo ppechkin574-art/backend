@@ -1,0 +1,31 @@
+# Railway service configuration.
+#
+# Healthcheck wiring:
+#   * Path /health is exposed by api.routes.system. Returns 200 with a JSON
+#     body whenever the Python worker is alive and able to handle requests.
+#     Redis status is reported in the body but does NOT gate the status code
+#     (a flaky Redis must not cause Railway to restart the worker).
+#
+#   * healthcheckTimeout is the per-attempt deadline; healthy services
+#     respond in <50ms, but we leave headroom for gunicorn pool saturation.
+#
+# Deploy policy:
+#   * `restartPolicyType = "on_failure"` — Railway restarts the worker if it
+#     crashes (uvicorn/gunicorn process exit non-zero). Combined with the
+#     healthcheck above it covers both "crashed" and "wedged but not
+#     crashed" scenarios.
+#   * `restartPolicyMaxRetries = 5` — guard against crashloops chewing up
+#     Railway minutes if config is broken.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# startCommand intentionally omitted — Dockerfile's CMD runs
+# `alembic upgrade head && python src/main.py`, which is the contract.
+# Overriding here would skip migrations and break deploys.
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 5

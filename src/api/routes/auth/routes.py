@@ -131,7 +131,16 @@ def swagger_login(
     return perform_login(params, service)
 
 
+# Two-layer rate limit:
+#   * 1/minute  — short-burst protection. Anyone who hits "Resend code" twice
+#     in a minute gets bounced. Lives in slowapi's per-IP bucket.
+#   * 10/hour   — daily cap. Even if an attacker spaces requests out to
+#     bypass the per-minute limit, a single IP can't drain more than ~10
+#     SMS units of SMSC budget per hour. Combined with the per-contact
+#     60-second Redis block in AuthService, that bounds the worst case
+#     to ~10 SMS per hour per IP regardless of phone-number rotation.
 @public_router.post("/code/request", response_model=CodeRequestResponse)
+@limiter.limit("10/hour")
 @limiter.limit("1/minute")
 async def request_code(
     request: Request,

@@ -13,19 +13,19 @@ from starlette.middleware.base import BaseHTTPMiddleware
 ALMATY_TZ = ZoneInfo("Asia/Almaty")
 
 REQUEST_COUNT = Counter(
-    "lumiapp_requests_total",
+    "aimaapp_requests_total",
     "Total requests",
     ["method", "endpoint", "status_code"],
 )
 
 REQUEST_DURATION = Histogram(
-    "lumiapp_request_duration_seconds",
+    "aimaapp_request_duration_seconds",
     "Request duration",
     ["method", "endpoint"],
 )
 
 ERROR_COUNT = Counter(
-    "lumiapp_errors_total",
+    "aimaapp_errors_total",
     "Total errors",
     ["method", "endpoint", "error_type"],
 )

@@ -35,9 +35,12 @@ MINIO_BUCKET = "aima-uploads"
 # DATABASE_URL pulled from Railway env at runtime; user must export it before running.
 import os
 DATABASE_URL = os.environ.get("DATABASE_URL")
+# Optional — if missing, the script still runs avatar+KC steps and just
+# warns when the points-upsert can't connect. Useful when refreshing
+# avatars from a local machine that doesn't have access to the private
+# Railway DB network.
 if not DATABASE_URL:
-    print("ERROR: set DATABASE_URL env var")
-    sys.exit(1)
+    print("ℹ no DATABASE_URL — avatars+KC will still run, points upsert will be skipped")
 
 ZHAHANGIR_USER_ID = "33caa41d-1fb0-4fea-b166-3687e1493663"
 ZHAHANGIR_POINTS = 250
@@ -107,17 +110,32 @@ def find_or_create_user(token: str, name: str, phone: str) -> str:
         headers={**headers, "Content-Type": "application/json"},
         timeout=15,
     )
-    if r.status_code not in (201, 204):
+    # 409 means the user is already there but our exact-email search
+    # didn't find them (Keycloak's `exact=true` semantics drift between
+    # versions). Fall through to the lookup below.
+    if r.status_code not in (201, 204, 409):
         raise RuntimeError(f"Failed to create user: {r.status_code} {r.text}")
-    # Re-fetch to get id
-    r = requests.get(
-        f"{KC_URL}/admin/realms/{REALM}/users",
-        params={"email": search_email, "exact": "true"},
-        headers=headers,
-        timeout=15,
-    )
-    r.raise_for_status()
-    return r.json()[0]["id"]
+
+    # Re-fetch to get id. Try three increasingly fuzzy queries — Keycloak
+    # 26 has been picky about which attribute returns hits when seeded
+    # users were created via the auth/code/check flow rather than this
+    # script (different email-vs-username layout).
+    for params in (
+        {"email": search_email, "exact": "true"},
+        {"username": search_email, "exact": "true"},
+        {"search": phone},
+    ):
+        r = requests.get(
+            f"{KC_URL}/admin/realms/{REALM}/users",
+            params=params,
+            headers=headers,
+            timeout=15,
+        )
+        r.raise_for_status()
+        rows = r.json()
+        if rows:
+            return rows[0]["id"]
+    raise RuntimeError(f"User created but vanished from search: {phone}")
 
 
 def upload_avatar(user_id: str, gender: str, avatar_idx: int) -> str:
@@ -212,11 +230,23 @@ def main():
         set_avatar_attr(token, user_id, filename, u["name"], u["phone"])
         print("  avatar attribute set in KC")
 
-        upsert_points(user_id, u["points"])
-        print(f"  points = {u['points']}")
+        # Postgres is reachable only via the Railway internal network
+        # since we removed the public TCP proxy on 09.05.2026 — running
+        # this script from a local machine can't update the points table.
+        # The avatar / KC pipeline above runs over the public Keycloak +
+        # MinIO endpoints and works regardless. Skip the point upsert
+        # gracefully so re-running for avatar refresh isn't a hard fail.
+        try:
+            upsert_points(user_id, u["points"])
+            print(f"  points = {u['points']}")
+        except Exception as e:
+            print(f"  ⚠ skipping points upsert (DB unreachable): {type(e).__name__}: {str(e)[:100]}")
 
-    upsert_points(ZHAHANGIR_USER_ID, ZHAHANGIR_POINTS)
-    print(f"\n✅ zhahangir bumped to {ZHAHANGIR_POINTS} points")
+    try:
+        upsert_points(ZHAHANGIR_USER_ID, ZHAHANGIR_POINTS)
+        print(f"\n✅ zhahangir bumped to {ZHAHANGIR_POINTS} points")
+    except Exception as e:
+        print(f"\n⚠ skipping zhahangir points (DB unreachable): {type(e).__name__}")
     print("\nDone.")
 
 

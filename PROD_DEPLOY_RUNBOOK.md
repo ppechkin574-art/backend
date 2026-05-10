@@ -79,7 +79,69 @@ ALLOWED_ORIGINS = https://aima.kz,https://admin.aima.kz
 
 ---
 
-## 4. (Опц.) Включить Sentry
+## 4. Reviewer-bypass для App Store / Play Store (ОБЯЗАТЕЛЬНО до Submit)
+
+**Зачем:** Apple/Google ревьюеры физически в Купертино/Mountain View
+не могут получить SMS через SMSC.kz. Без зарезервированного тестового
+номера + фиксированного кода **submission будет отклонён 100%** —
+guideline 2.1 «App must be functional».
+
+**Где:** Railway → service **`backend`** → Variables.
+
+```
+REVIEWER_TEST_PHONE = +77001234567
+REVIEWER_TEST_CODE  = 123456
+```
+
+После save Railway передеплоит за ~30 сек.
+
+**Что меняется в backend (commit `<TBD>`):**
+
+* `_is_reviewer_test_contact(contact)` возвращает `True` только когда
+  `REVIEWER_TEST_PHONE` задан И совпадает с пришедшим номером.
+* `request_code` для test-контакта:
+  * пропускает «user already exists» (рев. может re-регаться повторно),
+  * не дёргает SMSC.kz (нет траты SMS-бюджета),
+  * пишет в Redis фиксированный код (`REVIEWER_TEST_CODE`, default
+    `123456`).
+* `check_code` — **без изменений**, существующий compare-with-Redis
+  путь сам валидирует код.
+
+**Почему это безопасно:**
+
+1. Bypass дремлет когда env-переменные не заданы (`bool(...)` False) —
+   локально/staging работает как раньше.
+2. Worst-case утечка номера → 1 спам-аккаунт зарегается с trial.
+   Никаких admin прав, никакого доступа к чужим данным.
+3. Номер `+77001234567` — формат, не выдаваемый реальным kz-оператором.
+
+**App Store Connect → App Review Information → Sign-In Required:**
+
+```
+Username: +77001234567
+Password: 123456
+Notes:    SMS не нужен. Введите телефон, нажмите «Отправить код»,
+          затем введите 123456 — это reviewer-bypass для подтверждения
+          без реальной SMS.
+```
+
+**Verify локально:**
+
+```bash
+curl -X POST $BACKEND/auth/code/request \
+  -H 'Content-Type: application/json' \
+  -d '{"contact": "+77001234567", "platform": "sms", "action": "register"}'
+# → 200 OK, verification_id
+
+curl -X POST $BACKEND/auth/code/check \
+  -H 'Content-Type: application/json' \
+  -d '{"verification_id": "<from above>", "code": 123456, "action": "register"}'
+# → 200 OK, valid: true
+```
+
+---
+
+## 5. (Опц.) Включить Sentry
 
 **Зачем:** сейчас краши на проде ловишь только когда юзер жалуется.
 

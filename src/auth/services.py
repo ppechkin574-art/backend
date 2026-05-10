@@ -1,5 +1,6 @@
 import contextlib
 import logging
+import os
 import re
 import secrets
 import uuid
@@ -432,6 +433,22 @@ class AuthService:
 
         contact = self._normalize_contact(contact)
 
+        # App Store / Play Store reviewer bypass: a single reserved phone
+        # number bypasses the SMS gateway and uses a hardcoded confirmation
+        # code. Without this, reviewers in Cupertino can never receive an
+        # SMS through SMSC.kz and the app gets rejected for «not functional».
+        # The bypass:
+        #   * skips the SMSC.kz call entirely (no budget drain)
+        #   * stores a fixed code in Redis like a normal request, so the
+        #     existing check_code path validates without any extra branches
+        #   * skips the «user already exists» guard so the reviewer can
+        #     re-run the whole sign-up flow on every fresh review
+        # Risk: if the reserved number leaks publicly, attackers can register
+        # a single throwaway account. They get the same 3-day trial as any
+        # new user — no admin escalation. Mitigation: pick a phone shape no
+        # real Kazakhstan operator hands out (default +77001234567).
+        is_reviewer_test_contact = self._is_reviewer_test_contact(contact)
+
         # Per-contact rate limit. block_key is set with TTL in _set_resend_block
         # only after a successful primary-channel send (Q4=A: don't penalise the
         # user when SMSC/email itself fails — they should be able to retry).
@@ -459,7 +476,10 @@ class AuthService:
 
         elif action == ConfirmationCodeAction.REGISTER:
             is_phone = "@" not in contact
-            if is_phone:
+            # Reviewer bypass: skip the «exists» check so Apple can re-run
+            # registration repeatedly across resubmissions without us having
+            # to manually delete the test user in Keycloak.
+            if is_phone and not is_reviewer_test_contact:
                 logger.info("Checking if phone %s is already registered", contact)
                 try:
                     user_query = to_user_query_dto(phone=contact)
@@ -484,7 +504,14 @@ class AuthService:
         elif action == ConfirmationCodeAction.CHANGE_EMAIL:
             pass
 
-        code = secrets.choice(range(100000, 999999))
+        # Reviewer bypass: fixed code from env so it's documented in App
+        # Store Connect's «Sign-In Required» field and stays constant
+        # between resubmissions. Default 123456 if env not set, matches
+        # the canonical App Review playbook for phone-auth apps.
+        if is_reviewer_test_contact:
+            code = int(os.getenv("REVIEWER_TEST_CODE", "123456"))
+        else:
+            code = secrets.choice(range(100000, 999999))
 
         confirmation_code_dto = ConfirmationCodeCreateDTO(
             registration_id=verification_id,
@@ -515,7 +542,15 @@ class AuthService:
                 self._confirmation_codes.delete(e.confirmation_code_id)
             self._confirmation_codes.create(confirmation_code_dto)
 
-        sent_ok = self._send_confirmation_code(contact, code, platform)
+        # Reviewer bypass: don't actually call SMSC for the reserved phone —
+        # the code is already in Redis (line above), check_code will accept
+        # it. Saves SMS budget and avoids the inevitable «can't deliver»
+        # error from SMSC for a fake number.
+        if is_reviewer_test_contact:
+            logger.info("Reviewer bypass: skipping SMS send for %s", contact)
+            sent_ok = True
+        else:
+            sent_ok = self._send_confirmation_code(contact, code, platform)
 
         # Q4=A: only block on a real successful send. If SMS failed and we fell
         # back to dev channel, the user got nothing — let them retry without
@@ -816,6 +851,17 @@ class AuthService:
 
     def _normalize_contact(self, contact: str) -> str:
         return contact.strip()
+
+    def _is_reviewer_test_contact(self, contact: str) -> bool:
+        """True if the contact equals the App Store / Play Store reviewer
+        test phone number (env var `REVIEWER_TEST_PHONE`, e.g.
+        `+77001234567`).  When `REVIEWER_TEST_PHONE` is unset the bypass
+        is dormant and every code request goes through the normal SMS
+        path — safe default for any environment that isn't actively in
+        store-review.
+        """
+        test_phone = os.getenv("REVIEWER_TEST_PHONE")
+        return bool(test_phone and contact == test_phone)
 
     def _get_user_by_contact(self, contact: str) -> UserDTO | None:
         try:

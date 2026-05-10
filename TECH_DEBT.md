@@ -737,6 +737,51 @@ entitlement → iOS push не работает. Build 14 его перекрыв
 
 ---
 
+### 30. Ротация засвеченных секретов — постпрод
+
+**Контекст 09.05.2026:** во время прод-аудита 8 секретов были вставлены
+в чат с ассистентом одним блоком (env-paste). Технически — leak-канал
+ограничен (single-tenant assistant, no public exposure), но best
+practice требует ротации после любой утечки.
+
+**Что закрыто (10.05.2026):**
+- ✅ Apple `.p8` Sign-In key (`F63F33HT4L`) — revoked
+- ✅ Firebase Service Account JSON — revoked + новый `b86a84456b14...`
+- ✅ Google OAuth Client Secret — added new + старый удалён
+
+**Что отложено в постпрод:** 5 секретов остались с засвеченными значениями.
+Решение 10.05.2026: «не блокирует ревью App Store/Play Store, фокус на
+прод-релизе, ротация — после стора».
+
+| Secret | Risk if abused |
+|---|---|
+| `keycloak__admin__PASSWORD` | Полный контроль над юзерами/realm — самое опасное |
+| `keycloak__open_id__CLIENT_SECRET_KEY` | Подделка токенов авторизации |
+| `SMSC__KEY` | Спам SMS, дренаж бюджета (~$5-50/час) |
+| `freedom_pay__SECRET` | Подделка платёжных коллбэков |
+| `email_client__API_KEY` (Resend) | Спам с домена `aima.kz`, попадание в blacklist |
+
+**Когда ротировать:** в первый рабочий день после прод-релиза. Каждый
+секрет — 5-10 мин:
+
+1. **Keycloak admin** — admin UI → My Account → Update Password →
+   обновить `keycloak__admin__PASSWORD` в Railway сервисе backend
+   **И** `KEYCLOAK_ADMIN_PASSWORD` в Railway сервисе keycloak.
+2. **Keycloak open_id** — Keycloak admin → Realms → lumi → Clients →
+   web-app → Credentials → Regenerate Secret → залить в
+   `keycloak__open_id__CLIENT_SECRET_KEY`.
+3. **SMSC** — личный кабинет smsc.kz → сменить пароль API → залить в
+   `SMSC__KEY`.
+4. **FreedomPay** — связаться с support → запросить ротацию Merchant
+   Secret → залить в `freedom_pay__SECRET`.
+5. **Resend** — resend.com → API Keys → revoke старый → create new →
+   залить в `email_client__API_KEY`.
+
+**Status:** ⏸ отложено в постпрод (фокус на App Store / Play Store
+review).
+
+---
+
 ### 28. Postgres backups — апгрейд Railway на Pro plan
 
 **Почему важно:** на Hobby plan встроенные Daily Backups недоступны

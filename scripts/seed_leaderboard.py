@@ -45,17 +45,18 @@ if not DATABASE_URL:
 ZHAHANGIR_USER_ID = "33caa41d-1fb0-4fea-b166-3687e1493663"
 ZHAHANGIR_POINTS = 250
 
-# `gender` drives which randomuser.me sub-path the avatar is fetched
-# from — keeping male names paired with male portraits and vice versa.
-# pravatar.cc was previously used here but the IDs aren't gender-stable
-# (id 14 returns a male portrait, id 15 returns a female portrait, etc.),
-# which broke the visual match between the leaderboard name and avatar.
+# Avatars are now sourced from `scripts/avatars/` — a small set of
+# curated portraits committed to the repo. randomuser.me / pravatar.cc
+# both produced uneven looks across the podium (random aging, random
+# pose, sometimes thumbs-up stock-photo energy that didn't match an
+# EdTech app for high-school students). Local files give us full
+# control over the visual that ends up in the leaderboard screenshot.
 SEED_USERS = [
-    {"name": "Айдар Нурланов",  "phone": "+77780000001", "gender": "men",   "avatar_idx": 12, "points": 5000},
-    {"name": "Динара Сапарова", "phone": "+77780000002", "gender": "women", "avatar_idx": 45, "points": 4500},
-    {"name": "Алмас Жумабаев",  "phone": "+77780000003", "gender": "men",   "avatar_idx": 68, "points": 4000},
-    {"name": "Камила Бекова",   "phone": "+77780000004", "gender": "women", "avatar_idx": 22, "points": 3500},
-    {"name": "Ержан Касымов",   "phone": "+77780000005", "gender": "men",   "avatar_idx": 35, "points": 3000},
+    {"name": "Айдар Нурланов",  "phone": "+77780000001", "avatar_file": "aydar.jpg",  "points": 5000},
+    {"name": "Динара Сапарова", "phone": "+77780000002", "avatar_file": "dinara.jpg", "points": 4500},
+    {"name": "Алмас Жумабаев",  "phone": "+77780000003", "avatar_file": "almas.jpg",  "points": 4000},
+    {"name": "Камила Бекова",   "phone": "+77780000004", "avatar_file": "kamila.jpg", "points": 3500},
+    {"name": "Ержан Касымов",   "phone": "+77780000005", "avatar_file": "yerzhan.jpg", "points": 3000},
 ]
 
 
@@ -138,27 +139,29 @@ def find_or_create_user(token: str, name: str, phone: str) -> str:
     raise RuntimeError(f"User created but vanished from search: {phone}")
 
 
-def upload_avatar(user_id: str, gender: str, avatar_idx: int) -> str:
-    """Download a gendered portrait from randomuser.me, push it to MinIO,
-    return the filename matching the convention used by FileService.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+LOCAL_AVATARS_DIR = os.path.join(SCRIPT_DIR, "avatars")
 
-    `gender` must be exactly "men" or "women" — those are the actual
-    sub-paths randomuser.me serves under /api/portraits/. We deliberately
-    moved off pravatar.cc here: its numeric IDs cycle through both
-    genders without any mapping guarantee, so a "female" name kept ending
-    up with a male portrait. randomuser.me locks the gender in the URL.
+
+def upload_avatar(user_id: str, avatar_file: str) -> str:
+    """Read a portrait from `scripts/avatars/<avatar_file>`, push it to
+    MinIO, return the filename matching the convention used by
+    FileService.
+
+    Local-file mode replaces the randomuser.me / pravatar.cc download
+    pipeline (commit 8982235 / earlier). Curated photos give a
+    consistent visual across the leaderboard podium — that's what the
+    App Store screenshots will end up capturing.
     """
-    if gender not in ("men", "women"):
-        raise ValueError(f"gender must be 'men' or 'women', got {gender!r}")
-    url = f"https://randomuser.me/api/portraits/{gender}/{avatar_idx}.jpg"
-    r = requests.get(
-        url,
-        headers={"User-Agent": "Mozilla/5.0 (compatible; AIMA-seeder/1.0)"},
-        timeout=20,
-        allow_redirects=True,
-    )
-    r.raise_for_status()
-    portrait = r.content
+    avatar_path = os.path.join(LOCAL_AVATARS_DIR, avatar_file)
+    if not os.path.isfile(avatar_path):
+        raise FileNotFoundError(
+            f"Avatar file missing: {avatar_path}. "
+            f"Curated avatars live in scripts/avatars/ — add the file or "
+            f"update the avatar_file field in SEED_USERS."
+        )
+    with open(avatar_path, "rb") as fh:
+        portrait = fh.read()
     digest = hashlib.md5(portrait + secrets.token_bytes(8)).hexdigest()
     filename = f"{user_id}_{digest}.jpg"
     storage_key = f"avatars/{filename}"
@@ -223,7 +226,7 @@ def main():
         user_id = find_or_create_user(token, u["name"], u["phone"])
         print(f"  id: {user_id}")
 
-        filename = upload_avatar(user_id, u["gender"], u["avatar_idx"])
+        filename = upload_avatar(user_id, u["avatar_file"])
         print(f"  avatar uploaded: avatars/{filename}")
 
         # Refresh token mid-run to avoid expiry

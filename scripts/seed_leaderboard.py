@@ -42,12 +42,17 @@ if not DATABASE_URL:
 ZHAHANGIR_USER_ID = "33caa41d-1fb0-4fea-b166-3687e1493663"
 ZHAHANGIR_POINTS = 250
 
+# `gender` drives which randomuser.me sub-path the avatar is fetched
+# from — keeping male names paired with male portraits and vice versa.
+# pravatar.cc was previously used here but the IDs aren't gender-stable
+# (id 14 returns a male portrait, id 15 returns a female portrait, etc.),
+# which broke the visual match between the leaderboard name and avatar.
 SEED_USERS = [
-    {"name": "Айдар Нурланов",  "phone": "+77780000001", "pravatar_id": 11, "points": 5000},
-    {"name": "Динара Сапарова", "phone": "+77780000002", "pravatar_id": 14, "points": 4500},
-    {"name": "Алмас Жумабаев",  "phone": "+77780000003", "pravatar_id": 15, "points": 4000},
-    {"name": "Камила Бекова",   "phone": "+77780000004", "pravatar_id": 16, "points": 3500},
-    {"name": "Ержан Касымов",   "phone": "+77780000005", "pravatar_id": 23, "points": 3000},
+    {"name": "Айдар Нурланов",  "phone": "+77780000001", "gender": "men",   "avatar_idx": 12, "points": 5000},
+    {"name": "Динара Сапарова", "phone": "+77780000002", "gender": "women", "avatar_idx": 45, "points": 4500},
+    {"name": "Алмас Жумабаев",  "phone": "+77780000003", "gender": "men",   "avatar_idx": 68, "points": 4000},
+    {"name": "Камила Бекова",   "phone": "+77780000004", "gender": "women", "avatar_idx": 22, "points": 3500},
+    {"name": "Ержан Касымов",   "phone": "+77780000005", "gender": "men",   "avatar_idx": 35, "points": 3000},
 ]
 
 
@@ -115,11 +120,21 @@ def find_or_create_user(token: str, name: str, phone: str) -> str:
     return r.json()[0]["id"]
 
 
-def upload_avatar(user_id: str, pravatar_id: int) -> str:
-    """Download a portrait, push it to MinIO, return the filename
-    matching the convention used by FileService."""
+def upload_avatar(user_id: str, gender: str, avatar_idx: int) -> str:
+    """Download a gendered portrait from randomuser.me, push it to MinIO,
+    return the filename matching the convention used by FileService.
+
+    `gender` must be exactly "men" or "women" — those are the actual
+    sub-paths randomuser.me serves under /api/portraits/. We deliberately
+    moved off pravatar.cc here: its numeric IDs cycle through both
+    genders without any mapping guarantee, so a "female" name kept ending
+    up with a male portrait. randomuser.me locks the gender in the URL.
+    """
+    if gender not in ("men", "women"):
+        raise ValueError(f"gender must be 'men' or 'women', got {gender!r}")
+    url = f"https://randomuser.me/api/portraits/{gender}/{avatar_idx}.jpg"
     r = requests.get(
-        f"https://i.pravatar.cc/300?img={pravatar_id}",
+        url,
         headers={"User-Agent": "Mozilla/5.0 (compatible; AIMA-seeder/1.0)"},
         timeout=20,
         allow_redirects=True,
@@ -190,7 +205,7 @@ def main():
         user_id = find_or_create_user(token, u["name"], u["phone"])
         print(f"  id: {user_id}")
 
-        filename = upload_avatar(user_id, u["pravatar_id"])
+        filename = upload_avatar(user_id, u["gender"], u["avatar_idx"])
         print(f"  avatar uploaded: avatars/{filename}")
 
         # Refresh token mid-run to avoid expiry

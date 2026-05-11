@@ -821,6 +821,49 @@ review).
 
 ---
 
+### 31. Медленная загрузка экранов (5-7 секунд)
+
+**Симптом:** заметил юзер 11.05.2026 — переходы между экранами в TestFlight приложении подтормаживают на 5-7 секунд. На реальном iPhone из Казахстана.
+
+**Причины (по убыванию вклада):**
+1. **Railway хостится во Франкфурте** — каждый HTTP-запрос из KZ имеет RTT ~200-300 мс. Если экран дёргает 3-4 endpoint'a последовательно — секунда сразу есть.
+2. **Keycloak дёргается дважды на каждый аутентифицированный запрос** — verify token + fetch user attributes. То есть для одного экрана: 4 endpoint'a × 2 Keycloak-hop = 8 round-trip'ов.
+3. **`_find_user_by_phone` делает O(n) fallback**: «Fallback: scanning 19 users from Keycloak» в логах. Сейчас 19 юзеров — fallback занимает 240 мс. На 1000+ юзерах будет ~10 секунд.
+4. **Нет кэша на стороне клиента**: `getPlans()`, `getBenefits()`, `getUser()` зовутся при каждом входе на экран без TTL-кэша в Flutter.
+5. **Аватары не кэшируются на CDN** — каждый раз MinIO presigned URL → MinIO → клиент.
+
+**Как чинить (от лёгкого к тяжёлому):**
+- 🟢 **Frontend-кэш через `ObjectBox`/`flutter_secure_storage`** для статичных данных (plans, benefits, user profile) с TTL 5-15 мин. ~2 часа работы.
+- 🟢 **Lazy-load в Flutter**: не блокировать UI пока ждём API, показывать skeleton-shimmer. ~3 часа.
+- 🟡 **Cloudflare в виде прокси** перед Railway → edge-кэш ответов, gzip, HTTP/3. ~1 день настройки.
+- 🟡 **Reverse-index в Keycloak** на attribute `phone` (Keycloak realm setting) → убирает O(n) fallback. Требует пересоздания realm или ручного SQL — рискованно, лучше после релиза.
+- 🔴 **Перенести Keycloak ближе к KZ** (Azure Astana / Yandex Almaty) — большая миграция, +2-3 дня.
+
+**Приоритет:** 🟡 не блокер релиза, делать в течение 1-2 недель после прода.
+
+---
+
+### 32. Юзера выкидывает на экран регистрации без причины
+
+**Симптом:** юзер залогинен, через какое-то время (часы / на следующий день) при открытии приложения видит экран регистрации. Все локальные данные «теряются».
+
+**Причины:**
+1. **Access token Keycloak TTL = 5 минут** (default). При запросе interceptor пробует refresh-токен. Если refresh-токен тоже истёк (default 30 мин) — авто-логин невозможен.
+2. **Refresh-токен TTL слишком короткий** — на проде обычно ставят `Session Idle = 7 days` / `Session Max = 30 days` в Realm Settings → Tokens.
+3. **На iOS в TestFlight**: при переустановке билда (с Build 17 на 18, 19, 20) `flutter_secure_storage` иногда теряет ключи из Keychain — токены пропадают.
+4. **Railway передеплои Keycloak** (если меняли realm.json) → все старые токены инвалидируются мгновенно.
+5. **`flutter_secure_storage` без `accessibility` параметра** — на iOS дефолт `kSecAttrAccessibleWhenUnlocked`, после рестарта iPhone может терять токены.
+
+**Как чинить:**
+- 🟢 **Увеличить TTL refresh-токена в Keycloak**: Realm `lumi` → Tokens → SSO Session Idle = 30 дней, SSO Session Max = 90 дней. ~5 мин в админке Keycloak.
+- 🟢 **Логировать причину разлогина в Flutter** — сейчас интерцептор молча редиректит на регистрацию. Добавить debugPrint когда refresh падает. ~30 мин.
+- 🟡 **Поправить `flutter_secure_storage`** — добавить `iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock)` чтобы ключи переживали рестарт. ~15 мин.
+- 🟡 **Прод-сборка через App Store** не страдает от переустановки TestFlight — это специфично для TestFlight-цикла. После релиза проблема сама уйдёт частично.
+
+**Приоритет:** 🟡 не блокер релиза (Apple не будет проверять auto-logout на 24-часовом интервале), но крайне неприятно для юзеров. Делать в течение 1 недели после прода.
+
+---
+
 ## Сводка переменных
 
 | Группа | Переменных | Откуда брать |

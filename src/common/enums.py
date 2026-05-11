@@ -5,6 +5,11 @@ class PlanType(StrEnum):
     NONE = "NONE"
     FREE = "FREE"
     # LITE = "LITE"
+    # User-facing brand of this plan is **"Month"** (single monthly tier,
+    # 4 990 ₸). The enum value stays "PRO" because it's persisted as a
+    # Keycloak attribute on every existing user — renaming would require
+    # a one-time migration. Treat `PRO` as the internal identifier and
+    # always render "Month" / "Подписка Month" in user-visible strings.
     PRO = "PRO"
     # PREMIUM = "PREMIUM"
 

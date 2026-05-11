@@ -146,8 +146,10 @@ class SubscriptionService:
             PlanType.PRO: PlanFeaturesDTO(
                 id=-2,
                 plan_type=PlanType.PRO,
-                name="Pro",
-                description="Профессиональный план с полным доступом",
+                # Brand-facing name is "Month" — enum still PRO internally
+                # (see common/enums.py for why we don't rename the enum).
+                name="Month",
+                description="Месячная подписка с полным доступом",
                 price=2000.0,
                 original_price=2500.0,
                 duration_days=30,

@@ -127,7 +127,7 @@ class AttendanceService:
     #     else:
     #         self._cache_service.invalidate_by_resources(resources, user_id=student_guid)
 
-    @cached(strategy=CacheStrategy.USER, ttl=86400, resource="attendance_info")
+    @cached(strategy=CacheStrategy.USER, ttl=3600, resource="attendance_info")
     def get_attendance_info(
         self,
         student_guid: UUID,

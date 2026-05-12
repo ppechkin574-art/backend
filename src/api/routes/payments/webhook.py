@@ -62,7 +62,7 @@ async def result_notify(
         return Response(content=tostring(root), media_type="application/xml", status_code=400)
 
     order_id = data.get("pg_order_id")
-    payment = session.query(Payment).filter(Payment.order_id == order_id).first()
+    payment = session.query(Payment).filter(Payment.order_id == order_id).with_for_update().first()
 
     if payment:
         # Idempotency: если уже обработан — вернуть success без повторной активации

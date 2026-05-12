@@ -306,23 +306,27 @@ def get_user(
             user.attendance_total_points = 0
             user.attendance_today_points = None
 
-        points_key = cache_service.make_key(
-            CacheStrategy.USER, user_id=user.id, resource="user_points", params="total"
-        )
-        rank_key = cache_service.make_key(
-            CacheStrategy.USER, user_id=user.id, resource="user_points", params="rank"
-        )
-        cached_points = cache_service.get(points_key)
-        cached_rank = cache_service.get(rank_key)
-        if cached_points is None or cached_rank is None:
-            points_repo = UserPointsRepository(db_session)
-            user.points = points_repo.get_total_points(user.id)
-            user.rank = points_repo.get_user_rank(user.id)
-            cache_service.set(points_key, user.points, ttl=60)
-            cache_service.set(rank_key, user.rank, ttl=60)
-        else:
-            user.points = int(cached_points)
-            user.rank = int(cached_rank)
+        try:
+            points_key = cache_service.make_key(
+                CacheStrategy.USER, user_id=user.id, resource="user_points", params="total"
+            )
+            rank_key = cache_service.make_key(
+                CacheStrategy.USER, user_id=user.id, resource="user_points", params="rank"
+            )
+            cached_points = cache_service.get(points_key)
+            cached_rank = cache_service.get(rank_key)
+            if cached_points is None or cached_rank is None:
+                points_repo = UserPointsRepository(db_session)
+                user.points = points_repo.get_total_points(user.id)
+                user.rank = points_repo.get_user_rank(user.id)
+                cache_service.set(points_key, user.points, ttl=60)
+                cache_service.set(rank_key, user.rank, ttl=60)
+            else:
+                user.points = int(cached_points)
+                user.rank = int(cached_rank)
+        except Exception:
+            user.points = 0
+            user.rank = 0
 
         return user
     except AuthAccessInvalidTokenError as e:

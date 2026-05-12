@@ -14,15 +14,8 @@ class KeycloakAttributesDTO(BaseModel):
     allowed_subject_ids: list[str] = Field(default_factory=list)
     plan: list[str] = Field(default_factory=lambda: [PlanType.FREE.value])
     subscription_end: list[str] = Field(default_factory=list)
-    # "true" / "false" string in Keycloak attribute form. Set when user
-    # taps Cancel; not auto-cleared on new purchase (Q8-B).
     subscription_cancelled: list[str] = Field(default_factory=list)
     avatar: list[str] | None = Field(default_factory=list)
-    # Школьный класс (5..11) выбранный студентом на онбординге.
-    # Атрибуты Keycloak всегда строковые, поэтому храним как list[str];
-    # to_user_dto парсит первый элемент в int. Для пользователей
-    # зарегистрированных до 09.05.2026 атрибут отсутствует (None в DTO).
-    grade: list[str] = Field(default_factory=list)
 
 
 class KeycloakCredentialDTO(BaseModel):

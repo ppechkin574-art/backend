@@ -1102,7 +1102,11 @@ class IdentityProviderClientKeycloak:
     #         raise
 
     def update_user_subscription(
-        self, user_id: UUID, plan: PlanType, expires_at: datetime | None = None
+        self,
+        user_id: UUID,
+        plan: PlanType,
+        expires_at: datetime | None = None,
+        subscription_cancelled: bool | None = None,
     ) -> None:
         """
         Обновить подписку пользователя в Keycloak
@@ -1132,6 +1136,9 @@ class IdentityProviderClientKeycloak:
                 attrs["subscription_end"] = [expires_at.isoformat()]
             else:
                 attrs.pop("subscription_end", None)
+
+            if subscription_cancelled is not None:
+                attrs["subscription_cancelled"] = [str(subscription_cancelled).lower()]
 
             payload = {"username": user.get("username"), "attributes": attrs}
 

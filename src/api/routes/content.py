@@ -1,33 +1,34 @@
-"""Public content endpoints — read-only views over CMS-style data
-(currently just `/content/subscription-benefits`).
+import logging
 
-These endpoints are intentionally unauthenticated: the data is shown
-on the subscription screen which any user can reach (FREE included),
-and we don't want to gate it behind a token round-trip."""
+from fastapi import APIRouter
 
-from typing import Annotated
+logger = logging.getLogger(__name__)
 
-from fastapi import APIRouter, Depends, Query
+router = APIRouter(prefix="/content", tags=["Content"])
 
-from api.dependencies import get_subscription_benefit_service
-from content.dtos import Locale, SubscriptionBenefitPublicDTO
-from content.service import SubscriptionBenefitService
+_BENEFITS_RU = [
+    {"id": 1, "position": 1, "title": "Пробное ЕНТ", "description": "Подготовка к экзамену в формате тестирования"},
+    {"id": 2, "position": 2, "title": "Полный Курс", "description": "Комплексное обучение по всем темам с нуля"},
+    {"id": 3, "position": 3, "title": "Кешбек", "description": "Возврат части средств за выполненные задания"},
+    {"id": 4, "position": 4, "title": "Ежедневные задания", "description": "Регулярная практика для закрепления знаний"},
+    {"id": 5, "position": 5, "title": "Повышающий КЕФ", "description": "Увеличение бонуса за активность и результаты"},
+    {"id": 6, "position": 6, "title": "Родительский доступ", "description": "Контроль успеваемости и активности ученика"},
+]
 
-router = APIRouter(prefix="/content", tags=["content"])
+_BENEFITS_KZ = [
+    {"id": 1, "position": 1, "title": "ҰБТ сынақ тапсырмасы", "description": "Емтихан форматында тест тапсыру арқылы дайындық"},
+    {"id": 2, "position": 2, "title": "Толық курс", "description": "Барлық тақырыптар бойынша нөлден кешенді оқу"},
+    {"id": 3, "position": 3, "title": "Кэшбэк", "description": "Орындалған тапсырмалар үшін қаражатты қайтару"},
+    {"id": 4, "position": 4, "title": "Күнделікті тапсырмалар", "description": "Білімді бекіту үшін тұрақты жаттығу"},
+    {"id": 5, "position": 5, "title": "Арттыру коэффициенті", "description": "Белсенділік пен нәтижелер үшін бонусты арттыру"},
+    {"id": 6, "position": 6, "title": "Ата-ана қолжетімділігі", "description": "Оқушының үлгерімі мен белсенділігін бақылау"},
+]
 
 
-@router.get(
-    "/subscription-benefits",
-    response_model=list[SubscriptionBenefitPublicDTO],
-    summary="Список фич подписки в выбранной локали",
-    description=(
-        "Активные пункты, отсортированные по `position`. "
-        "Возвращаются с уже разрешённой локалью (`title`, `description`); "
-        "по умолчанию RU. Для KZ передавать `?lang=kz`."
-    ),
-)
-def get_subscription_benefits(
-    lang: Annotated[Locale, Query(description="Локаль текстов: ru | kz")] = "ru",
-    service: SubscriptionBenefitService = Depends(get_subscription_benefit_service),
-):
-    return service.list_active_localised(lang)
+@router.get("/subscription-benefits", summary="Преимущества подписки PRO")
+async def get_subscription_benefits(lang: str = "ru") -> list[dict]:
+    """Возвращает список преимуществ подписки PRO на нужном языке.
+    lang: 'ru' (по умолчанию) или 'kz'."""
+    if lang.lower() in ("kz", "kk"):
+        return _BENEFITS_KZ
+    return _BENEFITS_RU

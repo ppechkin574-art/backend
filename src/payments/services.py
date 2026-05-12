@@ -43,7 +43,6 @@ class PaymentService:
         amount: Decimal,
         pg_card_token: str | None = None,
         description: str | None = None,
-        user_ip: str | None = None,
     ) -> Payment:
         """Создание обычного платежа (не для подписки)"""
         logger.info("Creating payment for user: %s, amount: %s", self.user.id, amount)
@@ -73,60 +72,16 @@ class PaymentService:
             order_id,
         )
 
-        # Pass user phone and email so FreedomPay can hide / pre-validate those
-        # fields on its customer page. We strip None / empty / 'None' / synthetic
-        # internal-only emails before sending.
-        user_phone = getattr(self.user, "phone", None)
-        user_email = getattr(self.user, "email", None)
-
-        # FreedomPay form expects phone in 11-digit format without '+'
-        clean_phone = None
-        if user_phone:
-            clean_phone = "".join(c for c in str(user_phone) if c.isdigit())
-            if not clean_phone:
-                clean_phone = None
-
-        clean_email = str(user_email).strip() if user_email else None
-        if clean_email and (clean_email.endswith(".internal") or "@aima.internal" in clean_email):
-            clean_email = None
-
-        # Sanitize the client IP. Some Railway proxies surface IPv6-mapped
-        # IPv4 ("::ffff:1.2.3.4") which FreedomPay's anti-fraud may reject;
-        # also strip the spec-loopback case so we never replay 127.0.0.1.
-        clean_user_ip: str | None = None
-        if user_ip:
-            ip = user_ip.strip()
-            if ip.startswith("::ffff:"):
-                ip = ip[len("::ffff:") :]
-            if ip and ip != "127.0.0.1" and ip != "::1":
-                clean_user_ip = ip
-
         params = {k: v for k, v in {
             "pg_merchant_id": self.freedom_pay_settings.merchant_id,
             "pg_order_id": order_id,
             "pg_amount": str(amount),
-            "pg_currency": "KZT",
             "pg_description": description if description else f"Order {order_id}",
-            "pg_testing_mode": self.freedom_pay_settings.testing_mode,
             "pg_result_url": f"{self.freedom_pay_settings.callback_url}/fp/result_notify",
             "pg_success_url": f"{self.freedom_pay_settings.callback_url}/payment/success",
             "pg_failure_url": f"{self.freedom_pay_settings.callback_url}/payment/failed",
             "pg_user_id": f"{str(self.user.id)}",
-            "pg_user_phone": clean_phone,
-            "pg_user_contact_email": clean_email,
-            # Forces vue-tel-input on the customer page to default the country
-            # dropdown to Kazakhstan instead of guessing from "+7" (which
-            # collides with Russia and reportedly renders two `iti-flag kz`
-            # entries — see TECH_DEBT §6).  When this param is omitted the
-            # form silently applies RU validation rules and rejects every KZ
-            # number regardless of format.
-            "pg_user_country": "KZ",
-            # Real client IP from the originating HTTP request. Was hardcoded
-            # to "127.0.0.1" for a while which was likely tripping FreedomPay's
-            # anti-fraud "strict" mode and contributing to the form rejecting
-            # otherwise valid input (see TECH_DEBT §6).
-            "pg_user_ip": clean_user_ip,
-        }.items() if v is not None and str(v).strip() != "" and str(v).strip().lower() != "none"}
+        }.items() if v is not None}
 
         if pg_card_token:
             params["pg_card_token"] = pg_card_token
@@ -229,7 +184,6 @@ class PaymentService:
         subscription_plan_id: int,
         months: int = 1,
         pg_card_token: str | None = None,
-        user_ip: str | None = None,
     ) -> Payment:
         """Создание платежа для подписки"""
 
@@ -246,7 +200,6 @@ class PaymentService:
             amount=amount,
             pg_card_token=pg_card_token,
             description=description,
-            user_ip=user_ip,
         )
 
         payment.is_subscription_payment = True

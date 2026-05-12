@@ -21,6 +21,7 @@ from payments.models import Payment, PaymentStatusHistory
 from subscription.models import (
     Subscription,
     SubscriptionHistory,
+    SubscriptionPlan,
 )
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,11 @@ async def result_notify(
     payment = session.query(Payment).filter(Payment.order_id == order_id).first()
 
     if payment:
+        # Idempotency: если уже обработан — вернуть success без повторной активации
+        if payment.status == "paid":
+            logger.info("Payment already processed (idempotent), skipping: %s", order_id)
+            return _create_success_response(data, method_name, settings.secret)
+
         old_status = payment.status
         logger.info(
             "Processing payment update for order: %s, current status: %s",
@@ -154,25 +160,39 @@ async def result_notify(
         logger.info("Processing subscription activation for payment: %s", payment.id)
 
         try:
+            # Определяем длительность из плана в БД
+            raw_plan = (payment.subscription_plan or "").strip()
+            plan_type = next(
+                (pt for pt in PlanType if pt.value.upper() == raw_plan.upper()),
+                None,
+            )
+            duration_days = 30  # fallback
+            if plan_type is not None:
+                db_plan = session.query(SubscriptionPlan).filter(
+                    SubscriptionPlan.plan_type == plan_type.value
+                ).first()
+                if db_plan and db_plan.duration_days:
+                    duration_days = db_plan.duration_days
+
+            expires_at = datetime.now(UTC) + timedelta(days=duration_days)
+
             # Находим или создаем подписку
             subscription = session.query(Subscription).filter(Subscription.payment_id == payment.id).first()
 
             if not subscription:
-                # Создаем новую подписку
                 subscription = Subscription(
                     user_id=payment.user_id,
-                    plan=payment.subscription_plan or "lite",  # По умолчанию lite
+                    plan=raw_plan or PlanType.PRO.value,
                     status=SubscriptionStatus.ACTIVE.value,
                     payment_id=payment.id,
                     started_at=datetime.now(UTC),
-                    expires_at=datetime.now(UTC) + timedelta(days=30),  # 1 месяц
+                    expires_at=expires_at,
                 )
                 session.add(subscription)
             else:
-                # Активируем существующую подписку
                 subscription.status = SubscriptionStatus.ACTIVE.value
                 subscription.started_at = datetime.now(UTC)
-                subscription.expires_at = datetime.now(UTC) + timedelta(days=30)
+                subscription.expires_at = expires_at
 
             # Записываем в историю подписки
             history = SubscriptionHistory(
@@ -202,7 +222,8 @@ async def result_notify(
                 identity_provider_client.update_user_subscription(
                     user_id=UUID(payment.user_id),
                     plan=plan_type,
-                    expires_at=subscription.expires_at,
+                    expires_at=expires_at,
+                    subscription_cancelled=False,
                 )
 
                 logger.info("Keycloak updated successfully for user %s", payment.user_id)

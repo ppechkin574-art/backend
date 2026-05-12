@@ -307,17 +307,6 @@ async def activate_subscription(
     return SubscriptionStatusResponse(**status_data)
 
 
-@router.post("/cancel", summary="Отменить подписку (soft-cancel)")
-async def cancel_subscription(
-    user: UserDTO = Depends(get_user),
-    subscription_service: SubscriptionService = Depends(get_subscription_service),
-):
-    """Soft-cancel: подписка остаётся активной до конца оплаченного периода,
-    но не продлевается. Флаг subscription_cancelled=true сохраняется в Keycloak."""
-    await subscription_service.cancel_subscription(user)
-    return {"detail": "Subscription cancelled successfully"}
-
-
 @router.get("/features", summary="Доступные фичи текущего плана")
 async def get_available_features(
     user: UserDTO = Depends(get_user),

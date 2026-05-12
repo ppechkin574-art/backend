@@ -617,7 +617,10 @@ def login(
     responses=profile_get_responses,
     response_model_exclude={"roles"},
 )
-def get_current_user(user: UserDTO = Depends(get_user)):
+def get_current_user(
+    user: UserDTO = Depends(get_user),
+    file_service: FileService = Depends(get_file_service),
+):
     """Get current user profile"""
     log_info(
         "Profile request",
@@ -625,7 +628,10 @@ def get_current_user(user: UserDTO = Depends(get_user)):
         action="get_profile",
         auth_method="token",
     )
-    return user
+    # Always generate a fresh presigned URL — stored value may be an expired
+    # legacy URL or just a bare filename depending on when avatar was uploaded.
+    avatar_url = file_service.get_avatar_url(user.avatar) if user.avatar else None
+    return user.model_copy(update={"avatar": avatar_url or None})
 
 
 @protected_router.patch(
@@ -701,11 +707,12 @@ async def update_current_user(
         elif avatar_action == "update":
             log_info("Updating avatar", user_id=user.id, filename=avatar.filename)
             filename = await file_service.save_avatar(str(user.id), avatar)
-            avatar_url = file_service.get_avatar_url(filename)
+            # Store bare filename in Keycloak — presigned URLs expire and must
+            # be generated fresh on each profile/leaderboard request.
+            avatar_url = filename
 
             if user.avatar:
-                old_filename = user.avatar.split("/")[-1]
-                file_service.delete_avatar(old_filename)
+                file_service.delete_avatar(user.avatar)
 
         update_dict = {}
         if name is not None:
@@ -716,7 +723,9 @@ async def update_current_user(
 
         updated_user = service.update_user_profile(user, UserUpdateDTO(**update_dict))
 
-        return updated_user
+        # Return fresh presigned URL (updated_user.avatar is now a bare filename)
+        resolved = file_service.get_avatar_url(updated_user.avatar) if updated_user.avatar else None
+        return updated_user.model_copy(update={"avatar": resolved or None})
 
     except (AuthUserEmailExistsError, AuthUserPhoneExistsError) as e:
         log_warning(

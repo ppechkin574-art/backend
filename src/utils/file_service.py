@@ -75,14 +75,19 @@ class FileService:
         return self._delete_object(f"{self.SUBJECT_PREFIX}/{self._extract_filename(filename)}")
 
     def get_avatar_url(self, filename: str) -> str:
-        """Presigned URL для отдачи аватара клиенту."""
+        """Presigned URL для отдачи аватара клиенту.
+
+        Принимает имя файла ИЛИ старый presigned URL (legacy-данные, когда
+        URL хранился напрямую в Keycloak). В обоих случаях генерируется
+        свежий presigned URL, чтобы истёкшие ссылки не ломали аватарки.
+        """
         if not filename:
             return ""
-        # Если уже абсолютный URL (например, при миграции с другого хранилища) — отдаём как есть
-        if filename.startswith(("http://", "https://")):
-            return filename
+        bare = self._extract_filename(filename)
+        if not bare:
+            return ""
         try:
-            return self._storage.link(f"{self.AVATAR_PREFIX}/{self._extract_filename(filename)}")
+            return self._storage.link(f"{self.AVATAR_PREFIX}/{bare}")
         except MediaStorageError as e:
             logger.warning("Failed to build avatar URL for %s: %s", filename, e)
             return ""
@@ -149,9 +154,14 @@ class FileService:
 
     @staticmethod
     def _extract_filename(value: str) -> str:
-        """Берёт последний сегмент пути. Поддерживает обе формы:
-        - "subject_xxx.jpg"            → "subject_xxx.jpg"
-        - "/images/subjects/abc.jpg"   → "abc.jpg"
-        - "subjects/abc.jpg"           → "abc.jpg"
+        """Берёт последний сегмент пути, убирая query string.
+
+        Поддерживает все форматы:
+        - "subject_xxx.jpg"                        → "subject_xxx.jpg"
+        - "/images/subjects/abc.jpg"               → "abc.jpg"
+        - "subjects/abc.jpg"                       → "abc.jpg"
+        - "https://minio.../avatars/x.jpg?X-Amz-..." → "x.jpg"
         """
-        return value.rstrip("/").split("/")[-1]
+        from urllib.parse import urlparse
+        path = urlparse(value).path or value
+        return path.rstrip("/").split("/")[-1]

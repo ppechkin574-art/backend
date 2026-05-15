@@ -100,6 +100,50 @@ class ResendEmailClient:
 
         logger.info("Email sent successfully to %s (resend id=%s)", email_dto.to, response.json().get("id"))
 
+    def send_alert_email(self, to: str, subject: str, html: str, text: str | None = None) -> None:
+        """Send a plain text/HTML alert to ops (not an OTP template).
+
+        Used for runtime alerts like "daily SMS cap exceeded" — distinct from
+        `send_email` which always renders the OTP verification template.
+        Failures here are LOGGED but NOT raised; an alert that fails to send
+        must never break the request flow it was reporting on.
+        """
+        payload = {
+            "from": f"{self.from_name} <{self.from_email}>",
+            "to": [to],
+            "subject": subject,
+            "html": html,
+            "text": text or _strip_html(html),
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            response = httpx.post(
+                self.API_URL, headers=headers, json=payload, timeout=self.REQUEST_TIMEOUT_SECONDS
+            )
+            if response.status_code >= 400:
+                logger.error(
+                    "Resend rejected alert email to %s: HTTP %s — %s",
+                    to,
+                    response.status_code,
+                    response.text[:200],
+                )
+                return
+            logger.info("Alert email sent to %s (subject=%r)", to, subject[:80])
+        except httpx.HTTPError as e:
+            logger.exception("Resend HTTP error sending alert to %s: %s", to, e)
+
+
+def _strip_html(html: str) -> str:
+    """Very small HTML→text fallback for the email `text` part. We don't
+    pull in beautifulsoup4 just for this — alerts use simple <p>/<ul>
+    markup, regex is sufficient."""
+    import re
+
+    return re.sub(r"<[^>]+>", "", html).strip()
+
 
 # Алиас для обратной совместимости — старое имя класса
 PersonalGmailClient = ResendEmailClient
@@ -111,6 +155,12 @@ class NotificationClientEmail:
     def __init__(self, email_settings: EmailClientSettings):
         self.email_client = ResendEmailClient(email_settings)
         logger.info("NotificationClientEmail initialized")
+
+    def send_alert(self, to: str, subject: str, html: str, text: str | None = None) -> None:
+        """Делегирует на ResendEmailClient.send_alert_email — для рантайм-алёртов
+        (SMS cap, abuse-detection, etc.). Отделено от `notify()` который шлёт
+        только OTP по шаблону."""
+        self.email_client.send_alert_email(to=to, subject=subject, html=html, text=text)
 
     def notify(self, message: NotificationMessageDTO) -> None:
         code = message.message.split(": ")[-1] if ": " in message.message else message.message

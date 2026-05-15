@@ -1,3 +1,4 @@
+from .app_settings import router as app_settings_router
 from .bank import router as bank_router
 from .cache import router as cache_router
 from .content import router as content_router
@@ -32,4 +33,5 @@ routers = [
     cache_router,
     subscription_router,
     content_router,
+    app_settings_router,
 ]

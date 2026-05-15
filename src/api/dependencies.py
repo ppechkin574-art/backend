@@ -254,6 +254,19 @@ def get_subscription_benefit_service(
     return SubscriptionBenefitService(SubscriptionBenefitRepository(db_session))
 
 
+def get_app_settings_service(
+    db_session: Session = Depends(get_db_session),
+    redis: Redis = Depends(get_redis),
+):
+    """Admin-editable runtime config (SMS cap, IP block thresholds, etc.).
+    See `src/app_config/service.py` — reads go through a 60s Redis cache
+    so admin saves propagate to all replicas within that window."""
+    from app_config.repository import AppSettingsRepository
+    from app_config.service import AppSettingsService
+
+    return AppSettingsService(AppSettingsRepository(db_session), redis)
+
+
 def get_subscription_plan_service(
     plan_repository: SubscriptionPlanRepository = Depends(
         get_subscription_plan_repository

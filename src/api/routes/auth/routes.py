@@ -16,8 +16,18 @@ from fastapi import (
 )
 from redis import Redis
 
-from api.dependencies import get_auth_service, get_file_service, get_redis, get_user
+from api.dependencies import (
+    get_app_settings_service,
+    get_auth_service,
+    get_file_service,
+    get_notification_client_email,
+    get_redis,
+    get_user,
+)
 from api.middlewares.rate_limit import limiter
+from api.middlewares.sms_quota import check_sms_quota, record_sms_request
+from app_config.service import AppSettingsService
+from clients.notification.client import NotificationClientEmail
 from api.routes.auth.converters import to_auth_login_dto
 from api.routes.auth.dtos import (
     ChangePasswordDTO,
@@ -146,6 +156,9 @@ async def request_code(
     request: Request,
     request_data: CodeRequestDTO,
     service: AuthService = Depends(get_auth_service),
+    redis: Redis = Depends(get_redis),
+    app_settings: AppSettingsService = Depends(get_app_settings_service),
+    email_client: NotificationClientEmail = Depends(get_notification_client_email),
 ):
     """Universal endpoint for requesting confirmation codes"""
     log_info(
@@ -158,10 +171,22 @@ async def request_code(
         action_type=request_data.action.value,
     )
 
+    # SMS-abuse defence layer 1+2: global daily cap + per-IP daily block.
+    # Reviewer-bypass contacts are skipped inside check_sms_quota so Apple
+    # App Review keeps working even if everyone else is locked out.
+    # Raises HTTPException with the appropriate status if either limit hits.
+    check_sms_quota(request, request_data.contact, redis, app_settings)
+
     try:
         verification_id = service.request_code(
             request_data.contact, request_data.platform, request_data.action
         )
+
+        # Count this request toward both daily counters. Done AFTER the
+        # service call so Pydantic / KZ-phone / user-exists rejections
+        # don't inflate the per-IP block counter (those are 4xx errors,
+        # not abuse signals).
+        record_sms_request(request, request_data.contact, redis, app_settings, email_client)
 
         log_info(
             "Code requested successfully",

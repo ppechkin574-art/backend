@@ -164,7 +164,10 @@ class NotificationClientSMS:
         try:
             sms_text = message.message.split(":")[-1].strip() if ":" in message.message else message.message
 
-            formatted_message = f"Код подтверждения: {sms_text}"
+            # SMSC.kz общее имя route на Tele2/Altel требует, чтобы бренд
+            # назван в самом тексте (письмо менеджера SMSC от 15.05.2026).
+            # С translit=1 это уйдёт как "AIMA: Kod podtverzhdeniya 847341".
+            formatted_message = f"AIMA: Код подтверждения {sms_text}"
 
             result = self.sms_client.send_sms(phone=message.to, message=formatted_message)
 

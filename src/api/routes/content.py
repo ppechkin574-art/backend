@@ -1,34 +1,34 @@
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+
+from api.dependencies import get_subscription_benefit_service
+from content.dtos import SubscriptionBenefitPublicDTO
+from content.service import SubscriptionBenefitService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/content", tags=["Content"])
 
-_BENEFITS_RU = [
-    {"id": 1, "position": 1, "title": "Пробное ЕНТ", "description": "Подготовка к экзамену в формате тестирования"},
-    {"id": 2, "position": 2, "title": "Полный Курс", "description": "Комплексное обучение по всем темам с нуля"},
-    {"id": 3, "position": 3, "title": "Кешбек", "description": "Возврат части средств за выполненные задания"},
-    {"id": 4, "position": 4, "title": "Ежедневные задания", "description": "Регулярная практика для закрепления знаний"},
-    {"id": 5, "position": 5, "title": "Повышающий КЕФ", "description": "Увеличение бонуса за активность и результаты"},
-    {"id": 6, "position": 6, "title": "Родительский доступ", "description": "Контроль успеваемости и активности ученика"},
-]
 
-_BENEFITS_KZ = [
-    {"id": 1, "position": 1, "title": "ҰБТ сынақ тапсырмасы", "description": "Емтихан форматында тест тапсыру арқылы дайындық"},
-    {"id": 2, "position": 2, "title": "Толық курс", "description": "Барлық тақырыптар бойынша нөлден кешенді оқу"},
-    {"id": 3, "position": 3, "title": "Кэшбэк", "description": "Орындалған тапсырмалар үшін қаражатты қайтару"},
-    {"id": 4, "position": 4, "title": "Күнделікті тапсырмалар", "description": "Білімді бекіту үшін тұрақты жаттығу"},
-    {"id": 5, "position": 5, "title": "Арттыру коэффициенті", "description": "Белсенділік пен нәтижелер үшін бонусты арттыру"},
-    {"id": 6, "position": 6, "title": "Ата-ана қолжетімділігі", "description": "Оқушының үлгерімі мен белсенділігін бақылау"},
-]
+@router.get(
+    "/subscription-benefits",
+    response_model=list[SubscriptionBenefitPublicDTO],
+    summary="Преимущества подписки PRO",
+)
+async def get_subscription_benefits(
+    lang: str = "ru",
+    service: SubscriptionBenefitService = Depends(get_subscription_benefit_service),
+) -> list[SubscriptionBenefitPublicDTO]:
+    """Live list of subscription bullets, sourced from the `subscription_benefits`
+    table and filtered to `is_active=True`. Admins manage rows via
+    `/admin/content/subscription-benefits/...` — the mobile app sees changes
+    immediately on next fetch (modulo the client-side cache).
 
-
-@router.get("/subscription-benefits", summary="Преимущества подписки PRO")
-async def get_subscription_benefits(lang: str = "ru") -> list[dict]:
-    """Возвращает список преимуществ подписки PRO на нужном языке.
-    lang: 'ru' (по умолчанию) или 'kz'."""
-    if lang.lower() in ("kz", "kk"):
-        return _BENEFITS_KZ
-    return _BENEFITS_RU
+    Previously this endpoint returned a hardcoded list — that became a silent
+    no-op once the admin panel went live, because deactivated rows still
+    showed up on the subscription screen. Replaced with the service so the
+    admin UI is the single source of truth.
+    """
+    locale = "kz" if lang.lower() in ("kz", "kk") else "ru"
+    return service.list_active_localised(locale)

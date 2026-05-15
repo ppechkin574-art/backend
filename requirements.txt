@@ -18,7 +18,7 @@ httpx==0.28.1
 requests==2.33.0
 python-multipart==0.0.26
 PyJWT==2.12.0
-cryptography==46.0.7
+cryptography==48.0.0
 # Apple's official lib for StoreKit 2 / App Store Server API.
 # Verifies JWS signed transactions locally using Apple Root CA G3 —
 # needed because in_app_purchase_storekit returns JWS (not legacy

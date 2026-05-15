@@ -114,6 +114,23 @@ class AppleIAPVerifier:
                 error="APPLE_APP_SHARED_SECRET not configured",
             )
 
+        # Diagnostic: receipt shape. 21002 from Apple usually means the
+        # client sent either an empty string, a JWS transaction (StoreKit 2),
+        # or base64 with bad padding. Log size + start/end so we can tell
+        # which one we're hitting without dumping the entire blob (which is
+        # PII-adjacent and noisy at ~5-30 KB per call).
+        receipt_len = len(receipt_data) if receipt_data else 0
+        preview_head = receipt_data[:32] if receipt_len else "<empty>"
+        preview_tail = receipt_data[-16:] if receipt_len > 32 else ""
+        looks_like_jws = receipt_data.count(".") == 2 if receipt_data else False
+        logger.info(
+            "[apple_iap] receipt_data len=%d head=%r tail=%r jws_shape=%s",
+            receipt_len,
+            preview_head,
+            preview_tail,
+            looks_like_jws,
+        )
+
         # Try production first — this is what Apple recommends in the
         # `verifyReceipt` docs. 21007 → fall back to sandbox.
         prod_result = self._call_endpoint(PRODUCTION_URL, receipt_data)

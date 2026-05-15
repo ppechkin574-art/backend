@@ -31,6 +31,23 @@ class SMSCSettings(BaseSettings):
     debug: bool = False
 
 
+class TwilioSettings(BaseSettings):
+    """Twilio SMS gateway settings.
+
+    Primary SMS provider for production. Either `messaging_service_sid` (preferred)
+    or `sender` must be set. `sender` is the alphanumeric Sender ID (e.g. `AIMA`,
+    max 11 chars, no Cyrillic) or a Twilio phone number in E.164.
+    """
+
+    model_config = SettingsConfigDict(extra="ignore")
+
+    account_sid: str
+    auth_token: str
+    sender: str = "AIMA"
+    messaging_service_sid: str | None = None
+    debug: bool = False
+
+
 class WazzupSettings(BaseSettings):
     api_key: str
     channel_id: str

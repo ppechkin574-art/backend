@@ -10,6 +10,7 @@ from clients.media_storage import MinioSettings
 from clients.notification.settings import (
     EmailClientSettings,
     SMSCSettings,
+    TwilioSettings,
     WazzupSettings,
 )
 from database import DatabaseSettings
@@ -29,6 +30,9 @@ class Settings(BaseSettings):
     apple_oauth: AppleOAuthSettings
     email_client: EmailClientSettings
     smsc: SMSCSettings
+    # Optional: only constructed if TWILIO__* env vars are set. Twilio is a
+    # standby SMS provider — see clients/notification/twilio_client.py.
+    twilio: TwilioSettings | None = None
     firebase: FirebaseSettings = FirebaseSettings()
     wazzup: WazzupSettings
     upload_base_dir: str

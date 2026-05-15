@@ -13,10 +13,12 @@ from clients.notification.settings import (
     EmailClientSettings,
     SMSCSettings,
     TelegramBotSettings,
+    TwilioSettings,
     WazzupSettings,
 )
 from clients.notification.sms_client import SMSCClient
 from clients.notification.template_loader import TemplateLoader
+from clients.notification.twilio_client import TwilioSMSClient
 from clients.notification.wazzup_client import WazzupClient
 
 logger = logging.getLogger(__name__)
@@ -177,6 +179,37 @@ class NotificationClientSMS:
 
         except Exception as e:
             logger.exception("Failed to send SMS notification to %s: %s", message.to, e)
+            raise
+
+
+class NotificationClientSMSTwilio:
+    """SMS notifications via Twilio — STANDBY provider (not wired in container).
+
+    See `clients/notification/twilio_client.py` module docstring for activation steps.
+    """
+
+    def __init__(self, twilio_settings: TwilioSettings):
+        self.sms_client = TwilioSMSClient(twilio_settings)
+        logger.info("NotificationClientSMSTwilio initialized")
+
+    def notify(self, message: NotificationMessageDTO) -> None:
+        try:
+            sms_text = message.message.split(":")[-1].strip() if ":" in message.message else message.message
+            formatted_message = f"Код подтверждения: {sms_text}"
+
+            result = self.sms_client.send_sms(phone=message.to, message=formatted_message)
+
+            if self.sms_client.settings.debug:
+                logger.info("Twilio DEBUG — Notification simulated for %s", message.to)
+            else:
+                logger.info(
+                    "Twilio SMS notification sent to %s (sid=%s, status=%s)",
+                    message.to,
+                    result.get("id"),
+                    result.get("status"),
+                )
+        except Exception as e:
+            logger.exception("Failed to send Twilio SMS to %s: %s", message.to, e)
             raise
 
 

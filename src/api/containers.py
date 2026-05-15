@@ -12,6 +12,7 @@ from clients.media_storage.client import MediaStorageClientMinio
 from clients.notification.client import (
     NotificationClientEmail,
     NotificationClientSMS,
+    # NotificationClientSMSTwilio,  # kept as code-level fallback, see sms_client provider below
     NotificationClientWhatsApp,
 )
 from database import Database
@@ -84,7 +85,12 @@ class Container(containers.DeclarativeContainer):
 
     email_client = providers.Singleton(NotificationClientEmail, email_settings=config.provided.email_client)
 
+    # SMS via SMSC.kz — primary production provider. Cheapest per-SMS in KZ
+    # (12-20 KZT). To switch to Twilio as primary (e.g. if SMSC delivery fails
+    # on specific operators), swap the line below with the commented Twilio
+    # provider and set TWILIO__* env vars.
     sms_client = providers.Singleton(NotificationClientSMS, smsc_settings=config.provided.smsc)
+    # sms_client = providers.Singleton(NotificationClientSMSTwilio, twilio_settings=config.provided.twilio)
 
     whatsapp_client = providers.Singleton(
         NotificationClientWhatsApp,

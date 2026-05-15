@@ -98,63 +98,103 @@ class SMSCClient:
         logger.debug("Normalized result: %s", result)
         return result
 
+    def _build_payload(
+        self,
+        phone: str,
+        message: str,
+        sender: str | None,
+    ) -> dict[str, Any]:
+        """Builds SMSC `send/` payload.
+
+        `translit=1` forces Cyrillic→Latin transliteration on SMSC side. Without
+        it, KZ operators (Tele2/Altel especially) frequently reject Cyrillic
+        transactional SMS as spam (Error 8 "can't to deliver"). With translit
+        on, the message is delivered as ASCII, fitting in 1 segment and passing
+        operator filters.
+
+        Empty `sender` means we omit the field entirely so SMSC routes the SMS
+        through its default operator-approved short number — the most reliable
+        path for accounts without a custom approved Sender ID.
+        """
+        payload: dict[str, Any] = {
+            "phones": phone,
+            "mes": message,
+            "charset": "utf-8",
+            "translit": 1,
+        }
+        if sender:
+            payload["sender"] = sender
+        return payload
+
     def send_sms(self, phone: str, message: str, sender: str | None = None) -> dict[str, Any]:
-        """Отправляет SMS сообщение"""
+        """Отправляет SMS сообщение с retry на Error 8 ("can't to deliver")."""
         try:
             normalized_phone = self.normalize_phone(phone)
-            sender_name = sender or self.settings.sender
-
             if len(normalized_phone) != 11 or not normalized_phone.startswith("77"):
                 logger.exception("Invalid Qazaqstan phone format: %s", normalized_phone)
                 raise ValueError(f"Invalid phone format: {normalized_phone}")
 
-            payload = {
-                "phones": normalized_phone,
-                "mes": message,
-                "sender": sender_name,
-                "charset": "utf-8",
-            }
+            # Sender precedence: explicit arg > settings > empty (SMSC default route).
+            primary_sender = sender if sender is not None else self.settings.sender
+            # Treat the legacy default "SMSC.KZ" as "no sender" — that name was
+            # the root cause of Error 8 on Tele2/Altel. Empty sender forces SMSC
+            # to pick its own delivery-approved short number.
+            if primary_sender and primary_sender.strip().upper() in {"SMSC.KZ", "SMSC"}:
+                primary_sender = None
 
-            logger.info(
-                "Attempting SMS send to %s with sender '%s'",
-                normalized_phone,
-                sender_name,
-            )
+            attempts: list[tuple[str, str | None]] = [
+                ("primary", primary_sender),
+            ]
+            # If the primary attempt uses a custom sender, retry once with empty
+            # sender on Error 8 — SMSC's default short number bypasses brand
+            # filters and almost always delivers.
+            if primary_sender:
+                attempts.append(("fallback-default-route", None))
 
-            result = self._make_request("send/", payload)
+            last_error: Exception | None = None
+            for label, attempt_sender in attempts:
+                payload = self._build_payload(normalized_phone, message, attempt_sender)
+                logger.info(
+                    "SMSC send attempt=%s to %s sender=%r translit=1",
+                    label,
+                    normalized_phone,
+                    attempt_sender or "<default>",
+                )
+                result = self._make_request("send/", payload)
 
-            if "error" in result:
+                if "error" not in result:
+                    logger.info(
+                        "SMS sent successfully to %s (ID: %s, Cost: %s KZT, attempt=%s)",
+                        phone,
+                        result.get("id", "N/A"),
+                        result.get("cost", "N/A"),
+                        label,
+                    )
+                    return result
+
                 error_code = result.get("error_code", "unknown")
                 error_msg = result.get("error", "Unknown error")
-                logger.exception("SMSC Error %s: %s", error_code, error_msg)
+                logger.error("SMSC attempt=%s Error %s: %s", label, error_code, error_msg)
 
-                # SMSC error codes per https://smsc.kz/api/http/#errors
+                # Map SMSC error codes per https://smsc.kz/api/http/#errors
                 if error_code == 2:
-                    logger.exception("🔐 Authorise error (login/psw/apikey/blocked IP)")
+                    logger.error("🔐 Authorise error (login/psw/apikey/blocked IP)")
                 elif error_code == 3:
-                    logger.exception("💸 Insufficient balance")
+                    logger.error("💸 Insufficient balance")
                 elif error_code == 4:
-                    logger.exception("📛 Invalid sender name or IP not whitelisted")
+                    logger.error("📛 Invalid sender name or IP not whitelisted")
                 elif error_code == 7:
-                    logger.exception("📵 Invalid phone number")
+                    logger.error("📵 Invalid phone number")
+                elif error_code == 8:
+                    logger.warning("🚫 Operator rejected delivery (route/sender mismatch)")
 
-                raise Exception(f"SMSC error {error_code}: {error_msg}")
+                last_error = Exception(f"SMSC error {error_code}: {error_msg}")
+                # Only retry on Error 8 (delivery rejection). Auth/balance/format
+                # errors won't be fixed by changing sender, so bail out.
+                if error_code != 8:
+                    break
 
-            if self.settings.debug:
-                logger.info(
-                    "SMS DEBUG - Simulated send to %s (ID: %s)",
-                    phone,
-                    result.get("id", "N/A"),
-                )
-            else:
-                logger.info(
-                    "SMS sent successfully to %s (ID: %s, Cost: %s KZT)",
-                    phone,
-                    result.get("id", "N/A"),
-                    result.get("cost", "N/A"),
-                )
-
-            return result
+            raise last_error or Exception("SMSC send failed with no diagnostic")
 
         except Exception as e:
             logger.exception("Failed to send SMS to %s: %s", phone, str(e))

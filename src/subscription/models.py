@@ -119,3 +119,29 @@ class SubscriptionHistory(Base):
         Index("ix_subscription_history_subscription_id", "subscription_id"),
         Index("ix_subscription_history_created_at", "created_at"),
     )
+
+
+class TrialHistory(Base):
+    """Phone-level (not user-level) audit of free trials granted.
+
+    The Keycloak user has a `used_trial` attribute that's the primary
+    gate, but it disappears when the user record is deleted. This table
+    keeps a sha256(phone) marker that survives user deletion so the
+    same number can't redeem a free trial twice across account churn.
+
+    Append-only: we never update or delete rows. If a number genuinely
+    needs a second trial (rare ops case), the row can be removed via
+    direct DB intervention.
+    """
+
+    __tablename__ = "trial_history"
+
+    phone_hash = Column(String(64), primary_key=True)
+    first_granted_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    def __repr__(self) -> str:
+        return f"TrialHistory(phone_hash={self.phone_hash[:8]}..., at={self.first_granted_at})"

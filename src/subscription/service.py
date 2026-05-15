@@ -1,3 +1,4 @@
+import hashlib
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -9,9 +10,20 @@ from auth.services import AuthServiceInterface
 from common.enums import FeatureType, PlanType
 from database import Database
 from subscription.dtos import PlanFeaturesDTO, SubscriptionStatusDTO
+from subscription.models import TrialHistory
 from subscription.plan_repository import SubscriptionPlanRepository
 
 logger = logging.getLogger(__name__)
+
+
+def _hash_phone(phone: str) -> str:
+    """Stable, non-reversible identifier for a phone number — used as
+    the primary key in `trial_history` so the unhashed number doesn't
+    sit in the DB. sha256 is fine here; we don't need a slow KDF
+    because the input space (KZ phone numbers) is small enough that
+    any hash is brute-forceable — the goal is "don't log the raw
+    number to BAU storage", not "resist a targeted attacker"."""
+    return hashlib.sha256(phone.encode("utf-8")).hexdigest()
 
 
 class SubscriptionService:
@@ -280,7 +292,52 @@ class SubscriptionService:
             raise HTTPException(status_code=400, detail="You already have an active subscription")
         if user.used_trial:
             raise HTTPException(status_code=400, detail="Free trial already used")
-        return self.auth_service.activate_free_trial(user)
+
+        # Secondary gate: phone-hash blacklist. Survives Keycloak user
+        # deletion so the same number can't redeem the free trial twice
+        # across account churn. user.used_trial above stays the primary
+        # check (covers users without phone numbers too — web-only emails).
+        if user.phone:
+            phone_hash = _hash_phone(user.phone)
+            session = self._database.session
+            try:
+                existing = session.query(TrialHistory).filter(
+                    TrialHistory.phone_hash == phone_hash
+                ).first()
+                if existing:
+                    logger.warning(
+                        "Trial-history hit for phone %s (user_id=%s) — refused",
+                        user.phone[:6] + "***",
+                        user.id,
+                    )
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Free trial already used on this phone number",
+                    )
+            finally:
+                session.close()
+
+        updated_user = self.auth_service.activate_free_trial(user)
+
+        # Record the grant only AFTER auth_service succeeded — if Keycloak
+        # write fails we don't want the phone-hash blacklisted on a
+        # partial state.
+        if user.phone:
+            session = self._database.session
+            try:
+                session.add(TrialHistory(phone_hash=_hash_phone(user.phone)))
+                session.commit()
+            except Exception as e:
+                # Don't fail the user-facing call just because we couldn't
+                # log the hash — `used_trial` on the user record still
+                # prevents the trivial second attempt. This second-line
+                # defence is best-effort.
+                logger.exception("Failed to record trial_history row: %s", e)
+                session.rollback()
+            finally:
+                session.close()
+
+        return updated_user
 
     async def cancel_subscription(self, user: UserDTO) -> UserDTO:
         """Soft cancel: keep PRO active until subscription_end, then auto-FREE.

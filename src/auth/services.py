@@ -3,6 +3,7 @@ import logging
 import os
 import re
 import secrets
+import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
@@ -607,15 +608,35 @@ class AuthService:
                 return True
             else:
                 incorrect_count = int(redis.hget(str(confirmation_code.id), "incorrect_count") or "0")
+                new_count = incorrect_count + 1
                 redis.hset(
                     str(confirmation_code.id),
                     "incorrect_count",
-                    str(incorrect_count + 1),
+                    str(new_count),
                 )
 
-                if incorrect_count + 1 >= self.MAX_ATTEMPTS:
+                if new_count >= self.MAX_ATTEMPTS:
                     logger.info("Maximum attempts exceeded, deleting code")
                     self._confirmation_codes.delete(confirmation_code.id)
+                else:
+                    # Progressive delay before responding — slows brute-force
+                    # attempts to under 30 codes/minute even if an attacker
+                    # owns many `verification_id`s in parallel. Legitimate
+                    # users who mistyped one digit see a 2s pause and one
+                    # 5s pause before they're locked out — acceptable UX
+                    # for the security gain. Blocks the event loop briefly
+                    # (no asyncio.sleep — service method is sync); at our
+                    # current scale this is fine. Move to async if we ever
+                    # see >50 concurrent code-check requests per replica.
+                    delay = 2 if new_count == 1 else 5
+                    logger.info(
+                        "Wrong code attempt %d/%d for verification_id %s — delaying %ds",
+                        new_count,
+                        self.MAX_ATTEMPTS,
+                        verification_id,
+                        delay,
+                    )
+                    time.sleep(delay)
 
                 return False
 

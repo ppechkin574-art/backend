@@ -901,6 +901,102 @@ review).
 
 ---
 
+## 🛡️ Security tech debt — отложено из аудита 15.05.2026
+
+В этот день мы прошлись по 7 категориям угроз и закрыли SMS-pumping
+(global cap + per-IP block, оба admin-editable), brute-force на
+`/code/check` (progressive delay), и trial-per-phone abuse
+(phone-hash blacklist). Эти 3 пункта закрывают самый горячий риск —
+"SMS бюджет улетит за ночь". Остальное явно отложили — здесь
+описание чтобы следующая сессия не теряла контекст.
+
+### SEC-1. Account Takeover (Q4) — отложено
+
+**Симптомы которые надо отследить:** угнанный пароль через
+credential stuffing, SIM-swap для PRO-юзеров, дать другу аккаунт
+а потом поссориться.
+
+**Что нужно сделать (одно или комбинация):**
+- (A) Уведомление push/email при логине с нового User-Agent или IP/города.
+  Без friction для legitimate users, мощный сигнал для жертвы ATO.
+- (B) Force password reset через SMS на исходный номер если за час
+  набралось 5+ failed logins с разных IP.
+- (C) 2FA по email при критичных действиях (смена номера, отписка,
+  смена пароля).
+- (D) Проверить что `refresh_token` действительно ротируется на каждом
+  `/auth/refresh` и старый инвалидируется.
+
+**Кейс который пугает:** PRO-юзер ушёл на каникулы, SIM забрали через
+SIM-swap, переоформили пароль → перехват аккаунта с активной подпиской.
+
+### SEC-2. Apple IAP receipt validation hardening (Q6) — отложено
+
+Сейчас `/payments/apple/verify` валидирует receipt через Apple
+`/verifyReceipt`. Это правильно, но есть 4 нюанса которые надо
+проверить + добавить:
+
+- (A) **Production-only validation** — проверить что наш код принимает
+  receipt только из production env Apple, а не sandbox (или
+  принимает оба, но различает их в БД).
+- (B) **Same-receipt rejection** — если юзер reinstall'нул и тот же
+  `transaction_id` повторно прислан → не выдавать PRO повторно
+  (idempotency check).
+- (C) **Bundle ID match** — после verify Apple возвращает `bundle_id`.
+  Должно совпасть с `kz.aima.aima`, иначе отвергать.
+- (D) **Server-to-server notifications (App Store Server Notifications V2)** —
+  Apple шлёт нам события `DID_RENEW`, `DID_CANCEL`, `REFUND` и т.д.
+  на наш URL. Сейчас в ASC поле "Server URL" пусто. Без этого мы
+  узнаём об отмене/refund только когда юзер откроет приложение
+  и backend сам сделает status check. Нужен endpoint
+  `/payments/apple/notifications` который принимает JWS-signed
+  notifications от Apple, валидирует подпись, обновляет статус
+  подписки. ETA: 1-2 дня.
+
+**Документация:** https://developer.apple.com/documentation/appstoreservernotifications
+
+### SEC-3. FreedomPay fraud + chargeback handling (Q7) — отложено
+
+Возможные атаки:
+- Украденная карта → оплата → юзер получает PRO → реальный
+  владелец делает chargeback → мы теряем деньги + комиссию.
+- Webhook spoofing — атакующий шлёт fake callback что юзер «оплатил».
+
+**Что нужно сделать:**
+- (A) **3DS обязательная** для всех платежей через FreedomPay — снижает
+  fraud на 90%, настройка на FreedomPay side.
+- (B) **HMAC signature на webhooks** — проверить что наш код в
+  `/api/routes/payments/webhook.py` валидирует подпись от
+  FreedomPay (по `freedom_pay__SECRET`). Если нет — добавить.
+- (C) **Chargeback handler** — FreedomPay шлёт нам callback о
+  chargeback / dispute. Получили → деактивируем PRO у юзера,
+  флаг для review. Сейчас может быть не обработано.
+- (D) **Daily payment limit per user** — не более 3 успешных платежей
+  в день на юзера. Опционально.
+
+### SEC-4. Captcha (отказались) и leaderboard scraping
+
+- **Captcha** — пользователь явно отказался в Q10. Оставляем
+  rate-limit'ы основной защитой.
+- **Leaderboard data leak** — endpoint `/leaderboard` возвращает имя
+  + балл всех юзеров. Если кто-то скрапит — выкачивает базу
+  юзернеймов. Минимум: показывать `first_name + initial.` вместо
+  полного имени. Можно отложить.
+
+### SEC-5. KZ-only phone enforcement в SMS-клиенте
+
+Бэкенд-уровень: `auth/services.py` валидирует `^\+77\d{9}$` через
+regex. Дополнительно стоит добавить второй фильтр прямо в
+`SMSCClient.normalize_phone` — отбрасывать любой нормализованный
+номер не начинающийся с `77`. Это защита от случайной отправки на
+не-KZ номер (если, скажем, валидатор обойдут через CHANGE_EMAIL flow
+с phone в поле email).
+
+**Договорная привязка:** п. 6.7 договора SMSC №764167 — штраф 500 ₸
+за каждое SMS или 1 000 000 ₸ при международном трафике от
+национального имени. Защита defense-in-depth обязательна.
+
+---
+
 ## Дальнейшие шаги (roadmap)
 
 ### ✅ Фаза 1 — Staging (закрыто 01.05.2026)

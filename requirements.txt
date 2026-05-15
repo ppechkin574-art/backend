@@ -19,6 +19,11 @@ requests==2.33.0
 python-multipart==0.0.26
 PyJWT==2.12.0
 cryptography==46.0.7
+# Apple's official lib for StoreKit 2 / App Store Server API.
+# Verifies JWS signed transactions locally using Apple Root CA G3 —
+# needed because in_app_purchase_storekit returns JWS (not legacy
+# base64) on iOS 18 restored purchases. See src/payments/apple_iap.py.
+app-store-server-library==3.1.1
 
 python-keycloak==4.7.3
 minio==7.2.12

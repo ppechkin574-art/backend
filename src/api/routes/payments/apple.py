@@ -87,11 +87,14 @@ async def verify_apple_receipt(
             user=current_user,
         )
 
-    # Receipt valid + currently in the paid period → activate PRO.
-    # We pass months=1 because the app only sells the monthly product
-    # (`kz.aima.aima.pro.monthly`); for yearly we'd branch on product_id.
+    # Receipt valid + currently in the paid period → mirror Apple's expiry
+    # date. We pass `expires_at` from the receipt instead of `months=1` so
+    # restore-purchases doesn't silently add 30 days on top of remaining
+    # time (see SubscriptionService.activate_subscription docstring + tests).
+    # Apple's `expiresDate` is the source of truth — they already know when
+    # the subscription will renew or lapse; our DB is just a cache.
     updated_user = await subscription_service.activate_subscription(
-        current_user, PlanType.PRO, months=1
+        current_user, PlanType.PRO, expires_at=result.expires_at
     )
 
     logger.info(

@@ -260,21 +260,72 @@ class SubscriptionService:
     #     plan_features = self.get_plan_features(updated_user.plan)
     #     return plan_features.features.get(feature.value, False)
 
-    async def activate_subscription(self, user: UserDTO, plan: PlanType, months: int = 1) -> UserDTO:
+    async def activate_subscription(
+        self,
+        user: UserDTO,
+        plan: PlanType,
+        months: int = 1,
+        expires_at: datetime | None = None,
+    ) -> UserDTO:
+        """Activate `plan` for `user` and persist the end date in Keycloak.
+
+        Two modes for computing `subscription_end`:
+
+        1. **External source-of-truth** — caller passes `expires_at` explicitly.
+           This is the right path when the date is known authoritatively from
+           an external system (Apple receipt's `expiresDate`, App Store
+           Server Notification, FreedomPay backend confirmation). We trust
+           the caller and write that date — **no stacking**.
+           Restore-purchases lives here: Apple already knows when the
+           subscription expires; we just mirror it. Without this branch,
+           a restore call would silently add 30 days on top of remaining
+           time (see `tests/unit/test_subscription_activate.py`).
+
+        2. **Legacy compute-from-plan** — caller passes only `months` (or
+           nothing). We add `plan.duration_days * months` to either:
+             - `user.subscription_end` if user is already active PRO →
+               stacks time (correct for "buy a second month while still
+               on first"), or
+             - `now()` if user is FREE → fresh subscription.
+
+           This mode is kept for the FreedomPay webhook path, where we
+           don't have an external `expires_at` — we're activating from a
+           charge of a known KZT amount and assume one month per
+           ~3 900 ₸.
+
+        Caller contract: pass `expires_at` whenever an authoritative
+        external date exists. Skip it only for FreedomPay-style flows
+        where the duration is implied by amount paid.
+        """
         try:
             plan_features = self.get_plan_features(plan)
             if plan == PlanType.PRO:
-                if user.plan == PlanType.PRO and user.subscription_end and user.subscription_end > datetime.now(UTC):
-                    start_date = user.subscription_end
+                if expires_at is not None:
+                    final_expires_at = expires_at
                 else:
-                    start_date = datetime.now(UTC)
-                expires_at = start_date + timedelta(days=plan_features.duration_days * months)
-                update_data = UserUpdateDTO(plan=plan, subscription_end=expires_at)
+                    if (
+                        user.plan == PlanType.PRO
+                        and user.subscription_end
+                        and user.subscription_end > datetime.now(UTC)
+                    ):
+                        start_date = user.subscription_end
+                    else:
+                        start_date = datetime.now(UTC)
+                    final_expires_at = start_date + timedelta(
+                        days=plan_features.duration_days * months
+                    )
+                update_data = UserUpdateDTO(plan=plan, subscription_end=final_expires_at)
             else:
                 update_data = UserUpdateDTO(plan=plan, subscription_end=None)
 
             updated_user = self.auth_service.update_user_profile(user, update_data)
-            logger.info("Activated %s subscription for user %s", plan.value, user.id)
+            logger.info(
+                "Activated %s subscription for user %s (expires=%s, mode=%s)",
+                plan.value,
+                user.id,
+                update_data.subscription_end,
+                "external" if expires_at is not None else "computed",
+            )
             return updated_user
 
         except Exception as e:

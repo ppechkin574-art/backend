@@ -184,7 +184,6 @@ async def create_subscription_payment(
         payment = await payment_service.create_subscription_payment(
             subscription_plan_id=subscription_data.subscription_plan_id,
             months=subscription_data.months,
-            user_ip=client_ip,
         )
 
         ws_token = ws_token_manager.create_ws_token(

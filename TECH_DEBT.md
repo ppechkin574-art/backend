@@ -603,6 +603,47 @@ allowed_origins = https://app.aima.kz,https://admin.aima.kz,https://aima.kz
 
 ---
 
+### 15a. Cloudflare CDN перед Railway (отложено — обсуждено 19.05.2026)
+
+**Зачем:** Railway-контейнер живёт в `europe-west4` (Нидерланды). KZ-юзеры платят ~150-300мс на дорогу до сервера, итого открытие любого экрана ≥ 300мс даже когда backend отвечает мгновенно. Cloudflare ставит edge-копию ближе к Алматы/Москве/Ташкенту → ~30-60мс RTT, **в 5-10 раз быстрее** для read-эндпоинтов и медиа.
+
+**Что реально ускорит:**
+- 🚀 **MinIO-аватарки / иконки предметов** (если выставить cache-control) — 200мс → 30мс
+- 🚀 **`/subscription/plans`, `/content/subscription-benefits`** — admin-editable, меняются раз в квартал, можно кэшить на edge на час
+- 🚀 **TLS handshake** — Cloudflare держит keep-alive до Railway, юзер платит RTT только до edge
+- ⛔ **НЕ ускорит** динамические POST'ы (логин, покупка, отправка ответа на тест) — они прозрачно идут к Railway без кэша
+
+**Стоимость:**
+- **Free план** — безлимитный трафик + DDoS + SSL + smart routing. Для AIMA на текущем масштабе (<5k активных юзеров) этого достаточно. **0₸/мес**
+- **Pro план $20/мес ≈ 10 000 ₸/мес** — image optimization, расширенный cache, лучший DDoS. Брать когда наберётся 5000+ активных юзеров и каждый % конверсии важен
+- **Cloudflare R2 для медиа** (опционально) — $0.015/GB хранения, нулевая egress-стоимость. Альтернатива MinIO когда захотим уйти с Railway-volume
+
+**Что нужно сделать:**
+
+1. Получить домен в Cloudflare DNS (`aima.kz` уже куплен, добавить как zone)
+2. Создать поддомены: `api.aima.kz` (backend), `media.aima.kz` (MinIO), `app.aima.kz` (admin)
+3. Прокси-режим = `Proxied` (оранжевая иконка) для каждого CNAME → Railway
+4. Page Rules:
+   - `api.aima.kz/content/*` → cache 1 hour
+   - `api.aima.kz/user/subscription/plans` → cache 1 hour
+   - `api.aima.kz/auth/*` → bypass cache (security-sensitive)
+   - `api.aima.kz/payments/*` → bypass cache (financial)
+5. Обновить Flutter `constants.dart`: `baseUrl` = `https://api.aima.kz` вместо `backend-production-f2a1.up.railway.app`
+6. Обновить mobile `Info.plist` ATS exception если требуется (Cloudflare даёт TLS 1.3 — должно работать out-of-box)
+7. Пересобрать iOS + Android клиенты
+8. Сменить webhook URL у FreedomPay / Apple S2S notification → новые `api.aima.kz/...` URL
+
+**Время на полное подключение:** ~2-4 часа работы (не код, конфиг + новый IPA с baseUrl + miграция webhook'ов).
+
+**Минусы / риски:**
+- Cloudflare лежит ~раз в 1-2 года на 30 мин — приложение лежит. Митигировать `_health` check + alert
+- Если cache-правила настроены неправильно — юзер может видеть чужие данные. **Никогда не кэшировать /auth/* и /payments/***
+- Apple/Google могут банить домены если кто-то на shared-IP Cloudflare нарушает их правила — у нас Pro = dedicated IP. Free = shared
+
+**Когда вернуться:** когда AIMA наберёт **500-1000 активных юзеров** и появятся реальные жалобы на скорость. Сейчас рано — кэш на клиенте через Hive (✅ уже подключён) даёт основной win.
+
+---
+
 ### 16. SSL
 
 Railway сам выпускает Let's Encrypt. Делать ничего не нужно.

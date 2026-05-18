@@ -1,3 +1,5 @@
+import re
+
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -13,6 +15,56 @@ from clients.identity_provider import IdentityNotFound
 from clients.identity_provider.client import IdentityProviderClientKeycloak
 from quiz.repositories.user_points import UserPointsRepository
 from utils.file_service import FileService
+
+# Heuristics for spotting the Keycloak fallback (raw username / phone / email)
+# that leaks into the leaderboard for legacy users registered before
+# the DisplayName validator existed. See validators.validate_display_name.
+_PHONE_OR_EMAIL_REGEX = re.compile(r"^[+\d][\d\s\-+()]*$|@")
+# Keycloak auto-generates usernames like "user3" / "user-42" when a user
+# is created without an explicit username (admin-panel flow, scripts).
+# These are not PII but still look like placeholders and pollute the
+# leaderboard, so we treat them the same as phone/email leaks.
+_AUTO_USERNAME_REGEX = re.compile(r"^user[-_]?\d+$", re.IGNORECASE)
+
+
+def _is_pii_leak(name: str) -> bool:
+    """True when `name` looks like the Keycloak fallback rather than a
+    real display name. Catches three legacy patterns:
+
+      - Phone numbers (`+77001234567`, `7 700 123 4567`) — leaked when
+        Keycloak uses phone as the username and the user's `name`
+        attribute is empty.
+      - Emails (anything with `@`).
+      - Auto-generated usernames (`user3`, `user_42`) — admin-panel
+        and seed-script artefacts.
+
+    Empty string is also considered a leak (defensive — `name`
+    should never be empty after the DisplayName validator, but the
+    leaderboard route is the last line before public display).
+
+    New registrations go through validate_display_name and can't
+    produce any of these; this only protects the legacy accounts.
+    """
+    if not name:
+        return True
+    if _PHONE_OR_EMAIL_REGEX.search(name):
+        return True
+    if _AUTO_USERNAME_REGEX.match(name):
+        return True
+    return False
+
+
+def _safe_display_name(name: str, user_id: str) -> str:
+    """Render a privacy-safe display name for the leaderboard. If
+    `name` looks like PII or is empty, fall back to
+    "Пользователь #ABCD" using the last four hex characters of the
+    user's UUID — stable across requests, anonymous, and visually
+    distinct between users so the podium doesn't show three identical
+    "Пользователь" rows."""
+    if not _is_pii_leak(name):
+        return name
+    suffix = user_id.replace("-", "")[-4:].upper() if user_id else "????"
+    return f"Пользователь #{suffix}"
 
 router = APIRouter(prefix="/leaderboard", tags=["Leaderboard"])
 
@@ -93,7 +145,7 @@ def _user_display_pair(
     avatar = None
     if kc_user.attributes and kc_user.attributes.avatar:
         avatar = kc_user.attributes.avatar[0] or None
-    return (name or "Пользователь", avatar)
+    return (_safe_display_name(name, user_id), avatar)
 
 
 @router.get(

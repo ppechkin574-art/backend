@@ -35,8 +35,78 @@ from payments import models as _payment_models  # noqa: F401
 from promocodes import models as _promocode_models  # noqa: F401
 from subscription import models as _subscription_models  # noqa: F401
 
-from api.routes.user.leaderboard import _user_display_pair, get_leaderboard
+from api.routes.user.leaderboard import (
+    _is_pii_leak,
+    _safe_display_name,
+    _user_display_pair,
+    get_leaderboard,
+)
 from clients.identity_provider import IdentityNotFound
+
+
+# ─────────────────────────── PII-safe display name ────────────────────
+
+
+def test_is_pii_leak_rejects_phone_formats():
+    assert _is_pii_leak("+77001234567") is True
+    assert _is_pii_leak("77001234567") is True
+    assert _is_pii_leak("+7 700 123 4567") is True
+
+
+def test_is_pii_leak_rejects_emails():
+    assert _is_pii_leak("user@example.com") is True
+    assert _is_pii_leak("test@aima.kz") is True
+
+
+def test_is_pii_leak_rejects_auto_keycloak_usernames():
+    """Admin-panel / seed-script artefacts like `user3`, `user_42`
+    aren't strictly PII but still look like placeholders and need to
+    be masked so the leaderboard reads as a real ranking."""
+    assert _is_pii_leak("user3") is True
+    assert _is_pii_leak("user_42") is True
+    assert _is_pii_leak("User-12") is True
+
+
+def test_is_pii_leak_accepts_real_names():
+    assert _is_pii_leak("Иван Петров") is False
+    assert _is_pii_leak("Әсемгүл") is False
+    assert _is_pii_leak("dnns") is False  # short but a legit display name
+    assert _is_pii_leak("Anna2024") is False
+
+
+def test_is_pii_leak_treats_empty_as_leak():
+    """Defensive: if name is somehow empty by the time the leaderboard
+    handler sees it, masking is the safer default than rendering ''."""
+    assert _is_pii_leak("") is True
+    assert _is_pii_leak(None) is True
+
+
+def test_safe_display_name_passes_through_real_name():
+    assert _safe_display_name("Иван", "uuid-irrelevant") == "Иван"
+
+
+def test_safe_display_name_masks_phone():
+    """The mask must be stable per user (same UUID → same suffix) so
+    a returning user keeps the same #ABCD label across requests and
+    isn't confused into thinking the leaderboard reshuffled."""
+    masked = _safe_display_name(
+        "+77001234567", "12345678-1234-1234-1234-1234567890ab"
+    )
+    assert masked == "Пользователь #90AB"
+
+
+def test_safe_display_name_masks_auto_username():
+    masked = _safe_display_name(
+        "user3", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee1234"
+    )
+    assert masked == "Пользователь #1234"
+
+
+def test_safe_display_name_handles_missing_uuid_safely():
+    """Defensive — should never happen in practice (user_id always
+    present in the route), but if it does we still render a stable
+    string rather than crashing or producing 'Пользователь #'."""
+    assert _safe_display_name("+77001234567", "") == "Пользователь #????"
 
 
 # ─────────────────────────── _user_display_pair ──────────────────────
@@ -93,31 +163,64 @@ def test_returns_placeholder_tuple_on_keycloak_exception():
     assert result == ("Пользователь", None)
 
 
-def test_returns_placeholder_when_name_attribute_missing():
-    """User exists but has no name attribute — name defaults to
-    'Пользователь' so we don't render an empty string. Still a
-    valid row, not an orphan."""
+def test_returns_uuid_suffix_when_name_attribute_missing():
+    """User exists but has no name attribute — name now falls back to
+    the PII-safe `Пользователь #ABCD` (last-4-UUID) instead of a
+    bare 'Пользователь' so the three legacy accounts on the leaderboard
+    are visually distinct rather than identical placeholders."""
     idp = MagicMock()
     kc_user = MagicMock()
     kc_user.attributes.name = None
     kc_user.attributes.avatar = None
     idp.get_user.return_value = kc_user
 
-    result = _user_display_pair(idp, "uuid-noname")
-    assert result == ("Пользователь", None)
+    result = _user_display_pair(idp, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee1234")
+    assert result == ("Пользователь #1234", None)
 
 
-def test_returns_placeholder_when_name_is_empty_string():
-    """name=[""] should still yield the placeholder, not the empty
-    string — protects the UI from rendering "" as a name."""
+def test_returns_uuid_suffix_when_name_is_empty_string():
+    """Same as above but the Keycloak attribute is `[""]` rather than
+    None — both empty representations get the safe fallback."""
     idp = MagicMock()
     kc_user = MagicMock()
     kc_user.attributes.name = [""]
     kc_user.attributes.avatar = None
     idp.get_user.return_value = kc_user
 
-    result = _user_display_pair(idp, "uuid-emptyname")
-    assert result == ("Пользователь", None)
+    result = _user_display_pair(idp, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeee5678")
+    assert result == ("Пользователь #5678", None)
+
+
+def test_masks_phone_leaked_as_name():
+    """Operator's 18.05.2026 prod screenshot: user with
+    name="+77001234567" rendered in the leaderboard with the raw
+    phone visible. After this fix the same input is masked to
+    Пользователь #<last4>."""
+    idp = MagicMock()
+    kc_user = MagicMock()
+    kc_user.attributes.name = ["+77001234567"]
+    kc_user.attributes.avatar = None
+    idp.get_user.return_value = kc_user
+
+    result = _user_display_pair(
+        idp, "11111111-2222-3333-4444-555566667777"
+    )
+    assert result == ("Пользователь #7777", None)
+
+
+def test_masks_auto_username_leaked_as_name():
+    """`user3` style auto-username (from admin panel / seed scripts)
+    is also masked — not PII but still looks like a placeholder."""
+    idp = MagicMock()
+    kc_user = MagicMock()
+    kc_user.attributes.name = ["user3"]
+    kc_user.attributes.avatar = None
+    idp.get_user.return_value = kc_user
+
+    result = _user_display_pair(
+        idp, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeABCD"
+    )
+    assert result == ("Пользователь #ABCD", None)
 
 
 # ─────────────────────────── get_leaderboard route ────────────────────

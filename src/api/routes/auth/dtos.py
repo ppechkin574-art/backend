@@ -11,7 +11,7 @@ from pydantic import (
 
 from auth.dtos.confirmation_codes import ConfirmationCodeAction
 from clients.notification import CodePlatform
-from utils.validators import KZPhone
+from utils.validators import DisplayName, KZPhone
 
 
 class RegisterParamsDTO(BaseModel):
@@ -29,7 +29,7 @@ class RegistrationCompleteDTO(BaseModel):
 
     verification_id: UUID = Field(..., description="Verified code ID")
     password: str = Field(..., min_length=6, description="User password")
-    name: str = Field(..., min_length=2, max_length=100, description="User display name")
+    name: DisplayName = Field(..., description="User display name (2-20 chars, ru/kz/en/digits/space/hyphen)")
 
 
 class AuthConfirmRegistrationParamsDTO(BaseModel):

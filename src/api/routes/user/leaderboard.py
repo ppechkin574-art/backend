@@ -9,6 +9,7 @@ from api.dependencies import (
     get_user,
 )
 from auth.dtos.users import UserDTO
+from clients.identity_provider import IdentityNotFound
 from clients.identity_provider.client import IdentityProviderClientKeycloak
 from quiz.repositories.user_points import UserPointsRepository
 from utils.file_service import FileService
@@ -69,14 +70,22 @@ def _user_display_pair(
     """
     try:
         kc_user = idp.get_user(user_id)
+    except IdentityNotFound:
+        # Keycloak answered 404 — user is gone. This is the orphan
+        # path. The Keycloak client wraps a 404 by RAISING
+        # IdentityNotFound rather than returning None, so catching
+        # generic Exception (the previous behaviour) collapsed this
+        # case into the outage placeholder and the ghosts kept
+        # rendering. Returning None signals the route to skip.
+        return None
     except Exception:
         # Transient lookup failure (network, Keycloak 5xx) — keep
         # the user in the leaderboard with a placeholder rather
         # than hiding them. Real outage shouldn't blank the screen.
         return ("Пользователь", None)
     if not kc_user:
-        # Keycloak responded "no such user" — this is an orphan,
-        # signal the caller to skip.
+        # Defensive: future client refactor could switch from
+        # raising to returning None — keep the orphan path here too.
         return None
     name = ""
     if kc_user.attributes and kc_user.attributes.name:

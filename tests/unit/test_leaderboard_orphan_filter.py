@@ -36,6 +36,7 @@ from promocodes import models as _promocode_models  # noqa: F401
 from subscription import models as _subscription_models  # noqa: F401
 
 from api.routes.user.leaderboard import _user_display_pair, get_leaderboard
+from clients.identity_provider import IdentityNotFound
 
 
 # ─────────────────────────── _user_display_pair ──────────────────────
@@ -53,13 +54,30 @@ def test_returns_tuple_for_real_keycloak_user():
     assert result == ("Иван Иванов", "filename.jpg")
 
 
-def test_returns_none_when_keycloak_says_user_missing():
-    """The orphan path — Keycloak returns None (user deleted), so
-    we signal the caller to skip this row in the leaderboard."""
+def test_returns_none_when_keycloak_raises_identity_not_found():
+    """The orphan path — IdentityProviderClientKeycloak.get_user
+    wraps a 404 by RAISING IdentityNotFound, not returning None.
+    The previous version of this test pinned a return_value=None
+    path that the real client never takes, which let the bug
+    (operator's screenshot 18.05.2026: three "Пользователь" ghosts
+    still in the live leaderboard despite the deploy) ship green.
+    This now mirrors actual Keycloak behaviour."""
+    idp = MagicMock()
+    idp.get_user.side_effect = IdentityNotFound
+
+    result = _user_display_pair(idp, "uuid-orphan")
+    assert result is None
+
+
+def test_returns_none_when_keycloak_returns_falsy_user():
+    """Defensive: if a future client refactor switches from
+    raising IdentityNotFound to returning None, the route still
+    has to skip the row. This pins that fallback so we don't
+    silently regress to the ghost-rendering behaviour again."""
     idp = MagicMock()
     idp.get_user.return_value = None
 
-    result = _user_display_pair(idp, "uuid-orphan")
+    result = _user_display_pair(idp, "uuid-orphan-future")
     assert result is None
 
 
@@ -119,7 +137,8 @@ class _FakePointsRepo:
 
 def _make_idp(known_user_ids: set[str]) -> MagicMock:
     """Build a fake IdentityProviderClientKeycloak that knows only
-    the given user_ids — everything else returns None (orphan)."""
+    the given user_ids — everything else RAISES IdentityNotFound
+    the way the real Keycloak client does on a 404."""
     idp = MagicMock()
 
     def _get_user(user_id):
@@ -128,7 +147,7 @@ def _make_idp(known_user_ids: set[str]) -> MagicMock:
             mock_user.attributes.name = [f"User-{user_id[:8]}"]
             mock_user.attributes.avatar = None
             return mock_user
-        return None
+        raise IdentityNotFound
 
     idp.get_user.side_effect = _get_user
     return idp

@@ -2,7 +2,6 @@ import logging
 import os
 
 from fastapi import FastAPI
-from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.cors import CORSMiddleware
 
@@ -10,7 +9,11 @@ from api.containers import Container
 from api.exceptions.handlers import setup_exception_handlers
 from api.lifespan import lifespan
 from api.middlewares.exception_logging_middleware import ExceptionLoggingMiddleware
-from api.middlewares.rate_limit import limiter, log_storage_choice
+from api.middlewares.rate_limit import (
+    custom_rate_limit_exceeded_handler,
+    limiter,
+    log_storage_choice,
+)
 from settings import Settings
 from utils.monitoring import (
     LoggingContextMiddleware,
@@ -101,7 +104,11 @@ def create_app() -> FastAPI:
     )
     app.state.container = container
     app.state.limiter = limiter
-    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    # Custom 429 handler instead of slowapi's default — adds Retry-After
+    # header (RFC 7231) and `retry_after_seconds` in body so mobile/web
+    # clients can render accurate countdown UIs without hardcoding limits
+    # per-endpoint. See `custom_rate_limit_exceeded_handler` for shape.
+    app.add_exception_handler(RateLimitExceeded, custom_rate_limit_exceeded_handler)
     log_storage_choice()
     logging.getLogger(__name__).info(
         "[rate-limit] limiter wired: %s",

@@ -6,6 +6,7 @@ from .dashboard import router as dashboard_router
 from .ents import router as ents_router
 from .modules import router as modules_router
 from .notifications import router as notifications_router
+from .notifications_send import router as notifications_send_router
 from .promocodes import router as promocodes_router
 from .questions import router as questions_router
 from .statistics import router as statistics_router
@@ -25,6 +26,7 @@ routers = [
     trainers_router,
     statistics_router,
     notifications_router,
+    notifications_send_router,
     subject_combinations_router,
     promocodes_router,
     modules_router,

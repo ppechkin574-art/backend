@@ -62,3 +62,22 @@ async def delete_user(
 ):
     service.delete_user(user_id)
     return None
+
+
+@router.post("/{user_id}/reset-subscription", response_model=UserDTO)
+async def reset_subscription(
+    user_id: UUID,
+    service: AdminUserService = Depends(get_admin_user_service),
+):
+    """Forcibly rewind the user's subscription to FREE.
+
+    Used to prepare demo accounts (e.g. Apple Reviewer) before
+    submitting a build for App Store review — the reviewer needs
+    to see "Купить подписку" rather than the cancel CTA, so any
+    pre-existing PRO state has to be wiped from Keycloak attrs.
+    The regular `cancel_subscription` endpoint is a soft-cancel
+    and won't help here (it leaves plan=PRO until subscription_end).
+
+    Admin-only (this whole router is `allow_only_admins`).
+    """
+    return service.reset_subscription(user_id)

@@ -116,3 +116,47 @@ class AdminUserService:
 
     def delete_user(self, user_id: UUID) -> None:
         self.identity_provider.delete(user_id)
+
+    def reset_subscription(self, user_id: UUID) -> UserDTO:
+        """Force-reset the user's subscription to FREE.
+
+        Clears:
+          - plan → "free"
+          - subscription_end → unset (empty list)
+          - subscription_cancelled → unset (empty list)
+
+        Used to prepare the "Apple Reviewer" demo account before
+        an App Store submission: the reviewer needs to see the
+        "Купить подписку" CTA, but the account is already PRO with
+        57 days remaining (and `subscription_cancelled=true` so the
+        normal soft-cancel endpoint is a no-op). This admin path
+        sidesteps that idempotency check and forcibly rewinds the
+        account to the pre-purchase state.
+
+        Returns the refreshed UserDTO so the caller can verify the
+        attributes were applied without an extra round-trip.
+        """
+        keycloak_user = self.identity_provider.get(KeycloakUserQueryDTO(id=user_id))
+        # Pass empty list `[]` rather than None for the cleared
+        # attributes — Keycloak interprets `[]` as "remove this
+        # attribute", while None means "leave it alone" in our
+        # KeycloakUserUpdateDTO contract (see converters.py:204
+        # comment for the same convention on subscription_cancelled).
+        attrs = KeycloakAttributesUpdateDTO(
+            plan=[PlanType.FREE.value],
+            subscription_end=[],
+            subscription_cancelled=[],
+        )
+        self.identity_provider.update_user(
+            user_id,
+            KeycloakUserUpdateDTO(
+                email=keycloak_user.email,
+                attributes=attrs,
+            ),
+        )
+        logger.info(
+            "Subscription forcibly reset to FREE for user %s "
+            "(admin path, used for App Store reviewer demo prep)",
+            user_id,
+        )
+        return self.get_user(user_id)

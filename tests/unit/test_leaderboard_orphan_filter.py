@@ -398,3 +398,132 @@ async def test_leaderboard_keeps_users_during_keycloak_outage():
 
     assert len(response) == 2  # not zero — keep showing
     assert all(entry.name == "Пользователь" for entry in response)
+
+
+# ─────────────────────── SQL oversampling regression ───────────────────
+
+
+class _SpyPointsRepo:
+    """Stand-in repo that remembers what limit it was last called
+    with, so the oversampling-at-the-SQL-layer behaviour can be
+    asserted directly (not just through the response shape).
+    """
+
+    def __init__(self, top: list[tuple]):
+        self._top = top
+        self.last_limit: int | None = None
+
+    def get_all_ranked(self, limit: int) -> list[tuple]:
+        self.last_limit = limit
+        return self._top[:limit]
+
+
+@pytest.mark.asyncio
+async def test_leaderboard_oversamples_to_survive_orphan_heavy_top():
+    """The 19.05.2026 production bug: /leaderboard?limit=5 returned []
+    while /leaderboard?limit=20 returned three real users from the
+    SAME database. Cause: five seed mocks (4000-5000 points) deleted
+    on 18.05.2026 still occupy the top of the user_points table —
+    `ORDER BY total_points DESC LIMIT 5` returned all orphans, the
+    post-fetch filter dropped all of them, and the API answered [].
+
+    Fix: oversample at the SQL layer (limit*3, capped at 200) so the
+    filter has headroom to find `limit` valid users even when the
+    SQL top is mostly orphan rows. This test pins both behaviours —
+    the oversample request AND the correct visible response.
+    """
+    real_a, real_b, real_c = str(uuid4()), str(uuid4()), str(uuid4())
+    # Five orphans first (recreates the prod state on 19.05.2026
+    # after delete_mock_users.py ran but cascade-delete of
+    # user_points hadn't been wired up yet), then three real users.
+    orphans = [(str(uuid4()), 5000 - i * 200) for i in range(5)]
+    top_rows = orphans + [
+        (real_a, 37),
+        (real_b, 29),
+        (real_c, 26),
+    ]
+    spy = _SpyPointsRepo(top_rows)
+
+    import api.routes.user.leaderboard as lb_module
+
+    lb_module.UserPointsRepository = lambda session: spy
+
+    # Match the actual Home-screen request: limit=5.
+    response = await get_leaderboard(
+        limit=5,
+        session=MagicMock(),
+        idp=_make_idp({real_a, real_b, real_c}),
+        file_service=_make_file_service(),
+    )
+
+    # Oversample contract: SQL was asked for 5 × 3 = 15 rows.
+    assert spy.last_limit == 15
+
+    # Visible contract: three real users, ranks 1/2/3, gap-free
+    # despite the five orphans that sat above them in raw SQL.
+    assert [(e.rank, e.user_id) for e in response] == [
+        (1, real_a),
+        (2, real_b),
+        (3, real_c),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_leaderboard_oversample_capped_at_200():
+    """A pathological caller asking for limit=500 (the route's own
+    upper bound) shouldn't trigger a 1500-row SQL scan and a
+    1500-call Keycloak storm. The cap is set to 200 — same order of
+    magnitude as the route's ge=1/le=500 query-param bound."""
+    spy = _SpyPointsRepo([])
+
+    import api.routes.user.leaderboard as lb_module
+
+    lb_module.UserPointsRepository = lambda session: spy
+
+    await get_leaderboard(
+        limit=500,
+        session=MagicMock(),
+        idp=_make_idp(set()),
+        file_service=_make_file_service(),
+    )
+
+    assert spy.last_limit == 200
+
+
+@pytest.mark.asyncio
+async def test_leaderboard_stops_iterating_once_limit_filled():
+    """Even with oversample=15, if the first 5 valid users are at
+    the top of the SQL result, we shouldn't burn Keycloak lookups
+    on the remaining 10. The post-filter loop breaks as soon as
+    rank_counter reaches the requested limit."""
+    real_users = [str(uuid4()) for _ in range(10)]
+    top = [(uid, 1000 - i) for i, uid in enumerate(real_users)]
+
+    idp = MagicMock()
+    lookups: list[str] = []
+
+    def _get_user(user_id):
+        lookups.append(str(user_id))
+        mock = MagicMock()
+        mock.attributes.name = [f"User-{user_id[:6]}"]
+        mock.attributes.avatar = None
+        return mock
+
+    idp.get_user.side_effect = _get_user
+
+    import api.routes.user.leaderboard as lb_module
+
+    lb_module.UserPointsRepository = lambda session: _SpyPointsRepo(top)
+
+    response = await get_leaderboard(
+        limit=5,
+        session=MagicMock(),
+        idp=idp,
+        file_service=_make_file_service(),
+    )
+
+    # Visible: first 5 users.
+    assert len(response) == 5
+    # Keycloak calls: also 5 (one per valid user). The remaining 5
+    # rows in the oversampled SQL result are never looked up.
+    assert len(lookups) == 5

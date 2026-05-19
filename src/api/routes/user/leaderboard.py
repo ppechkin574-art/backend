@@ -160,13 +160,35 @@ async def get_leaderboard(
     file_service: FileService = Depends(get_file_service),
 ):
     points_repo = UserPointsRepository(session)
-    top = points_repo.get_all_ranked(limit)
+    # Oversample at the SQL layer so orphan rows don't starve the
+    # response for small `limit` values. Operator's 19.05.2026
+    # screenshot: /leaderboard?limit=5 returned [] while
+    # /leaderboard?limit=20 returned three valid users from the SAME
+    # database. Reason — the five seed mocks deleted on 18.05.2026
+    # still have user_points rows with 4000-5000 points (cascade-on-
+    # delete is a TECH_DEBT item) and dominate the top of the
+    # `ORDER BY total_points DESC` ranking. With LIMIT 5 the SQL
+    # result was entirely those orphan rows, the post-fetch filter
+    # dropped them all, and the API returned []. With LIMIT 20 the
+    # SQL result reached past the orphans into the real users.
+    # Tripling the fetch (capped at 200 to keep the Keycloak
+    # round-trip count bounded) gives the filter enough headroom
+    # to find `limit` valid users even when most of the top is
+    # orphan rows. 200 is the same magnitude as the route's own
+    # `le=500` query-param cap.
+    oversample = min(limit * 3, 200)
+    top = points_repo.get_all_ranked(oversample)
     if not top:
         return []
 
     result: list[LeaderboardEntry] = []
     rank_counter = 0
     for user_id, points in top:
+        if rank_counter >= limit:
+            # We've collected enough valid entries — stop iterating
+            # so we don't waste Keycloak round-trips on the tail of
+            # the oversampled fetch.
+            break
         display = _user_display_pair(idp, str(user_id))
         if display is None:
             # Orphan — user was deleted from Keycloak but their

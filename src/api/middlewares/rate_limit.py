@@ -56,8 +56,10 @@ logger = logging.getLogger(__name__)
 def _rate_limit_bypass_phones() -> set[str]:
     phones: set[str] = set()
     rp = os.getenv("REVIEWER_TEST_PHONE")
-    if rp and rp.strip():
-        phones.add(rp.strip())
+    if rp:
+        # REVIEWER_TEST_PHONE now supports comma-separated values (Apple
+        # reviewer + dev numbers coexisting). Single value still works.
+        phones.update(p.strip() for p in rp.split(",") if p.strip())
     dev = os.getenv("DEV_RATE_LIMIT_BYPASS_PHONES")
     if dev:
         phones.update(p.strip() for p in dev.split(",") if p.strip())

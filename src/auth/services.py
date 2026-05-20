@@ -73,8 +73,9 @@ logger = logging.getLogger(__name__)
 
 def is_rate_limit_bypassed(contact: str | None) -> bool:
     """True iff this contact is on the rate-limit bypass list — both the
-    App Store reviewer phone (REVIEWER_TEST_PHONE, single) and dev test
-    numbers (DEV_RATE_LIMIT_BYPASS_PHONES, comma-separated) qualify.
+    App Store reviewer phone(s) (REVIEWER_TEST_PHONE, comma-separated)
+    and dev test numbers (DEV_RATE_LIMIT_BYPASS_PHONES, comma-separated)
+    qualify.
 
     Duplicated here instead of imported from `api.middlewares.rate_limit`
     to avoid an `auth → api` cycle (the API layer already imports from
@@ -84,12 +85,11 @@ def is_rate_limit_bypassed(contact: str | None) -> bool:
     """
     if not contact:
         return False
-    rp = os.getenv("REVIEWER_TEST_PHONE")
-    if rp and rp.strip() == contact:
-        return True
-    dev = os.getenv("DEV_RATE_LIMIT_BYPASS_PHONES")
-    if dev:
-        for entry in dev.split(","):
+    for env_name in ("REVIEWER_TEST_PHONE", "DEV_RATE_LIMIT_BYPASS_PHONES"):
+        raw = os.getenv(env_name)
+        if not raw:
+            continue
+        for entry in raw.split(","):
             if entry.strip() == contact:
                 return True
     return False
@@ -960,15 +960,24 @@ class AuthService:
         return contact.strip()
 
     def _is_reviewer_test_contact(self, contact: str) -> bool:
-        """True if the contact equals the App Store / Play Store reviewer
-        test phone number (env var `REVIEWER_TEST_PHONE`, e.g.
-        `+77001234567`).  When `REVIEWER_TEST_PHONE` is unset the bypass
-        is dormant and every code request goes through the normal SMS
-        path — safe default for any environment that isn't actively in
-        store-review.
+        """True if `contact` is in the reviewer-bypass list — meaning the
+        SMSC call should be skipped and a fixed code (REVIEWER_TEST_CODE,
+        default 123456) should be used instead.
+
+        Env var `REVIEWER_TEST_PHONE` is a comma-separated list of phones,
+        so the same bypass can hold both the App Store reviewer's number
+        and the dev's working number at the same time. A single value
+        (no commas) still works — that was the original shape.
+
+        When `REVIEWER_TEST_PHONE` is unset the bypass is dormant and
+        every code request goes through the real SMSC path — safe
+        default for any environment that isn't actively in store-review
+        or dev-testing.
         """
-        test_phone = os.getenv("REVIEWER_TEST_PHONE")
-        return bool(test_phone and contact == test_phone)
+        raw = os.getenv("REVIEWER_TEST_PHONE")
+        if not raw:
+            return False
+        return any(entry.strip() == contact for entry in raw.split(","))
 
     def _get_user_by_contact(self, contact: str) -> UserDTO | None:
         try:

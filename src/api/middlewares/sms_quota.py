@@ -56,9 +56,14 @@ def _is_reviewer_test_contact(contact: str) -> bool:
     cycle and pull half the auth graph into this module.
 
     Note: rate-limit bypass (this file) is broader than the SMSC bypass
-    in services.py — see `is_rate_limit_bypassed` for the full set."""
-    test_phone = os.getenv("REVIEWER_TEST_PHONE")
-    return bool(test_phone) and contact == test_phone
+    in services.py — see `is_rate_limit_bypassed` for the full set.
+
+    REVIEWER_TEST_PHONE is comma-separated to support multiple bypass
+    numbers (Apple reviewer + dev). Single value still works."""
+    raw = os.getenv("REVIEWER_TEST_PHONE")
+    if not raw:
+        return False
+    return any(entry.strip() == contact for entry in raw.split(","))
 
 
 def _global_counter_key(day: str) -> str:

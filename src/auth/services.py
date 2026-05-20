@@ -71,6 +71,30 @@ from utils.file_service import FileService
 logger = logging.getLogger(__name__)
 
 
+def is_rate_limit_bypassed(contact: str | None) -> bool:
+    """True iff this contact is on the rate-limit bypass list — both the
+    App Store reviewer phone (REVIEWER_TEST_PHONE, single) and dev test
+    numbers (DEV_RATE_LIMIT_BYPASS_PHONES, comma-separated) qualify.
+
+    Duplicated here instead of imported from `api.middlewares.rate_limit`
+    to avoid an `auth → api` cycle (the API layer already imports from
+    auth heavily). Same pattern `sms_quota.py::_is_reviewer_test_contact`
+    follows. Logic is trivial enough that drift risk is low; if it grows
+    move both copies into a shared `common` helper.
+    """
+    if not contact:
+        return False
+    rp = os.getenv("REVIEWER_TEST_PHONE")
+    if rp and rp.strip() == contact:
+        return True
+    dev = os.getenv("DEV_RATE_LIMIT_BYPASS_PHONES")
+    if dev:
+        for entry in dev.split(","):
+            if entry.strip() == contact:
+                return True
+    return False
+
+
 def _mask_contact(contact: str) -> str:
     """Return a partial mask of a contact for safe logging / dev-channel
     alerts. Keeps the country prefix and the last 4 chars so support can
@@ -459,6 +483,7 @@ class AuthService:
         # new user — no admin escalation. Mitigation: pick a phone shape no
         # real Kazakhstan operator hands out (default +77001234567).
         is_reviewer_test_contact = self._is_reviewer_test_contact(contact)
+        is_rate_limit_bypass = is_rate_limit_bypassed(contact)
 
         # Per-contact rate limit. block_key is set with TTL in _set_resend_block
         # only after a successful primary-channel send (Q4=A: don't penalise the
@@ -466,8 +491,15 @@ class AuthService:
         # The endpoint-level slowapi limit ("1/minute" per IP) is the first
         # gate; this Redis key is the second gate per phone/email so an attacker
         # rotating IPs can't burn through SMSC budget against a single number.
+        #
+        # Bypass contacts (REVIEWER_TEST_PHONE + DEV_RATE_LIMIT_BYPASS_PHONES)
+        # skip this gate too, otherwise the dev who put their number in the
+        # bypass list would still wait 60 sec between test requests.
         block_key = f"block:contact:{contact}"
-        ttl_remaining = self._confirmation_codes._redis.ttl(block_key)
+        ttl_remaining = (
+            0 if is_rate_limit_bypass
+            else self._confirmation_codes._redis.ttl(block_key)
+        )
         if ttl_remaining > 0:
             raise AuthInvalidConfirmationCodeError(
                 f"Слишком частые запросы. Попробуй через {ttl_remaining} сек."
@@ -567,7 +599,9 @@ class AuthService:
         # back to dev channel, the user got nothing — let them retry without
         # waiting 60s. Q2=C: even on failure we keep the verification_id and
         # return it (so a later successful retry hits the same Redis entry).
-        if sent_ok:
+        # Bypass contacts skip the block entirely (the gate above already
+        # short-circuits to ttl=0; this keeps the Redis state clean too).
+        if sent_ok and not is_rate_limit_bypass:
             self._confirmation_codes._redis.setex(block_key, 60, "1")
 
         logger.info(

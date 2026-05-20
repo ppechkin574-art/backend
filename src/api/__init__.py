@@ -8,6 +8,7 @@ from starlette.middleware.cors import CORSMiddleware
 from api.containers import Container
 from api.exceptions.handlers import setup_exception_handlers
 from api.lifespan import lifespan
+from api.middlewares.contact_extractor import ContactExtractorMiddleware
 from api.middlewares.exception_logging_middleware import ExceptionLoggingMiddleware
 from api.middlewares.rate_limit import (
     custom_rate_limit_exceeded_handler,
@@ -116,6 +117,12 @@ def create_app() -> FastAPI:
     )
 
     app.add_middleware(LoggingContextMiddleware)
+    # ContactExtractor must wrap the route layer so that
+    # request.state.contact is populated by the time slowapi's key_func
+    # runs during route dispatch. Added BEFORE ExceptionLogging so the
+    # latter (registered last, runs first/outermost) still catches any
+    # error originating from contact extraction.
+    app.add_middleware(ContactExtractorMiddleware)
     app.add_middleware(
         ExceptionLoggingMiddleware,
         notifier=container.notification_client(),

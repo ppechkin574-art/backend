@@ -32,7 +32,7 @@ from fastapi import HTTPException, status
 from redis import Redis, RedisError
 from starlette.requests import Request
 
-from api.middlewares.rate_limit import _real_client_ip
+from api.middlewares.rate_limit import _real_client_ip, is_rate_limit_bypassed
 from app_config.service import AppSettingsService
 from clients.notification.client import NotificationClientEmail
 
@@ -53,7 +53,10 @@ def _is_reviewer_test_contact(contact: str) -> bool:
     """Same check the AuthService uses internally (see
     `auth/services.py::_is_reviewer_test_contact`). Duplicated here so
     we don't import the service into the middleware — would create a
-    cycle and pull half the auth graph into this module."""
+    cycle and pull half the auth graph into this module.
+
+    Note: rate-limit bypass (this file) is broader than the SMSC bypass
+    in services.py — see `is_rate_limit_bypassed` for the full set."""
     test_phone = os.getenv("REVIEWER_TEST_PHONE")
     return bool(test_phone) and contact == test_phone
 
@@ -85,13 +88,15 @@ def check_sms_quota(
     thresholds come from the editable `app_settings` table — operator
     can adjust them from the admin panel without a redeploy.
 
-    Reviewer-bypass contacts are a no-op: Apple App Review must work
-    even if the rest of the world has hit the daily cap.
+    Reviewer-bypass and dev-bypass contacts (REVIEWER_TEST_PHONE +
+    DEV_RATE_LIMIT_BYPASS_PHONES) are a no-op: Apple App Review must
+    work even if the rest of the world has hit the daily cap, and dev
+    testing must not be blocked by counters.
 
     Order matters: per-IP check first (cheaper), global cap second
     (slightly heavier read, fires alert when crossed).
     """
-    if _is_reviewer_test_contact(contact):
+    if is_rate_limit_bypassed(contact):
         return
 
     day = _today_utc()
@@ -162,7 +167,7 @@ def record_sms_request(
     with top-5 IPs. Dedup'd by a daily Redis key so we don't spam ops
     even if the cap stays exceeded for hours.
     """
-    if _is_reviewer_test_contact(contact):
+    if is_rate_limit_bypassed(contact):
         return
 
     day = _today_utc()

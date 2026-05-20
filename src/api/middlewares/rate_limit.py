@@ -20,6 +20,7 @@ client IP.
 import logging
 import os
 import re
+import uuid
 
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
@@ -27,6 +28,47 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────── bypass list ──────────────────────────────────
+#
+# Two env-driven sources of "skip rate limits entirely" contacts:
+#
+#   REVIEWER_TEST_PHONE          — single phone, also triggers SMSC skip
+#                                  + hardcoded code (see auth/services.py).
+#                                  Reserved for App Store / Play Store
+#                                  reviewers.
+#
+#   DEV_RATE_LIMIT_BYPASS_PHONES — comma-separated dev phones. Real SMS
+#                                  IS still sent via SMSC; only the rate
+#                                  limits (1/min, 10/hour, per-IP daily
+#                                  block, global daily cap, per-contact
+#                                  60-sec resend block) are lifted. Lets
+#                                  ops hammer /code/request during dev
+#                                  without tripping the production walls
+#                                  that everyone else hits.
+#
+# Default is empty for both → safe for any environment that hasn't
+# explicitly opted in. Normal users always go through the full set of
+# rate limits regardless of these vars.
+
+
+def _rate_limit_bypass_phones() -> set[str]:
+    phones: set[str] = set()
+    rp = os.getenv("REVIEWER_TEST_PHONE")
+    if rp and rp.strip():
+        phones.add(rp.strip())
+    dev = os.getenv("DEV_RATE_LIMIT_BYPASS_PHONES")
+    if dev:
+        phones.update(p.strip() for p in dev.split(",") if p.strip())
+    return phones
+
+
+def is_rate_limit_bypassed(contact: str | None) -> bool:
+    """True iff this contact should skip ALL code-request rate limits."""
+    if not contact:
+        return False
+    return contact in _rate_limit_bypass_phones()
 
 
 def _real_client_ip(request: Request) -> str:
@@ -49,9 +91,29 @@ def _real_client_ip(request: Request) -> str:
     return "127.0.0.1"
 
 
+def _ip_or_bypass_key(request: Request) -> str:
+    """slowapi key_func.
+
+    Default behaviour is per-IP (uses _real_client_ip). For requests whose
+    body `contact` is in the bypass list we instead return a unique key
+    per request — each call lands in its own slowapi bucket, so the
+    "X per window" counter never accumulates. Effect: rate limits are
+    silently lifted for those contacts without us having to introspect
+    every @limiter.limit decorator.
+
+    The contact is set on request.state by ContactExtractorMiddleware
+    BEFORE slowapi reads the key (the middleware runs in the ASGI stack
+    earlier than per-route limit decorators).
+    """
+    contact = getattr(request.state, "contact", None)
+    if contact and is_rate_limit_bypassed(contact):
+        return f"bypass:{contact}:{uuid.uuid4()}"
+    return _real_client_ip(request)
+
+
 def _build_limiter() -> Limiter:
     storage_uri = os.getenv("RATELIMIT_STORAGE_URI") or os.getenv("REDIS_URL")
-    kwargs: dict = {"key_func": _real_client_ip}
+    kwargs: dict = {"key_func": _ip_or_bypass_key}
     if storage_uri:
         kwargs["storage_uri"] = storage_uri
     return Limiter(**kwargs)

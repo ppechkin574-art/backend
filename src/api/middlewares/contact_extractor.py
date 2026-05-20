@@ -21,6 +21,17 @@ Failure modes are intentionally silent: malformed JSON, missing field,
 or non-JSON content-type just leave request.state.contact unset and the
 key_func falls back to per-IP. Better to let the route's real validation
 produce the canonical error than to short-circuit here.
+
+⚠️  STARLETTE UPGRADE NOTE
+The body-cache trick (re-read via `await request.body()` returning the
+cached `_body`) relies on `BaseHTTPMiddleware` behaviour that has been
+fragile across Starlette versions (see e.g. encode/starlette#1438,
+#1438, #1518). Verified working on starlette==0.49.1 (May 2026).
+If you bump starlette, smoke-test POST /auth/code/request — symptom
+of a regression would be Pydantic raising "missing field" or a 500
+with "stream consumed". Migration path if it breaks: switch this to
+raw ASGI middleware and replace request._receive with a generator that
+re-yields the cached body.
 """
 
 import json

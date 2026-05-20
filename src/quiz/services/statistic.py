@@ -15,7 +15,11 @@ from quiz.dtos.statistic import (
 )
 from quiz.uows.uows import UnitOfWorkTests
 from quiz.utils.calculations.init import MathUtils, StreakCalculator
-from quiz.utils.period.init import PeriodCalculator
+from quiz.utils.period.init import (
+    PeriodCalculator,
+    kz_day_window_utc,
+    to_kz_date,
+)
 from quiz.utils.validation.init import StatisticValidator
 from utils.cache import CacheService, CacheStrategy, cached
 
@@ -41,8 +45,12 @@ class StatisticService:
     ) -> dict[str, Any]:
         start_date, end_date, description = PeriodCalculator.calculate_period_dates(request)
 
-        start_datetime = datetime.combine(start_date, datetime.min.time())
-        end_datetime = datetime.combine(end_date, datetime.max.time())
+        # start_date/end_date are KZ-local dates (see today_kz in
+        # period_calculator). Translate the inclusive [start_kz 00:00,
+        # end_kz 23:59] window into the equivalent UTC range so DB
+        # queries against naive-UTC `completed_at` columns return all
+        # rows the user thinks belong to the period.
+        start_datetime, end_datetime = kz_day_window_utc(start_date, end_date)
         period_days = PeriodCalculator.get_period_days(start_datetime, end_datetime)
 
         with self.uow:
@@ -411,8 +419,8 @@ class StatisticService:
         period_accuracy = MathUtils.calculate_accuracy(total_correct, total_questions)
         period_progress_by_subject = list(progress_by_subject.values())
 
-        ent_dates = {attempt.completed_at.date() for attempt in attempts if attempt.completed_at}
-        current_streak = StreakCalculator.calculate_streak_on_date(ent_dates, end_date.date(), include_target_date=True)
+        ent_dates = {kz_date for attempt in attempts if (kz_date := to_kz_date(attempt.completed_at)) is not None}
+        current_streak = StreakCalculator.calculate_streak_on_date(ent_dates, to_kz_date(end_date), include_target_date=True)
 
         return {
             "period_attempts_count": len(attempts),
@@ -567,9 +575,9 @@ class StatisticService:
 
         period_accuracy = MathUtils.calculate_accuracy(total_correct, total_questions)
 
-        trainer_dates = {attempt.completed_at.date() for attempt in attempts if attempt.completed_at}
+        trainer_dates = {kz_date for attempt in attempts if (kz_date := to_kz_date(attempt.completed_at)) is not None}
         current_streak = StreakCalculator.calculate_streak_on_date(
-            trainer_dates, end_date.date(), include_target_date=True
+            trainer_dates, to_kz_date(end_date), include_target_date=True
         )
 
         progress_by_topic_list = list(progress_by_topic.values())
@@ -744,9 +752,9 @@ class StatisticService:
 
         period_accuracy = MathUtils.calculate_accuracy(total_correct, total_questions)
 
-        daily_dates = {attempt.completed_at.date() for attempt in attempts if attempt.completed_at}
+        daily_dates = {kz_date for attempt in attempts if (kz_date := to_kz_date(attempt.completed_at)) is not None}
         current_streak = StreakCalculator.calculate_streak_on_date(
-            daily_dates, end_date.date(), include_target_date=True
+            daily_dates, to_kz_date(end_date), include_target_date=True
         )
 
         progress_by_subject_list = list(progress_by_subject.values())
@@ -917,19 +925,24 @@ class StatisticService:
         end_date: datetime,
         exam_type: ExamType,
     ) -> set[date]:
-        """Получить даты завершенных попыток ЕНТ за период"""
+        """Получить даты завершенных попыток ЕНТ за период.
+
+        Returns KZ-local dates: an attempt completed at 22:00 UTC counts as
+        the next day in Almaty (03:00 the following morning local time),
+        which is what the user perceives and what the streak should reflect.
+        """
         attempts = self.uow.ent_attempts.get_completed_attempts_by_period(student_id, start_date, end_date, exam_type)
-        return {attempt.completed_at.date() for attempt in attempts if attempt.completed_at}
+        return {kz_date for attempt in attempts if (kz_date := to_kz_date(attempt.completed_at)) is not None}
 
     def _get_completed_dates_for_trainer(self, student_id: UUID, start_date: datetime, end_date: datetime) -> set[date]:
-        """Получить даты завершенных попыток тренажеров за период"""
+        """Получить даты завершенных попыток тренажеров за период (KZ-local)."""
         attempts = self.uow.trainer_attempts.get_all_completed_attempts_by_period(student_id, start_date, end_date)
-        return {attempt.completed_at.date() for attempt in attempts if attempt.completed_at}
+        return {kz_date for attempt in attempts if (kz_date := to_kz_date(attempt.completed_at)) is not None}
 
     def _get_completed_dates_for_daily(self, student_id: UUID, start_date: datetime, end_date: datetime) -> set[date]:
-        """Получить даты завершенных попыток daily тестов за период"""
+        """Получить даты завершенных попыток daily тестов за период (KZ-local)."""
         attempts = self.uow.daily_tests.get_completed_attempts_by_period(student_id, start_date, end_date)
-        return {attempt.completed_at.date() for attempt in attempts if attempt.completed_at}
+        return {kz_date for attempt in attempts if (kz_date := to_kz_date(attempt.completed_at)) is not None}
 
     def _calculate_engagement_score(
         self,

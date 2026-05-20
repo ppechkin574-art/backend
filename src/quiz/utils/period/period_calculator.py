@@ -1,13 +1,53 @@
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 from quiz.dtos.statistic import StatisticPeriodType, StatisticRequestDTO
+
+# Aima is a Kazakhstan-only product, so the "current day" used for stats
+# (and the streak in particular) is the local Almaty day, not the server's
+# UTC day. Railway containers run in UTC, so `date.today()` returns a UTC
+# date that's off by 5 hours from what a KZ user perceives — a task
+# solved at 01:00 Almaty time would get bucketed into the previous day,
+# breaking late-night streaks.
+KZ_TZ = ZoneInfo("Asia/Almaty")
+
+
+def today_kz() -> date:
+    """Today's date in Asia/Almaty time. Use this everywhere we need
+    a "current calendar day" for KZ-facing stats — never `date.today()`."""
+    return datetime.now(KZ_TZ).date()
+
+
+def to_kz_date(dt: datetime | None) -> date | None:
+    """Convert a database datetime (naive UTC, our convention) or a
+    timezone-aware datetime to the Almaty calendar date that contains it.
+    Returns None on None input — useful for `if dt else None`-style
+    list comprehensions on optional columns."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.astimezone(KZ_TZ).date()
+
+
+def kz_day_window_utc(start_kz: date, end_kz: date) -> tuple[datetime, datetime]:
+    """Return naive-UTC datetimes that bracket the calendar window
+    [start_kz 00:00 KZ, end_kz 23:59:59.999999 KZ] for use in DB queries
+    against naive-UTC `completed_at` columns. Without this, the period
+    window is shifted by 5 hours and late-night activity falls outside
+    the query range — leading to a streak that "skips" days the user
+    actually trained.
+    """
+    start_dt_utc = datetime.combine(start_kz, time.min, tzinfo=KZ_TZ).astimezone(UTC).replace(tzinfo=None)
+    end_dt_utc = datetime.combine(end_kz, time.max, tzinfo=KZ_TZ).astimezone(UTC).replace(tzinfo=None)
+    return start_dt_utc, end_dt_utc
 
 
 class PeriodCalculator:
     @staticmethod
     def calculate_period_dates(request: StatisticRequestDTO) -> tuple[date, date, str]:
         """Calculate period dates based on request"""
-        today = date.today()
+        today = today_kz()
 
         if request.period_type == StatisticPeriodType.LAST_7_DAYS:
             start_date = today - timedelta(days=6)
@@ -50,14 +90,14 @@ class PeriodCalculator:
     def _parse_month_year(month_year: str | None) -> tuple[int, int]:
         """Parse month and year from string"""
         if not month_year:
-            today = date.today()
+            today = today_kz()
             return today.year, today.month
 
         parts = month_year.split("-")
         if len(parts) == 2:
             return int(parts[0]), int(parts[1])
         elif len(parts) == 1:
-            return date.today().year, int(month_year)
+            return today_kz().year, int(month_year)
         else:
             raise ValueError(f"Invalid format month_year: {month_year}")
 

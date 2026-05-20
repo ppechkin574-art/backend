@@ -139,12 +139,22 @@ class AuthServiceInterface(Protocol):
         """
         raise NotImplementedError
 
-    def complete_password_reset(self, verification_id: UUID, new_password: str) -> None:
+    def complete_password_reset(
+        self, verification_id: UUID, new_password: str
+    ) -> AuthSessionDTO:
         """Complete password reset after code verification.
+
+        Side effects: revokes every existing session for the user (so a
+        compromised device loses access on next request) and mints a fresh
+        token pair so the caller can log the user straight back in without
+        a separate /login round-trip.
 
         Args:
             verification_id: Verified code ID
             new_password: New password to set
+
+        Returns:
+            AuthSessionDTO: Fresh access + refresh tokens
 
         Raises:
             AuthInvalidConfirmationCodeError: Invalid or unverified code
@@ -729,7 +739,9 @@ class AuthService:
             )
             raise AuthFailedConfirmationError("Error completing registration: %s", e)
 
-    def complete_password_reset(self, verification_id: UUID, new_password: str) -> None:
+    def complete_password_reset(
+        self, verification_id: UUID, new_password: str
+    ) -> AuthSessionDTO:
         logger.info("Completing password reset for verification_id: %s", verification_id)
 
         try:
@@ -764,13 +776,53 @@ class AuthService:
             else:
                 user_id = UUID(real_user_id_str.decode())
 
+            # Always re-fetch the user so we have a usable contact for token
+            # minting below, regardless of which branch above set user_id.
+            user = self._users.get(to_user_query_dto(user_id=user_id))
+            if not user:
+                raise AuthUserNotFoundError("User not found")
+
+            contact = user.phone or user.email
+            if not contact:
+                raise AuthFailedConfirmationError(
+                    "User has neither phone nor email — cannot mint tokens"
+                )
+
             self._users.change_password(user_id, new_password)
             logger.info("Password changed for user: %s", user_id)
 
+            # Burn the confirmation code BEFORE side effects below so a retry
+            # of this endpoint after a partial failure can't reuse it.
             self._confirmation_codes.delete(confirmation_code.id)
+
+            # Revoke every active session/refresh token (Q: invalidate all
+            # sessions on password reset = YES). If the password was reset
+            # because the account was compromised, this kicks the attacker
+            # out of any device they're signed in on. Best-effort: failure
+            # here must not block the user from getting their new tokens,
+            # since the password is already changed.
+            try:
+                self._users.logout_all_sessions(user_id)
+            except Exception as e:
+                logger.warning(
+                    "Could not revoke existing sessions for %s after password reset: %s",
+                    user_id,
+                    e,
+                )
+
+            tokens = self._users.create_tokens(contact, new_password)
+            logger.info("Tokens minted for user after password reset: %s", user_id)
+            return to_auth_session_dto(tokens)
 
         except ConfirmationCodeNotFoundError:
             raise AuthInvalidConfirmationCodeError("Code not found or expired")
+        except (
+            AuthInvalidConfirmationCodeError,
+            AuthConfirmationCodeExpiredError,
+            AuthUserNotFoundError,
+            AuthFailedConfirmationError,
+        ):
+            raise
         except Exception as e:
             logger.exception("Error resetting password: %s", e)
             raise AuthFailedConfirmationError("Error resetting password: %s", e)

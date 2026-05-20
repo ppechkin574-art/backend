@@ -188,6 +188,19 @@ class IdentityProviderClientInterface(Protocol):
         """
         raise NotImplementedError
 
+    def logout_all_sessions(self, user_id: UUID) -> None:
+        """
+        Revoke every active session/refresh token for the given user.
+
+        Args:
+            user_id: target user
+
+        Raises:
+            IdentityNotFound: If user not found.
+            KeycloakError: In other cases of error.
+        """
+        raise NotImplementedError
+
     def update_user(self, user_id: UUID, data: KeycloakUserUpdateDTO) -> None:
         """
         Updates user by user_id.
@@ -742,6 +755,17 @@ class IdentityProviderClientKeycloak:
             logger.exception("Keycloak error during logout: %s", str(_e))
             if _e.response_code == 400:
                 raise InvalidRefreshTokenError
+            raise
+
+    def logout_all_sessions(self, user_id: UUID) -> None:
+        logger.info("Revoking all sessions for user: %s", user_id)
+        try:
+            self._keycloak_admin.user_logout(str(user_id))
+            logger.info("All sessions revoked for user: %s", user_id)
+        except KeycloakError as _e:
+            logger.exception("Keycloak error revoking sessions for %s: %s", user_id, str(_e))
+            if _e.response_code == 404:
+                raise IdentityNotFound
             raise
 
     def update_user(self, user_id: UUID, data: KeycloakUserUpdateDTO) -> None:

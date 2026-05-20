@@ -43,7 +43,6 @@ from api.routes.auth.dtos import (
     OAuthCallbackResponse,
     OAuthStartResponse,
     PasswordResetCompleteDTO,
-    PasswordResetResponse,
     RefreshTokenParamsDTO,
     RegistrationCompleteDTO,
     TokensDTO,
@@ -324,12 +323,17 @@ async def registration_complete(
         raise e
 
 
-@public_router.post("/password-reset/complete", response_model=PasswordResetResponse)
+@public_router.post("/password-reset/complete", response_model=TokensDTO)
 async def password_reset_complete(
     request_data: PasswordResetCompleteDTO,
     service: AuthService = Depends(get_auth_service),
 ):
-    """Complete password reset after code verification"""
+    """Complete password reset after code verification.
+
+    Returns fresh tokens (same shape as /login) so the mobile client can
+    auto-login without a follow-up call. All existing sessions for the
+    user are revoked as a side effect.
+    """
     log_info(
         "Password reset completion request",
         user_id="anonymous",
@@ -339,7 +343,7 @@ async def password_reset_complete(
     )
 
     try:
-        service.complete_password_reset(
+        tokens = service.complete_password_reset(
             request_data.verification_id, request_data.new_password
         )
 
@@ -351,9 +355,7 @@ async def password_reset_complete(
             verification_id=str(request_data.verification_id),
         )
 
-        return PasswordResetResponse(
-            success=True, message="Password has been reset successfully"
-        )
+        return tokens
 
     except (
         AuthInvalidConfirmationCodeError,

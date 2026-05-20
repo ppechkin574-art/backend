@@ -163,6 +163,21 @@ class UserRepositoryInterface(Protocol):
         """
         raise NotImplementedError
 
+    def logout_all_sessions(self, user_id: UUID) -> None:
+        """
+        Revoke every active session/refresh token for the given user.
+
+        Used after a sensitive change (password reset) so any compromised
+        device loses access on the next request.
+
+        Args:
+            user_id: target user
+
+        Raises:
+            UserNotFoundError: If user not found.
+        """
+        raise NotImplementedError
+
     def update(self, user: UserDTO, data: UserUpdateDTO) -> None:
         """
         Updates user by user_id.
@@ -280,6 +295,12 @@ class UserRepositoryKeycloak:
             return self.identity_provider_client.logout(refresh_token)
         except InvalidRefreshTokenError:
             raise UserInvalidRefreshTokenError
+
+    def logout_all_sessions(self, user_id: UUID) -> None:
+        try:
+            self.identity_provider_client.logout_all_sessions(user_id)
+        except IdentityNotFound:
+            raise UserNotFoundError
 
     def update(self, user: UserDTO, data: UserUpdateDTO) -> None:
         try:

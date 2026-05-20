@@ -177,7 +177,7 @@ async def request_code(
     check_sms_quota(request, request_data.contact, redis, app_settings)
 
     try:
-        verification_id = service.request_code(
+        verification_id, channel_used = service.request_code(
             request_data.contact, request_data.platform, request_data.action
         )
 
@@ -193,9 +193,13 @@ async def request_code(
             action="request_code",
             auth_method="code",
             verification_id=str(verification_id),
+            delivery_channel=channel_used or "none",
         )
 
-        return CodeRequestResponse(verification_id=verification_id)
+        return CodeRequestResponse(
+            verification_id=verification_id,
+            delivery_channel=channel_used,
+        )
 
     except ValueError as e:
         log_warning(

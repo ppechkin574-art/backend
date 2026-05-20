@@ -219,6 +219,15 @@ class CodeRequestResponse(BaseModel):
     """Response for code request"""
 
     verification_id: UUID = Field(..., description="Verification ID for the requested code")
+    # Channel through which the OTP was actually delivered. Set by the
+    # backend's WA→SMS fallback chain so the mobile client can render the
+    # right subtitle ("Код отправлен в WhatsApp на номер..." vs SMS).
+    # `null` when delivery failed completely (e.g. SMSC route down AND
+    # WhatsApp not configured). Older clients ignore this field.
+    delivery_channel: str | None = Field(
+        default=None,
+        description="Channel used to deliver the code: 'whatsapp', 'sms', 'email', or null on failure",
+    )
 
 
 class CodeCheckResponse(BaseModel):

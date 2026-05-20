@@ -115,7 +115,9 @@ def _mask_contact(contact: str) -> str:
 class AuthServiceInterface(Protocol):
     """Authentication and user management service interface."""
 
-    def request_code(self, contact: str, platform: CodePlatform, action: ConfirmationCodeAction) -> UUID:
+    def request_code(
+        self, contact: str, platform: CodePlatform, action: ConfirmationCodeAction
+    ) -> tuple[UUID, str | None]:
         """Request a confirmation code for various actions.
 
         Args:
@@ -124,7 +126,11 @@ class AuthServiceInterface(Protocol):
             action: Action type (REGISTER, RESET_PASSWORD, CHANGE_EMAIL, etc.)
 
         Returns:
-            UUID: Verification ID for the code
+            (verification_id, channel_used): Verification UUID plus the
+            actual channel through which delivery was attempted/accepted
+            ("whatsapp", "sms", "email", "telegram", or None when every
+            channel failed). Routes surface channel_used to the client so
+            the UI can render the right subtitle.
 
         Raises:
             ValueError: Invalid contact format
@@ -438,7 +444,9 @@ class AuthService:
         self.CODE_EXPIRATION_SECONDS = 10 * 60
         self.MAX_ATTEMPTS = 3
 
-    def request_code(self, contact: str, platform: CodePlatform, action: ConfirmationCodeAction) -> UUID:
+    def request_code(
+        self, contact: str, platform: CodePlatform, action: ConfirmationCodeAction
+    ) -> tuple[UUID, str | None]:
         logger.info(
             "Request for %s confirmation code to contact %s via %s",
             action,
@@ -589,11 +597,43 @@ class AuthService:
         # the code is already in Redis (line above), check_code will accept
         # it. Saves SMS budget and avoids the inevitable «can't deliver»
         # error from SMSC for a fake number.
+        channel_used: str | None = None
         if is_reviewer_test_contact:
             logger.info("Reviewer bypass: skipping SMS send for %s", contact)
             sent_ok = True
+            # Bypass contacts conventionally appear in the UI as «sent via SMS»
+            # so the existing code-screen subtitle stays consistent.
+            channel_used = "sms"
         else:
-            sent_ok = self._send_confirmation_code(contact, code, platform)
+            # Look up the channel that worked for this contact in the last
+            # 10 min (within the OTP TTL). If we have one, prefer it — when
+            # WA worked we'll try WA again; when SMS worked we'll skip WA's
+            # ~1-2s dead leg entirely.
+            channel_hint_key = f"channel:contact:{contact}"
+            try:
+                prev = self._confirmation_codes._redis.get(channel_hint_key)
+                preferred_channel = prev.decode() if prev else None
+            except Exception:
+                preferred_channel = None
+
+            sent_ok, channel_used = self._send_confirmation_code(
+                contact, code, platform, preferred_channel=preferred_channel
+            )
+
+            # Persist the channel that succeeded so a resend within the OTP
+            # window reuses it. Skip on failure: we don't want to lock in
+            # a dead channel for retry attempts.
+            if sent_ok and channel_used:
+                try:
+                    self._confirmation_codes._redis.setex(
+                        channel_hint_key,
+                        self.CODE_EXPIRATION_SECONDS,
+                        channel_used,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Could not persist channel hint for %s: %s", contact, e
+                    )
 
         # Q4=A: only block on a real successful send. If SMS failed and we fell
         # back to dev channel, the user got nothing — let them retry without
@@ -605,13 +645,14 @@ class AuthService:
             self._confirmation_codes._redis.setex(block_key, 60, "1")
 
         logger.info(
-            "Code %s requested for contact: %s, verification_id: %s, sent_ok: %s",
+            "Code %s requested for contact: %s, verification_id: %s, sent_ok: %s, channel: %s",
             action,
             contact,
             verification_id,
             sent_ok,
+            channel_used,
         )
-        return verification_id
+        return (verification_id, channel_used)
 
     def check_code(self, verification_id: UUID, code: int, action: ConfirmationCodeAction) -> bool:
         logger.info("Checking code %s for verification_id: %s", action, verification_id)
@@ -1046,55 +1087,142 @@ class AuthService:
 
         return phone
 
-    def _send_confirmation_code(self, contact: str, code: int, platform: CodePlatform) -> bool:
-        """Returns True iff the primary channel (SMS/Email/WhatsApp/Telegram)
-        accepted the message. False means the dev fallback ran (or even that
-        failed) — caller uses this to decide whether to apply the per-contact
-        resend block."""
-        message_text = f"Код подтверждения AIMA: {code}"
+    def _whatsapp_is_configured(self) -> bool:
+        """True iff Wazzup has real credentials (not the 'changeme' default).
 
+        Gate for the WA→SMS chain: until ops sets real WAZZUP__API_KEY and
+        WAZZUP__TEMPLATE_ID, sending via WhatsApp will fail (or worse, in
+        debug-mode the WazzupClient returns a fake success without actually
+        sending — users see «Код отправлен в WhatsApp» and never get it).
+        Skipping the WA leg entirely when not configured is the safe default.
+        """
         try:
-            message = NotificationMessageDTO(
-                to=contact,
-                message=message_text,
-                platform=platform,
-            )
+            settings = self._whatsapp_client.wazzup_client.settings
+        except AttributeError:
+            return False
+        if not settings.api_key or settings.api_key.strip().lower() == "changeme":
+            return False
+        if not settings.template_id or settings.template_id.strip().lower() == "changeme":
+            return False
+        if settings.debug:
+            # Debug mode simulates success without sending. Treat as not
+            # configured for production-flow purposes.
+            return False
+        return True
 
-            if platform == CodePlatform.EMAIL:
+    def _try_whatsapp_otp(self, contact: str, code: int) -> bool:
+        """Direct call to WazzupClient (bypasses NotificationClientWhatsApp.notify
+        which has an internal silent-fallback to the dev Telegram channel that
+        would mask a real failure from us). Returns True iff Wazzup accepted.
+
+        Wazzup template expects just the code value as the substituted
+        parameter — the AIMA-prefixed text lives inside the pre-approved
+        WhatsApp Business template on Meta's side.
+        """
+        try:
+            result = self._whatsapp_client.wazzup_client.send_message(
+                phone=contact, message=str(code)
+            )
+            if isinstance(result, dict) and result.get("error"):
+                logger.warning(
+                    "WhatsApp soft-failure for %s: %s", contact, result.get("error")
+                )
+                return False
+            logger.info("Code sent via WhatsApp: %s", contact)
+            return True
+        except Exception as e:
+            logger.warning(
+                "WhatsApp delivery failed for %s, will fallback to next channel: %s",
+                contact,
+                e,
+            )
+            return False
+
+    def _send_confirmation_code(
+        self,
+        contact: str,
+        code: int,
+        platform: CodePlatform,
+        preferred_channel: str | None = None,
+    ) -> tuple[bool, str | None]:
+        """Send the OTP and return (sent_ok, channel_used).
+
+        For phone-based contacts (platform=SMS), runs an automatic
+        WhatsApp→SMS fallback chain — first channel that accepts wins.
+        Set `preferred_channel` to the channel that worked on a previous
+        call for the same contact; if it was "sms" we skip the WhatsApp
+        leg entirely (it already failed for this user, no point retrying
+        and wasting a Wazzup request + ~1s latency).
+
+        Email/explicit-WhatsApp/explicit-Telegram platforms send via that
+        single channel with no fallback — those are intentional channel
+        choices by the caller, not OTP delivery.
+
+        channel_used is one of: "whatsapp", "sms", "email", "telegram",
+        or None when every attempted channel failed.
+        """
+        message_text = f"Код подтверждения AIMA: {code}"
+        message = NotificationMessageDTO(
+            to=contact, message=message_text, platform=platform
+        )
+
+        # Email: no chain, single channel.
+        if platform == CodePlatform.EMAIL:
+            try:
                 self._email_client.notify(message)
                 logger.info("Code sent via Email: %s", contact)
-                return True
-            elif platform == CodePlatform.SMS:
+                return (True, "email")
+            except Exception as e:
+                logger.exception("Error sending Email: %s", e)
+                return (False, None)
+
+        # Explicit WhatsApp request — single channel, no fallback.
+        if platform == CodePlatform.WHATSAPP:
+            ok = self._try_whatsapp_otp(contact, code)
+            if not ok:
+                self._send_code_to_dev_channel(
+                    contact, code, "WhatsApp", "wazzup send failed"
+                )
+            return (True if ok else False, "whatsapp" if ok else None)
+
+        # Explicit Telegram (legacy ops-channel path — not user OTP).
+        if platform == CodePlatform.TELEGRAM:
+            try:
+                self._notification_client.notify(message)
+                logger.info("Code sent via Telegram: %s", contact)
+                return (True, "telegram")
+            except Exception as e:
+                logger.exception("Error sending Telegram: %s", e)
+                return (False, None)
+
+        # SMS (default phone case) — run the chain.
+        # Channel order: WhatsApp first (cheap + fast), SMS fallback.
+        # If the user previously succeeded via SMS we know WA doesn't work
+        # for them — skip the failing leg.
+        chain: list[str] = []
+        if self._whatsapp_is_configured() and preferred_channel != "sms":
+            chain.append("whatsapp")
+        chain.append("sms")
+
+        for channel in chain:
+            if channel == "whatsapp":
+                if self._try_whatsapp_otp(contact, code):
+                    return (True, "whatsapp")
+                # WA failed → continue to SMS
+                continue
+            if channel == "sms":
                 try:
                     self._sms_client.notify(message)
                     logger.info("Code sent via SMS: %s", contact)
-                    return True
+                    return (True, "sms")
                 except Exception as e:
-                    logger.exception("Error sending SMS: %s", e)
+                    logger.warning("SMS delivery failed for %s: %s", contact, e)
                     self._send_code_to_dev_channel(contact, code, "SMS", str(e))
-                    return False
-            elif platform == CodePlatform.WHATSAPP:
-                try:
-                    self._whatsapp_client.notify(message)
-                    logger.info("Code sent via WhatsApp: %s", contact)
-                    return True
-                except Exception as e:
-                    logger.exception("Error sending WhatsApp: %s", e)
-                    self._send_code_to_dev_channel(contact, code, "WhatsApp", str(e))
-                    return False
-            elif platform == CodePlatform.TELEGRAM:
-                self._notification_client.notify(message)
-                logger.info("Code sent via Telegram: %s", contact)
-                return True
-            else:
-                raise ValueError(f"Unsupported platform: {platform}")
+                    # No more channels in chain — fall through to "all failed"
+                    continue
 
-        except Exception as e:
-            # Q3=B + same principle for logs: never persist the actual code
-            # in stdout/Sentry/Railway logs — that turned the dev-fallback
-            # into a free auth bypass for anyone with log access.
-            logger.exception("Error sending code (platform=%s): %s", platform, e)
-            return False
+        # Every channel exhausted.
+        return (False, None)
 
     def _send_code_to_dev_channel(self, contact: str, code: int, source: str, error_msg: str = "") -> None:
         """Notify the dev/ops Telegram channel that primary delivery failed.

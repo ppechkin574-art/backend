@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import UUID, Boolean, Column, Enum, Float, ForeignKey, Integer, String
+from sqlalchemy import UUID, Boolean, Column, Enum, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from database import Base
@@ -35,6 +35,8 @@ class Topic(Base):
     guid = Column(UUID(as_uuid=True), default=uuid.uuid4, unique=True)
     subject_id = Column(ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False)
     name = Column(String, unique=True, nullable=False)
+    # Kazakh cache column (Phase 7b). Nullable; null → fall back to `name`.
+    name_kk = Column(String, nullable=True)
     difficulty = Column(Enum(Difficulty), nullable=True)
 
     subject = relationship(Subject, back_populates="topics", passive_deletes=True)
@@ -97,6 +99,15 @@ class Question(Base):
     hint_id = Column(ForeignKey("hints.id", ondelete="CASCADE"), nullable=True)
     difficulty = Column(Enum(Difficulty), nullable=True)
     question_type = Column(Enum(QuestionType), nullable=True, default=QuestionType.single_choice)
+
+    # Kazakh cache columns (Phase 7b pilot — Mathematics-only for now).
+    # Read by api-side locale resolver when Accept-Language: kk is set.
+    # Null → fall back to building text from `link.blocks` as before.
+    # `hint_text_kk` is denormalised onto the question row to avoid an
+    # extra join through `hints` — see migration a7c4f9e1b2d8 for the
+    # rationale.
+    question_text_kk = Column(Text, nullable=True)
+    hint_text_kk = Column(Text, nullable=True)
 
     topic = relationship("Topic", back_populates="questions", passive_deletes=True)
     subject = relationship("Subject", back_populates="questions", passive_deletes=True)

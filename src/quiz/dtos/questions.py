@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from quiz.dtos.enums import Difficulty, QuestionType
+from quiz.dtos.enums import BlockType, Difficulty, QuestionType
 from quiz.dtos.hint import (
     HintCreateRepositoryDTO,
     HintCreateServiceDTO,
@@ -254,3 +254,77 @@ class QuestionsStatsDTO(BaseModel):
     questions_in_ent_options: int
     questions_by_subject: list[dict]
     questions_by_topic: list[dict]
+
+
+# ─────────────────────── Phase 7b locale helpers ───────────────────────
+#
+# These helpers post-process an already-built `QuestionRepositoryDTO` /
+# `HintRepositoryDTO` to swap in Kazakh text from the cache columns
+# (`question_text_kk`, `hint_text_kk`) added by migration a7c4f9e1b2d8.
+#
+# Design notes:
+# - We do NOT mutate the DTO in-place; we return a NEW blocks list
+#   with the FIRST text block's value replaced by the kk string.
+#   Media/video blocks are preserved as-is (formulas and pictures
+#   don't translate).
+# - If the FIRST block isn't a text block (rare — most questions open
+#   with a text intro), we prepend a synthetic text block at order=0
+#   and shift the rest down by one.  This guarantees the kk string
+#   reaches the client without losing any media.
+# - When `kk_text` is None/empty we return the blocks unchanged.
+#   The caller can then decide based on `locale` whether to use the
+#   result of this helper or skip it entirely.
+
+
+def localize_blocks_with_kk_text(
+    blocks: list[TextBlockServiceDTO],
+    kk_text: str | None,
+) -> list[TextBlockServiceDTO]:
+    """Return a new `blocks` list where the leading text block's value
+    is replaced by `kk_text`.  If no text block exists, prepend one.
+
+    `blocks` is not mutated.  Safe to call when `kk_text` is `None` —
+    in that case the original list is returned (identity, not a copy).
+    """
+    if not kk_text:
+        return blocks
+
+    new_blocks: list[TextBlockServiceDTO] = []
+    replaced = False
+    for block in blocks:
+        if not replaced and block.type == BlockType.text:
+            new_blocks.append(
+                TextBlockServiceDTO(
+                    id=block.id,
+                    order=block.order,
+                    type=BlockType.text,
+                    value=kk_text,
+                )
+            )
+            replaced = True
+        else:
+            new_blocks.append(block)
+
+    if not replaced:
+        # No text block in the source — synthesise one at order=0 and
+        # shift everything else down by one slot.
+        shifted = [
+            TextBlockServiceDTO(
+                id=b.id,
+                order=b.order + 1,
+                type=b.type,
+                value=b.value,
+            )
+            for b in blocks
+        ]
+        new_blocks = [
+            TextBlockServiceDTO(
+                id=None,
+                order=0,
+                type=BlockType.text,
+                value=kk_text,
+            ),
+            *shifted,
+        ]
+
+    return new_blocks

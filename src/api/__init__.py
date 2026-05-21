@@ -10,6 +10,7 @@ from api.exceptions.handlers import setup_exception_handlers
 from api.lifespan import lifespan
 from api.middlewares.contact_extractor import ContactExtractorMiddleware
 from api.middlewares.exception_logging_middleware import ExceptionLoggingMiddleware
+from api.middlewares.locale import LocaleMiddleware
 from api.middlewares.rate_limit import (
     custom_rate_limit_exceeded_handler,
     limiter,
@@ -117,6 +118,11 @@ def create_app() -> FastAPI:
     )
 
     app.add_middleware(LoggingContextMiddleware)
+    # LocaleMiddleware parses Accept-Language and exposes
+    # request.state.locale ("ru" or "kk") so DTO converters can choose
+    # the right text source.  Cheap (one header read + one string op),
+    # safe to keep close to the route layer.
+    app.add_middleware(LocaleMiddleware)
     # ContactExtractor must wrap the route layer so that
     # request.state.contact is populated by the time slowapi's key_func
     # runs during route dispatch. Added BEFORE ExceptionLogging so the

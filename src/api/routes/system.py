@@ -84,6 +84,39 @@ async def kk_pilot_status(request: Request):
                 "ORDER BY id LIMIT 1"
             )
         ).first()
+        # Per-subject coverage — helps decide whether the pilot needs
+        # more translations sourced externally or whether the import
+        # missed rows that ARE available in the source JSON.
+        coverage_rows = session.execute(
+            text(
+                """
+                SELECT
+                    s.name AS subject,
+                    COUNT(q.id) AS total,
+                    COUNT(q.question_text_kk) AS with_kk
+                FROM subjects s
+                LEFT JOIN questions q ON q.subject_id = s.id
+                GROUP BY s.name
+                ORDER BY s.name
+                """
+            )
+        ).fetchall()
+        # IDs of Math questions still lacking kk — capped to 20 so the
+        # response stays small.  Useful for cross-checking against the
+        # source JSON.
+        missing_math_ids = session.execute(
+            text(
+                """
+                SELECT q.id
+                FROM questions q
+                JOIN subjects s ON s.id = q.subject_id
+                WHERE s.name = 'Математика'
+                  AND q.question_text_kk IS NULL
+                ORDER BY q.id
+                LIMIT 20
+                """
+            )
+        ).fetchall()
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"query failed: {exc!r}"}
     finally:
@@ -96,6 +129,11 @@ async def kk_pilot_status(request: Request):
         "sample": (
             {"id": sample[0], "text_preview": sample[1]} if sample else None
         ),
+        "coverage_by_subject": [
+            {"subject": row[0], "total": row[1], "with_kk": row[2]}
+            for row in coverage_rows
+        ],
+        "math_missing_kk_ids_sample": [row[0] for row in missing_math_ids],
     }
 
 

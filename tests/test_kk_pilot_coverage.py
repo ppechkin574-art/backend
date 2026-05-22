@@ -42,20 +42,23 @@ def test_all_twelve_subjects_present_in_coverage(http) -> None:
     assert len(coverage) == 12, coverage
 
 
-def test_non_math_subjects_fully_translated(http) -> None:
-    """Every subject except Mathematics must be at 100% kk coverage.
+def test_non_math_non_english_subjects_fully_translated(http) -> None:
+    """Every subject except Math and English must be at 100% kk coverage.
 
-    After `f2b3c4d5e6a8` (full rollout, 22.05.2026) every non-Math row
-    in the catalogue has a kk string — confirms the bulk unnest UPDATE
-    landed everything we threw at it.
+    Math is intentionally partial — 170/174 (4 nulled qids from
+    `f1a2b3c4d5e7`).  English («Английский») is intentionally 0/385
+    — `f3c4d5e6a8b9` nullified the whole subject because the AI source
+    translated the English test content too (operator's catch
+    22.05.2026), so RU fallback is the safer rendering.
+
+    Everybody else must stay at 100%.
     """
     body = http.get("/system/kk-pilot-status").json()
     coverage_by_name = {row["subject"]: row for row in body["coverage_by_subject"]}
 
-    # Math is intentionally partial — 170/174 (4 nulled qids).  Every-
-    # body else must be 100%.
+    exceptions = {"Математика", "Английский"}
     for name, row in coverage_by_name.items():
-        if name == "Математика":
+        if name in exceptions:
             continue
         total = row["total"]
         with_kk = row["with_kk"]
@@ -64,6 +67,30 @@ def test_non_math_subjects_fully_translated(http) -> None:
             f"Subject {name!r} dropped kk rows: {with_kk}/{total}. "
             f"A later migration probably wiped this subject's kk column."
         )
+
+
+def test_english_subject_intentionally_null_kk(http) -> None:
+    """English («Английский») must be at 0/385 kk after `f3c4d5e6a8b9`.
+
+    The AI source export translated English test content into Kazakh
+    — answers like `[advice, advises, advising, advices]` became
+    `[кеңес, кеңес береді, кеңес беру, кеңестер]`, breaking grammar
+    exercises.  Until a stems-only re-translation lands, English
+    stays RU-only on purpose.  If `with_kk` ever drifts up, the
+    null-migration was reverted or somebody re-ran the rollout
+    without filtering English out.
+    """
+    body = http.get("/system/kk-pilot-status").json()
+    eng = next(
+        row for row in body["coverage_by_subject"] if row["subject"] == "Английский"
+    )
+    assert eng["total"] == 385, eng
+    assert eng["with_kk"] == 0, (
+        f"English subject has {eng['with_kk']} kk rows but should have 0. "
+        f"f3c4d5e6a8b9 was probably reverted or rolled-over. The kk "
+        f"strings for this subject break the test (English content "
+        f"translated to Kazakh)."
+    )
 
 
 def test_math_keeps_170_of_174_translated(http) -> None:

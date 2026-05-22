@@ -31,4 +31,4 @@ COPY . .
 
 EXPOSE 8000
 
-CMD sh -c "alembic upgrade head && python src/main.py"
+CMD ["python", "src/main.py"]

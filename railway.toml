@@ -22,9 +22,16 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-# startCommand intentionally omitted — Dockerfile's CMD runs
-# `alembic upgrade head && python src/main.py`, which is the contract.
-# Overriding here would skip migrations and break deploys.
+# preDeployCommand runs in its own short-lived container BEFORE Railway
+# starts the new web replica and its healthcheck window.  Long alembic
+# chains (schema ALTER + bulk data import) can't time out the web boot
+# any more.  Required after the variant kk pilot landed 22.05.2026 —
+# even with bulk-update via unnest the migration phase + python boot
+# exceeded the 30s inline healthcheck budget.
+preDeployCommand = "alembic upgrade head"
+
+# Dockerfile CMD is now just `python src/main.py` — startCommand stays
+# omitted.  Migrations have already been applied by the time this runs.
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "on_failure"

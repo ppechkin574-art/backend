@@ -11,6 +11,7 @@ from api.dependencies import (
     get_user,
     require_active_subscription,
 )
+from api.middlewares.locale import get_locale
 from api.exceptions.documentation import (
     get_common_responses,
     get_ent_responses,
@@ -368,6 +369,7 @@ async def get_attempt_detail(
     attempt_id: int,
     student: StudentDTO = Depends(get_student),
     service: EntAttemptServiceInterface = Depends(get_ent_attempts_service),
+    locale: str = Depends(get_locale),
     _=Depends(require_active_subscription()),
 ):
     log_info(
@@ -376,9 +378,10 @@ async def get_attempt_detail(
         action="get_attempt_detail",
         resource="ent_attempt",
         attempt_id=attempt_id,
+        locale=locale,
     )
 
-    result = service.get_attempt_detail(attempt_id, student.id)
+    result = service.get_attempt_detail(attempt_id, student.id, locale=locale)
 
     log_info(
         "Attempt detail retrieved successfully",

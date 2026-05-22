@@ -65,3 +65,16 @@ class LocaleMiddleware(BaseHTTPMiddleware):
     ) -> Response:
         request.state.locale = resolve_locale(request.headers.get("accept-language"))
         return await call_next(request)
+
+
+def get_locale(request: Request) -> str:
+    """FastAPI `Depends()` accessor for the resolved request locale.
+
+    Returns whatever `LocaleMiddleware` stamped on `request.state.locale`,
+    or the default `"ru"` if the middleware didn't run for some reason
+    (e.g. a route bypassed via TestClient that mounts the router without
+    the full ASGI app).  Endpoints can write `locale: str = Depends(get_locale)`
+    and pass the value through to services without reaching for `request`
+    themselves — keeps services testable without an ASGI fixture.
+    """
+    return getattr(request.state, "locale", _DEFAULT_LOCALE)

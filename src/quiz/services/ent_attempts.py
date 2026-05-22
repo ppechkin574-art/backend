@@ -1200,8 +1200,13 @@ class EntAttemptService:
             logger.info("Found %s attempts for student %s", len(history), student_guid)
             return history
 
-    @cached(strategy=CacheStrategy.USER, ttl=604800, resource="ent_attempt_detail")
-    def get_attempt_detail(self, attempt_id: int, student_guid: UUID):
+    # NB: not @cached — Phase 7b adds a `locale` parameter and the existing
+    # USER strategy doesn't key on it, so a cached `ru` response would leak
+    # into `kk` requests for the same student.  Disabling the cache for this
+    # one endpoint is acceptable in the pilot — the screen is only opened
+    # after a test completes, not on every poll, so it's already cold-pathy.
+    # Future improvement: extend `@cached` with explicit cache_key_fields.
+    def get_attempt_detail(self, attempt_id: int, student_guid: UUID, locale: str = "ru"):
         """Получить детальную информацию о попытке с ответами"""
         from quiz.dtos.ent_attempts import (
             EntAttemptBySubjectDetailDTO,
@@ -1299,6 +1304,7 @@ class EntAttemptService:
                     questions_repo,
                     user_answers_map,
                     default_subject_name=default_subject_name,
+                    locale=locale,
                 )
 
                 return EntAttemptBySubjectDetailDTO(
@@ -1324,6 +1330,7 @@ class EntAttemptService:
                         subject_group.questions,
                         user_answers_map,
                         default_subject_name=subject_group.subject_name,
+                        locale=locale,
                     )
                     questions_by_subject.append(
                         SubjectQuestionsWithAnswersDTO(
@@ -1350,9 +1357,20 @@ class EntAttemptService:
         questions,
         user_answers_map: dict,
         default_subject_name: str | None = None,
+        locale: str = "ru",
     ) -> list:
-        """Построить список вопросов с информацией об ответах"""
+        """Построить список вопросов с информацией об ответах.
+
+        Phase 7b — when `locale="kk"`, splice the cached Kazakh
+        `question_text_kk` / `hint_text_kk` columns into the rendered
+        block list via the dedicated helpers.  Fully transparent when
+        the kk columns are NULL (e.g. subjects other than Математика
+        in the pilot) — the helpers no-op and return the original
+        blocks list unchanged.
+        """
         from quiz.dtos.ent_attempts import QuestionWithAnswerDTO, VariantWithAnswerDTO
+        from quiz.dtos.hint import localize_hint_blocks_with_kk_text
+        from quiz.dtos.questions import localize_blocks_with_kk_text
 
         questions_with_answers = []
 
@@ -1383,6 +1401,38 @@ class EntAttemptService:
             # Transform hint blocks for video type
             transformed_hint = transform_video_hint(question_dto.hint)
 
+            # Phase 7b — splice cached Kazakh text into blocks/hint when
+            # the user's locale is `kk` and the columns are populated.
+            # Helpers no-op when their respective `_kk` column is NULL,
+            # so this is safe to call unconditionally for kk-locale
+            # requests across subjects whose data hasn't been imported.
+            question_blocks = question_dto.blocks
+            if locale == "kk":
+                question_text_kk = getattr(question_obj, "question_text_kk", None)
+                if question_text_kk is None and hasattr(question_obj, "question"):
+                    # `question_obj` is a join wrapper (e.g. EntOptionQuestion)
+                    # — peek at the inner `.question` row for the column.
+                    question_text_kk = getattr(
+                        question_obj.question, "question_text_kk", None
+                    )
+                question_blocks = localize_blocks_with_kk_text(
+                    question_blocks, question_text_kk
+                )
+
+                hint_text_kk = getattr(question_obj, "hint_text_kk", None)
+                if hint_text_kk is None and hasattr(question_obj, "question"):
+                    hint_text_kk = getattr(
+                        question_obj.question, "hint_text_kk", None
+                    )
+                if transformed_hint is not None and hint_text_kk:
+                    transformed_hint = transformed_hint.model_copy(
+                        update={
+                            "blocks": localize_hint_blocks_with_kk_text(
+                                transformed_hint.blocks, hint_text_kk
+                            )
+                        }
+                    )
+
             questions_with_answers.append(
                 QuestionWithAnswerDTO(
                     id=question_dto.id,
@@ -1391,7 +1441,7 @@ class EntAttemptService:
                     subject_id=question_dto.subject_id or 0,
                     difficulty=question_dto.difficulty,
                     type=question_dto.type,
-                    blocks=question_dto.blocks,
+                    blocks=question_blocks,
                     hint=transformed_hint,
                     variants=variants,
                     question_number=idx + 1,

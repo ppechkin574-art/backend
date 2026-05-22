@@ -281,10 +281,36 @@ def localize_blocks_with_kk_text(
     kk_text: str | None,
 ) -> list[TextBlockServiceDTO]:
     """Return a new `blocks` list where the leading text block's value
-    is replaced by `kk_text`.  If no text block exists, prepend one.
+    is replaced by `kk_text` and ANY subsequent text blocks are
+    dropped — media (image / video / formula) blocks are preserved
+    at their original position.
 
-    `blocks` is not mutated.  Safe to call when `kk_text` is `None` —
-    in that case the original list is returned (identity, not a copy).
+    Why we drop the trailing text blocks
+    ------------------------------------
+    The source-side kk export ships **one** `question_text` per
+    question (no per-block segmentation). DB-side that same content
+    is sometimes split into several `TextBlock` rows, interleaved
+    with image rows (e.g. qids 4261-4265 «Елдос пен Руслан / ферма /
+    секциялар» — image / text / image / text). Replacing only the
+    first text block left the trailing RU prose visible after the
+    image, producing a mixed kk-on-top / RU-below render that the
+    operator flagged 22.05.2026.
+
+    The pilot decision is: kk takes the whole textual surface area.
+    Trailing text rows are residual RU splits of the same paragraph
+    we already injected, so dropping them is non-destructive —
+    nothing in the source kk_text would have been *more* informative
+    than what landed in the lead block.
+
+    Edge cases
+    ----------
+    * No text block at all → synthesise one at order=0 and shift the
+      rest down by one slot (image-only questions get a kk caption).
+    * `kk_text` is None/empty → return the original list unchanged
+      (identity, not a copy) — RU fallback for non-pilot subjects.
+    * Variants pass through this helper too (one text block per
+      variant in practice), so they keep their natural single-block
+      behaviour.
     """
     if not kk_text:
         return blocks
@@ -292,18 +318,20 @@ def localize_blocks_with_kk_text(
     new_blocks: list[TextBlockServiceDTO] = []
     replaced = False
     for block in blocks:
-        if not replaced and block.type == BlockType.text:
-            new_blocks.append(
-                TextBlockServiceDTO(
-                    id=block.id,
-                    order=block.order,
-                    type=BlockType.text,
-                    value=kk_text,
+        if block.type == BlockType.text:
+            if not replaced:
+                new_blocks.append(
+                    TextBlockServiceDTO(
+                        id=block.id,
+                        order=block.order,
+                        type=BlockType.text,
+                        value=kk_text,
+                    )
                 )
-            )
-            replaced = True
-        else:
-            new_blocks.append(block)
+                replaced = True
+            # Subsequent text blocks are dropped — see docstring.
+            continue
+        new_blocks.append(block)
 
     if not replaced:
         # No text block in the source — synthesise one at order=0 and

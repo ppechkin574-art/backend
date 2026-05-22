@@ -49,4 +49,54 @@ def _ping_redis(request: Request) -> bool:
         return False
 
 
+@router.get("/system/kk-pilot-status")
+async def kk_pilot_status(request: Request):
+    """Phase 7b pilot diagnostic — does NOT require auth because it
+    only exposes aggregate counts and a non-PII sample question id.
+
+    Returns the alembic head the worker booted with + how many
+    questions currently have `question_text_kk` populated + a single
+    sample id for spot-checking via psql.  Used to verify the data
+    migration applied without needing shell access to Railway.
+    """
+    from sqlalchemy import text
+
+    try:
+        container = request.app.state.container
+        db = container.database()
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"db DI unavailable: {exc!r}"}
+
+    session = db.session
+    try:
+        alembic_rev = session.execute(
+            text("SELECT version_num FROM alembic_version")
+        ).scalar()
+        kk_count = session.execute(
+            text(
+                "SELECT COUNT(*) FROM questions WHERE question_text_kk IS NOT NULL"
+            )
+        ).scalar()
+        sample = session.execute(
+            text(
+                "SELECT id, LEFT(question_text_kk, 80) "
+                "FROM questions WHERE question_text_kk IS NOT NULL "
+                "ORDER BY id LIMIT 1"
+            )
+        ).first()
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "error": f"query failed: {exc!r}"}
+    finally:
+        session.close()
+
+    return {
+        "ok": True,
+        "alembic_head": alembic_rev,
+        "questions_with_kk_text": kk_count,
+        "sample": (
+            {"id": sample[0], "text_preview": sample[1]} if sample else None
+        ),
+    }
+
+
 routers = [router]

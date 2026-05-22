@@ -77,44 +77,69 @@ def upgrade() -> None:
     )
 
     connection = op.get_bind()
-    updated = 0
-    skipped_empty = 0
-    mismatched: list[tuple[int, int, int]] = []  # (qid, src_count, db_count)
 
+    # 1) Resolve question_id → ordered variant ids in ONE round-trip.
+    # Per-row SELECTs in a loop pushed the deploy past the 30s
+    # healthcheck window — see Railway failed deploy 22.05.2026 21:40.
+    question_ids = [
+        e["question_id"] for e in entries if e.get("question_id")
+    ]
+    if not question_ids:
+        log.info("Phase 7b variants: seed has no question_ids; nothing to do")
+        return
+
+    id_rows = connection.execute(
+        sa.text(
+            "SELECT question_id, id FROM variants "
+            "WHERE question_id IN :ids ORDER BY question_id, id"
+        ).bindparams(sa.bindparam("ids", expanding=True)),
+        {"ids": question_ids},
+    ).fetchall()
+    qid_to_variant_ids: dict[int, list[int]] = {}
+    for qid, vid in id_rows:
+        qid_to_variant_ids.setdefault(qid, []).append(vid)
+
+    # 2) Build flat (variant_id, kk_str) pairs.  Skip empty kk strings
+    # (leaves variant_text_kk NULL → RU fallback at read time).
+    update_pairs: list[tuple[int, str]] = []
+    skipped_empty = 0
+    mismatched: list[tuple[int, int, int]] = []
     for entry in entries:
         question_id = entry.get("question_id")
         src_variants = entry.get("variants") or []
         if not question_id or not src_variants:
             continue
-
-        db_rows = connection.execute(
-            sa.text(
-                "SELECT id FROM variants WHERE question_id = :qid ORDER BY id ASC"
-            ),
-            {"qid": question_id},
-        ).fetchall()
-        db_ids = [row[0] for row in db_rows]
-
+        db_ids = qid_to_variant_ids.get(question_id, [])
         if len(db_ids) != len(src_variants):
             mismatched.append((question_id, len(src_variants), len(db_ids)))
-
-        # Pair as many as exist on both sides.  Truncate the longer side
-        # silently — counted in `mismatched` above for diagnostics.
         for variant_id, kk_str in zip(db_ids, src_variants):
             if not kk_str:
                 skipped_empty += 1
                 continue
-            connection.execute(
-                sa.text(
-                    "UPDATE variants SET variant_text_kk = :v WHERE id = :id"
-                ),
-                {"v": kk_str, "id": variant_id},
-            )
-            updated += 1
+            update_pairs.append((variant_id, kk_str))
+
+    # 3) Bulk UPDATE in a single statement via Postgres `unnest`.  Two
+    # parallel arrays unzip into a virtual `(id, kk)` table that joins
+    # against `variants` by id.  ~750 rows ship as two array params.
+    if update_pairs:
+        ids_arr = [p[0] for p in update_pairs]
+        kk_arr = [p[1] for p in update_pairs]
+        connection.execute(
+            sa.text(
+                """
+                UPDATE variants
+                SET variant_text_kk = u.kk
+                FROM unnest(CAST(:ids AS integer[]), CAST(:kk AS text[]))
+                     AS u(id, kk)
+                WHERE variants.id = u.id
+                """
+            ),
+            {"ids": ids_arr, "kk": kk_arr},
+        )
 
     log.info(
         "Phase 7b variants: updated=%d skipped_empty=%d mismatched_questions=%d",
-        updated,
+        len(update_pairs),
         skipped_empty,
         len(mismatched),
     )

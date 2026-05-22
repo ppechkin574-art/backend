@@ -48,7 +48,9 @@ logger = logging.getLogger(__name__)
 
 class EntAttemptServiceInterface(Protocol):
     def create(
-        self, attempt_params: EntAttemptCreateServiceDTO
+        self,
+        attempt_params: EntAttemptCreateServiceDTO,
+        locale: str = "ru",
     ) -> EntAttemptServiceDTO:
         raise NotImplementedError
 
@@ -84,14 +86,17 @@ class EntAttemptService:
         self._cashback_service = cashback_service
 
     def create(
-        self, attempt_params: EntAttemptCreateServiceDTO
+        self,
+        attempt_params: EntAttemptCreateServiceDTO,
+        locale: str = "ru",
     ) -> EntAttemptServiceDTO:
         logger.info(
-            "Starting ENT attempt creation for student: %s, exam_type: %s, option: %s, combination: %s",
+            "Starting ENT attempt creation for student: %s, exam_type: %s, option: %s, combination: %s, locale: %s",
             attempt_params.student_guid,
             attempt_params.exam_type,
             attempt_params.ent_option_id,
             attempt_params.subject_combination_id,
+            locale,
         )
 
         logger.info("Received started_at: %s", attempt_params.started_at)
@@ -137,7 +142,10 @@ class EntAttemptService:
                     existing.id,
                     existing.exam_type.value,
                 )
-                return self._return_existing_attempt(existing)
+                resumed = self._return_existing_attempt(existing)
+                if locale == "kk":
+                    self._localize_questions_kk(resumed)
+                return resumed
 
             # Генерация вопросов для полного экзамена
             precomputed_full_exam_questions = None
@@ -175,6 +183,9 @@ class EntAttemptService:
                 len(questions_service),
                 result.student_guid,
             )
+
+            if locale == "kk":
+                self._localize_questions_kk(result)
 
             return result
 
@@ -732,6 +743,72 @@ class EntAttemptService:
                 return self._return_existing_attempt(existing)
             else:
                 raise
+
+    def _localize_questions_kk(self, attempt_dto: EntAttemptServiceDTO) -> None:
+        """Splice `question_text_kk` / `hint_text_kk` into each question's
+        blocks for `attempt_dto.questions` (in-place).
+
+        Why this lives on the create path
+        ---------------------------------
+        `create-full-exam` (and `create` for single-subject) returns the
+        question list inline. The result is consumed by the Flutter test
+        screen and persists for the entire attempt — re-fetches happen
+        only via `get_attempt_detail` (which has its own kk wiring).
+        Without this hook the Kazakh user sees Russian text throughout
+        the test even after the pilot's data import landed.
+
+        Safety
+        ------
+        * No-op when no question carries `question_text_kk` (e.g. Physics
+          / non-Math subjects in the Phase 7b pilot scope).
+        * One batched SELECT, two columns — cheap relative to the
+          existing question-bank join.
+        * Hint blocks are spliced only when `transform_video_hint` left
+          something to splice into.
+        """
+        from sqlalchemy import bindparam, text
+
+        from quiz.dtos.hint import localize_hint_blocks_with_kk_text
+        from quiz.dtos.questions import localize_blocks_with_kk_text
+
+        questions_field = attempt_dto.questions
+        if not questions_field:
+            return
+
+        is_grouped = isinstance(questions_field[0], SubjectQuestionsDTO)
+        if is_grouped:
+            flat_questions: list[QuestionServiceDTO] = [
+                q for group in questions_field for q in group.questions
+            ]
+        else:
+            flat_questions = list(questions_field)
+
+        question_ids = [q.id for q in flat_questions if q.id is not None]
+        if not question_ids:
+            return
+
+        stmt = text(
+            "SELECT id, question_text_kk, hint_text_kk "
+            "FROM questions WHERE id IN :ids"
+        ).bindparams(bindparam("ids", expanding=True))
+        rows = self._uow.session.execute(stmt, {"ids": question_ids}).fetchall()
+        kk_map: dict[int, tuple[str | None, str | None]] = {
+            row[0]: (row[1], row[2]) for row in rows
+        }
+
+        for q in flat_questions:
+            if q.id is None:
+                continue
+            kk = kk_map.get(q.id)
+            if not kk:
+                continue
+            q_text_kk, hint_text_kk = kk
+            if q_text_kk:
+                q.blocks = localize_blocks_with_kk_text(q.blocks, q_text_kk)
+            if hint_text_kk and q.hint is not None and getattr(q.hint, "blocks", None):
+                q.hint.blocks = localize_hint_blocks_with_kk_text(
+                    q.hint.blocks, hint_text_kk
+                )
 
     def _load_subject_questions(self, ent_option_id):
         """Загрузить вопросы по предмету"""

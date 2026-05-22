@@ -136,6 +136,7 @@ async def create_ent_attempt(
     attempt_data: StartAttemptRequestDTO,
     student: StudentDTO = Depends(get_student),
     service: EntAttemptServiceInterface = Depends(get_ent_attempts_service),
+    locale: str = Depends(get_locale),
     _=Depends(require_active_subscription()),
 ):
     log_info(
@@ -144,8 +145,12 @@ async def create_ent_attempt(
         action="create_ent_attempt",
         resource="ent_attempt",
         ent_option_id=attempt_data.ent_option_id,
+        locale=locale,
     )
-    result = service.create(to_ent_attempt_create_dto_service(attempt_data, student))
+    result = service.create(
+        to_ent_attempt_create_dto_service(attempt_data, student),
+        locale=locale,
+    )
 
     log_info(
         "ENT attempt created successfully",
@@ -203,6 +208,7 @@ async def create_full_exam_attempt(
     exam_data: StartFullExamRequestDTO,
     student: StudentDTO = Depends(get_student),
     service: EntAttemptServiceInterface = Depends(get_ent_attempts_service),
+    locale: str = Depends(get_locale),
     _=Depends(require_active_subscription()),
 ):
     from datetime import datetime
@@ -216,6 +222,7 @@ async def create_full_exam_attempt(
         action="create_full_exam_attempt",
         resource="ent_attempt",
         subject_combination_id=exam_data.subject_combination_id,
+        locale=locale,
     )
 
     # Создаём DTO для полноценного экзамена
@@ -226,7 +233,7 @@ async def create_full_exam_attempt(
         started_at=datetime.now(UTC),
     )
 
-    result = service.create(attempt_params)
+    result = service.create(attempt_params, locale=locale)
 
     log_info(
         "Full exam attempt created successfully",

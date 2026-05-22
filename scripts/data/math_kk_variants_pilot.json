@@ -1,0 +1,1618 @@
+[
+  {
+    "question_id": 4202,
+    "variants": [
+      "r\"\\frac{1} {4}\"",
+      "r\"1 \\frac{1} {4}\"",
+      "0",
+      "r\"1 \\frac1 {1 6}\""
+    ]
+  },
+  {
+    "question_id": 4203,
+    "variants": [
+      "r\"- 3\"",
+      "r\"2\"",
+      "r\"0\"",
+      "r\"3\""
+    ]
+  },
+  {
+    "question_id": 4204,
+    "variants": [
+      "10",
+      "9",
+      "8,7",
+      "8,67"
+    ]
+  },
+  {
+    "question_id": 4206,
+    "variants": [
+      "r\"\\sqrt{3}\"",
+      "r\"\\sqrt{4}\"",
+      "r\"\\frac{\\sqrt{9}} {2}\"",
+      "r\"\\frac{\\sqrt{2 5}} {3}\""
+    ]
+  },
+  {
+    "question_id": 4208,
+    "variants": [
+      "5",
+      "6",
+      "4",
+      "7"
+    ]
+  },
+  {
+    "question_id": 4209,
+    "variants": [
+      "r\"(-\\infty;-0 , 5 ] \\cup[ 0 , 5 ;+\\infty)\"",
+      "r\"[-1 ; 1 ]\"",
+      "r\"(-\\infty;-0, 5 ]\"",
+      "r\"[0.5;\\,+\\infty)\""
+    ]
+  },
+  {
+    "question_id": 4210,
+    "variants": [
+      "r\"\\left[-7;2\\right]\\cup\\left[3;5\\right]\"",
+      "r\"\\left[-7;0\\right]\\cup\\left[3;5\\right]\"",
+      "r\"\\left[-3;0\\right]\\cup\\left[5;7\\right]\"",
+      "r\"\\left[-2;0\\right]\\cup\\left(3;5\\right]\""
+    ]
+  },
+  {
+    "question_id": 4211,
+    "variants": [
+      "– 3",
+      "– 17",
+      "17",
+      "3"
+    ]
+  },
+  {
+    "question_id": 4212,
+    "variants": [
+      "0,03",
+      "32,56",
+      "3,26",
+      "0,32"
+    ]
+  },
+  {
+    "question_id": 4213,
+    "variants": [
+      "r\"2\"",
+      "r\"1\"",
+      "r\"4\"",
+      "r\"0\""
+    ]
+  },
+  {
+    "question_id": 4214,
+    "variants": [
+      "r\"\\frac{7 \\pi} {9}\"",
+      "r\"\\frac{4 \\pi} {9}\"",
+      "r\"- \\frac{\\pi} {9}\"",
+      "r\"\\frac{2 \\pi} {9}\""
+    ]
+  },
+  {
+    "question_id": 4215,
+    "variants": [
+      "r\"(0;-4),\\ (4;0)\"\n",
+      "r\"\\begin{array} {c} {\\mathrm{( 6 ; 2 )} ; \\mathrm{( 2 ;-2 )}} \\\\ \\end{array}\"",
+      "r\"\\begin{array} {c} {\\mathrm{( 5 ; 1 )} ; \\mathrm{(-1 ;-6 )}} \\\\ \\end{array}\"",
+      "r\"( 3 ;-1 ) ; ( 1 ;-3 )\""
+    ]
+  },
+  {
+    "question_id": 4216,
+    "variants": [
+      "5,5 шаршы бірлік",
+      "4,5 шаршы бірлік",
+      "3 шаршы бірлік",
+      "4 шаршы бірлік"
+    ]
+  },
+  {
+    "question_id": 4217,
+    "variants": [
+      "7,2 см",
+      "2,9 см",
+      "11,6 см",
+      "11,2 см"
+    ]
+  },
+  {
+    "question_id": 4218,
+    "variants": [
+      "r\"x=\\frac{pi} {4}+\\frac{\\pi n} {2}+\\pi n , y=\\frac{\\pi} {4}+\\frac{\\pi n} {2}-\\pi n \\in\\mathbb{Z}\"",
+      "r\"x=-\\frac{n} {3}-\\frac{n k} {2}+\\pi n , y=\\frac{n} {4}-\\frac{n k} {2}-\\pi n , k , n \\in\\mathbb{Z}\"",
+      "r\"x=\\frac{n} {4}+\\frac{n k} {2}+\\pi n , y=-\\frac{n} {4}+\\frac{n k} {2}+\\pi n , k , n \\in\\mathbb{Z}\"",
+      "r\"x=-\\frac{n} {3}+\\frac{n k} {2}+\\pi n , y=\\frac{n} {4}+\\frac{n k} {2}-\\pi n , k , n \\in\\mathbb{Z}\""
+    ]
+  },
+  {
+    "question_id": 4219,
+    "variants": [
+      "125 рет",
+      "10 рет",
+      "25 рет",
+      "625 рет"
+    ]
+  },
+  {
+    "question_id": 4220,
+    "variants": [
+      "r\"- \\frac{\\sqrt{2}} {2}\"",
+      "r\"\\frac{\\sqrt{2}} {4}\"",
+      "r\"- \\frac{\\sqrt{2}} {4}\"",
+      "r\"\\frac{\\sqrt{2}} {2}\""
+    ]
+  },
+  {
+    "question_id": 4221,
+    "variants": [
+      "r\"(-2 ; 5 )\"",
+      "r\"( 2 ;-5 )\"",
+      "r\"( 5 ;-2 )\"",
+      "r\"(-5 ; 2 )\""
+    ]
+  },
+  {
+    "question_id": 4222,
+    "variants": [
+      "r\"- 3 \\, ; \\frac{3} {5}\"",
+      "r\"1 ; 3 \\frac{2} {3}\"",
+      "r\"0 ; 1 , 5\"",
+      "r\"2 ; 1 \\frac{3} {5}\""
+    ]
+  },
+  {
+    "question_id": 4223,
+    "variants": [
+      "r\"4 < m < 5\"",
+      "r\"m > 4\"",
+      "r\"3 < m < 4\"",
+      "r\"m < 3\""
+    ]
+  },
+  {
+    "question_id": 4224,
+    "variants": [
+      "0,5",
+      "1",
+      "r\"\\sqrt{3}\"",
+      "r\"\\frac{\\sqrt{3}} {2}\""
+    ]
+  },
+  {
+    "question_id": 4225,
+    "variants": [
+      "r\"\\frac{y} {x}\"",
+      "r\"\\frac{y^{6}} {x^{5}}\"",
+      "5 xy",
+      "r\"x y^{6}\""
+    ]
+  },
+  {
+    "question_id": 4226,
+    "variants": [
+      "r\"2 \\, 0 \\, 0 \\mathrm{~ c m^{2}}\"",
+      "r\"1 7 5 \\mathrm{~ c m^{2}}\"",
+      "r\"1 9 0 \\mathrm{~ c m}^{2}\"",
+      "r\"1 8 0 \\mathrm{~ c M}^{2}\""
+    ]
+  },
+  {
+    "question_id": 4227,
+    "variants": [
+      "r\"5\\sqrt{3}\\,\\text{м}\"\n",
+      "r\"4 \\sqrt{3} \\text{m}\"",
+      "r\"8 \\sqrt{3}_{\\mathrm{~ M}}\"",
+      "r\"6 \\sqrt{3} \\text{m}\""
+    ]
+  },
+  {
+    "question_id": 4228,
+    "variants": [
+      "r\"36\\sqrt{3}\\,\\text{м}^2\"",
+      "r\"\\frac{3 6 \\sqrt{3}} {4} {_{\\mathrm{M}}}^{2}\"",
+      "r\"\\frac{3 6 \\sqrt{3}} {2}_{\\mathrm{M}^{2}}\"",
+      "r\"2 7 \\sqrt{3} \\, \\mathrm{{M}}^{2}\""
+    ]
+  },
+  {
+    "question_id": 4229,
+    "variants": [
+      "r\"\\left(113.04 - 54\\sqrt{3}\\right)\\,\\text{m}^2\"",
+      "r\"\\begin{aligned} {\\left( 1 1 3 , 0 4-9 \\sqrt{3} \\ \\right)} & {{} \\mathrm{m}^{2}} \\\\ \\end{aligned}\"",
+      "r\"\\left(113,04 - 27\\sqrt{3}\\right)\\,\\text{m}^2\"",
+      "r\"\\begin{aligned} {\\left( 1 1 3 . 0 4-1 8 \\sqrt{3} \\right)_{\\mathrm{m}^{2}}} \\\\ \\end{aligned}\""
+    ]
+  },
+  {
+    "question_id": 4230,
+    "variants": [
+      "r\"\\frac{( 1 1 3 , 0 4-2 7 \\sqrt{3} \\: )} {2} {\\mathrm{m}}^{2}\"",
+      "r\"\\left(3{,}7;\\,6{,}8-18\\sqrt{3}\\right)\"\n",
+      "r\"\\left( 3 7 , 6 8-9 \\sqrt{3} \\, \\right) \\mathrm{m}^{2}\"",
+      "r\"\\frac{( 1 1 1 , 0 4-2 7 \\sqrt{3} \\: )} {2} {\\mathrm{m}}^{2}\""
+    ]
+  },
+  {
+    "question_id": 4231,
+    "variants": [
+      "69 ,6",
+      "r\"69 \\frac{3} {5}\"",
+      "r\"67 \\frac{3} {5}\"",
+      "r\"5 \\sqrt{1 3}\"",
+      "r\"\\sqrt{3 2 5}\"",
+      "67,6"
+    ]
+  },
+  {
+    "question_id": 4232,
+    "variants": [
+      "r\"254 \\ \\mathrm{c m^{2}}\"",
+      "r\"210 \\mathrm{~ c m}^{2}\"",
+      "r\"182 \\mathrm{~ c m}^{2}\"",
+      "r\"168 \\ \\mathrm{c m}^{2}\"",
+      "r\"236 \\mathrm{~ c m^{2}}\"",
+      "r\"292 \\mathrm{~ c m^{2} ~}\""
+    ]
+  },
+  {
+    "question_id": 4233,
+    "variants": [
+      "r\"- \\frac{1} {5}\"",
+      "r\"- \\frac{7} {1 0}\"",
+      "r\"- 0 , 1\"",
+      "r\"- \\frac{1} {1 0}\"",
+      "r\"- 0 , 7\"",
+      "r\"- 0 , 2\""
+    ]
+  },
+  {
+    "question_id": 4234,
+    "variants": [
+      "r\"\\frac{1} {2}\"",
+      "r\"\\frac{\\sqrt{2}} {2}\"",
+      "1",
+      "r\"\\frac{\\sqrt{3}} {3}\"",
+      "r\"\\frac{1} {\\sqrt{2}}\"",
+      "r\"\\frac{\\sqrt{3}} {2}\""
+    ]
+  },
+  {
+    "question_id": 4235,
+    "variants": [
+      "r\"[ 5 ; 8 ]\"",
+      "r\"( 5 ; 8 )\"",
+      "r\"[-5 ; 3 ]\"",
+      "r\"[ 3 ; \\, 5 )\"",
+      "r\"[-3 ; 4 ]\"",
+      "r\"[ 0 ; 6 ]\""
+    ]
+  },
+  {
+    "question_id": 4201,
+    "variants": [
+      "18х – 21у + 25а",
+      "18х-21у+25а",
+      "18х-у+25а",
+      "18х-22у+25а"
+    ]
+  },
+  {
+    "question_id": 4205,
+    "variants": [
+      "r\"\\frac{3 \\sqrt{6}} {2}\"",
+      "r\"\\frac{\\sqrt{6}} {4}\"",
+      "r\"\\frac{5 \\sqrt{6}} {2}\"",
+      "r\"\\frac{3 \\sqrt{1 3}} {4}\""
+    ]
+  },
+  {
+    "question_id": 4207,
+    "variants": [
+      "r\"8 ; \\frac{1} {2}\"",
+      "r\"3;\\,-1\"",
+      "r\"4 ; \\frac{1} {2}\"",
+      "r\"8 ; \\frac{1} {4}\""
+    ]
+  },
+  {
+    "question_id": 4239,
+    "variants": [
+      "375 г",
+      "300 г",
+      "400 г",
+      "350 г"
+    ]
+  },
+  {
+    "question_id": 4263,
+    "variants": [
+      "4 бөлім",
+      "5,5 бөлім",
+      "5 бөлім",
+      "4,5 бөлім"
+    ]
+  },
+  {
+    "question_id": 4243,
+    "variants": [
+      "30º",
+      "20º",
+      "35º",
+      "25º"
+    ]
+  },
+  {
+    "question_id": 4250,
+    "variants": [
+      "r\"9\\sqrt2-12\"",
+      "r\"9\\sqrt2-12\"",
+      "r\"4-\\sqrt2\\over2\"",
+      "r\"\\sqrt2-4\\over2\""
+    ]
+  },
+  {
+    "question_id": 4246,
+    "variants": [
+      "13/36",
+      "13/18",
+      "13/27",
+      "5/12"
+    ]
+  },
+  {
+    "question_id": 4248,
+    "variants": [
+      "36",
+      "29",
+      "25",
+      "32"
+    ]
+  },
+  {
+    "question_id": 4247,
+    "variants": [
+      "12",
+      "6",
+      "8",
+      "4"
+    ]
+  },
+  {
+    "question_id": 4269,
+    "variants": [
+      "r\"{2y-6}\\over3\"",
+      "r\"-({6-2y})\\over3\"",
+      "r\"- {{9-y}\\over3}\"",
+      "r\"{{2y}\\over3}-2\"",
+      "r\"{y-9}\\over3\"",
+      "r\"{3-2y}\\over3\""
+    ]
+  },
+  {
+    "question_id": 4254,
+    "variants": [
+      "12",
+      "11",
+      "10",
+      "9"
+    ]
+  },
+  {
+    "question_id": 4255,
+    "variants": [
+      "48",
+      "36",
+      "24",
+      "32"
+    ]
+  },
+  {
+    "question_id": 4238,
+    "variants": [
+      "42",
+      "– 1",
+      "2",
+      "44"
+    ]
+  },
+  {
+    "question_id": 4240,
+    "variants": [
+      "r\"1{25\\over96}\"",
+      "r\"1{31\\over96}\"",
+      "r\"1{29\\over96}\"",
+      "r\"95\\over96\""
+    ]
+  },
+  {
+    "question_id": 4237,
+    "variants": [
+      "r\"\\sqrt3-2\"",
+      "r\"2-\\sqrt3\"",
+      "r\"-\\sqrt3\"",
+      "r\"\\sqrt3\""
+    ]
+  },
+  {
+    "question_id": 4259,
+    "variants": [
+      "60 км/сағ",
+      "80 км/сағ",
+      "70 км/сағ",
+      "75 км/сағ"
+    ]
+  },
+  {
+    "question_id": 4260,
+    "variants": [
+      "220000",
+      "180000",
+      "200000",
+      "250000"
+    ]
+  },
+  {
+    "question_id": 4261,
+    "variants": [
+      "5 сағат",
+      "Сағат 7",
+      "6 сағат",
+      "8 сағат"
+    ]
+  },
+  {
+    "question_id": 4262,
+    "variants": [
+      "45 минут",
+      "30 минут",
+      "36 минут",
+      "60 минут"
+    ]
+  },
+  {
+    "question_id": 4264,
+    "variants": [
+      "150 км",
+      "160 км",
+      "200 км",
+      "180 км"
+    ]
+  },
+  {
+    "question_id": 4265,
+    "variants": [
+      "3500",
+      "3000",
+      "2500",
+      "4000"
+    ]
+  },
+  {
+    "question_id": 4266,
+    "variants": [
+      "120",
+      "90",
+      "105",
+      "150",
+      "110",
+      "80"
+    ]
+  },
+  {
+    "question_id": 4241,
+    "variants": [
+      "– 0,5",
+      "– 2",
+      "– 1",
+      "0,5"
+    ]
+  },
+  {
+    "question_id": 4270,
+    "variants": [
+      "–1/3",
+      "–1/2",
+      "–1/5",
+      "1/4",
+      "1/2",
+      "1/8"
+    ]
+  },
+  {
+    "question_id": 4236,
+    "variants": [
+      "1, 4, 5",
+      "1, 3",
+      "1",
+      "1, 3, 5"
+    ]
+  },
+  {
+    "question_id": 4249,
+    "variants": [
+      "9",
+      "4",
+      "1",
+      "2"
+    ]
+  },
+  {
+    "question_id": 4252,
+    "variants": [
+      "r\"\\left(7;11\\right)\"\n",
+      "r\"\\left(7;9\\right)\"\n",
+      "r\"\\left(2;7\\right)\"\n",
+      "r\"\\left(9;11\\right)\"\n"
+    ]
+  },
+  {
+    "question_id": 4256,
+    "variants": [
+      "r\"\\frac{\\sqrt{2}(\\sqrt{3}-1)}{4}\"",
+      "r\"\\frac{\\sqrt{2}(\\sqrt{3}+1)}{4}\"\n",
+      "r\"\\frac{\\sqrt{2}(\\sqrt{3}+1)}{6}\"\n",
+      "r\"\\frac{\\sqrt{3}}{6}\"\n"
+    ]
+  },
+  {
+    "question_id": 4268,
+    "variants": [
+      "10",
+      "r\"5\\sqrt{2}\"\n",
+      "r\"2\\sqrt{13}\"\n",
+      "26",
+      "r\"2\\sqrt{5}\"\n",
+      "13"
+    ]
+  },
+  {
+    "question_id": 4245,
+    "variants": [
+      "64 см^3",
+      "72π см^3",
+      "64π см^3",
+      "32π см^3"
+    ]
+  },
+  {
+    "question_id": 4251,
+    "variants": [
+      "136π см^3",
+      "156π см^3",
+      "128π см^3",
+      "145πсм^3"
+    ]
+  },
+  {
+    "question_id": 4258,
+    "variants": [
+      "r\"\\frac{c^{3}\\cos 2\\alpha\\,\\tan\\gamma}{48}\"\n",
+      "r\"\\frac{c^{3}\\cos 2\\alpha\\,\\tan\\gamma}{24}\"\n",
+      "r\"\\frac{c^{3}\\cos 1\\alpha\\,\\tan\\gamma}{24}\"\n",
+      "r\"\\frac{c^{4}\\cos 2\\alpha\\,\\tan\\gamma}{24}\"\n"
+    ]
+  },
+  {
+    "question_id": 4267,
+    "variants": [
+      "2",
+      "– 3",
+      "1",
+      "– 5",
+      "– 1",
+      "3"
+    ]
+  },
+  {
+    "question_id": 4253,
+    "variants": [
+      "r\"\\pi+2\\pi n,\\; n\\in\\mathbb{Z}\"\n",
+      "r\"-\\frac{\\pi}{4}+2\\pi n,\\; n\\in\\mathbb{Z}\"\n",
+      "r\"-\\frac{\\pi}{2}+2\\pi n,\\; n\\in\\mathbb{Z}\"\n",
+      "r\"-\\frac{\\pi}{2}+pi n,\\; n\\in\\mathbb{Z}\"\n"
+    ]
+  },
+  {
+    "question_id": 4257,
+    "variants": [
+      "–15/8",
+      "–8/15",
+      "15/8",
+      "15/17"
+    ]
+  },
+  {
+    "question_id": 4242,
+    "variants": [
+      "0",
+      "1",
+      "1/(ab)",
+      "аб"
+    ]
+  },
+  {
+    "question_id": 4244,
+    "variants": [
+      "0x>3",
+      "0x>0",
+      "0x>-3",
+      "3x>0"
+    ]
+  },
+  {
+    "question_id": 4271,
+    "variants": [
+      "r\"(-2 ; 1 0 ]\"",
+      "r\"[10;\\,+\\infty)\"",
+      "r\"(-\\infty; 1 0 ]\"",
+      "r\"(-\\infty;-2 ]\""
+    ]
+  },
+  {
+    "question_id": 4272,
+    "variants": [
+      "r\"1 2 0^{\\circ}\"",
+      "r\"1 0 0^{\\circ}\"",
+      "r\"1 1 0^{\\circ}\"",
+      "r\"9 0^{\\circ}\""
+    ]
+  },
+  {
+    "question_id": 4274,
+    "variants": [
+      "r\"3 1 \\frac{1} {1 2}\"",
+      "r\"3 0 \\frac1 {1 2}\"",
+      "r\"3 4\"",
+      "r\"3 2\""
+    ]
+  },
+  {
+    "question_id": 4277,
+    "variants": [
+      "r\"7\\,\\text{см}\"",
+      "r\"8\\,\\text{см}\"",
+      "r\"12\\,\\text{см}\"",
+      "r\"9\\,\\text{см}\""
+    ]
+  },
+  {
+    "question_id": 4280,
+    "variants": [
+      "r\"\\frac{\\pi} {6}\"",
+      "r\"\\frac{\\pi} {4}\"",
+      "r\"\\frac{2 \\pi} {3}\"",
+      "r\"\\frac{\\pi} {3}\""
+    ]
+  },
+  {
+    "question_id": 4282,
+    "variants": [
+      "r\"\\mathbf{y}=6 \\mathbf{x}+2\"",
+      "r\"\\mathrm{y}=-6 \\mathrm{x}-2\"",
+      "r\"\\mathrm{y}=-6 \\mathrm{x}+2\"",
+      "r\"\\mathbf{y}=6 \\mathbf{x}-2\""
+    ]
+  },
+  {
+    "question_id": 4283,
+    "variants": [
+      "r\"4 5^{\\circ}\" и r\"6 0^{\\circ}\"",
+      "r\"8 0^{\\circ}\" и r\"5 0^{\\circ}\"",
+      "r\"8 0^{\\circ}\" и r\"4 5^{\\circ}\"",
+      "r\"5 0^{\\circ}\" и r\"4 5^{\\circ}\""
+    ]
+  },
+  {
+    "question_id": 4285,
+    "variants": [
+      "10",
+      "30",
+      "22",
+      "18"
+    ]
+  },
+  {
+    "question_id": 4287,
+    "variants": [
+      "r\"( x-1 )^{2}+( y-2 )^{2}=5\"",
+      "r\"( x+2 )^{2}+( y+1 )^{2}=5\"",
+      "r\"( x-2 )^{2}+( y-1 )^{2}=2 5\"",
+      "r\"( x+2 )^{2}+( y+1 )^{2}=2 5\""
+    ]
+  },
+  {
+    "question_id": 4288,
+    "variants": [
+      "0",
+      "r\"\\frac{1} {2}\"",
+      "r\"\\frac{3} {2}\"",
+      "r\"- \\frac{1} {2}\""
+    ]
+  },
+  {
+    "question_id": 4279,
+    "variants": [
+      "12",
+      "– 6",
+      "6",
+      "– 12"
+    ]
+  },
+  {
+    "question_id": 4289,
+    "variants": [
+      "2",
+      "3",
+      "0",
+      "4"
+    ]
+  },
+  {
+    "question_id": 4291,
+    "variants": [
+      "9 см",
+      "15 см",
+      "14 см",
+      "12 см"
+    ]
+  },
+  {
+    "question_id": 4292,
+    "variants": [
+      "r\"\\frac{2 x \\sqrt{x}} {3}+\\mathrm{C}\"",
+      "r\"2 \\sqrt{x}+\\mathtt{C}\"",
+      "r\"2 x \\sqrt{x}+C\"",
+      "r\"\\frac{2 \\sqrt{x}} {3}+\\mathrm{C}\""
+    ]
+  },
+  {
+    "question_id": 4293,
+    "variants": [
+      "4 см",
+      "3 см",
+      "2 см",
+      "5 см"
+    ]
+  },
+  {
+    "question_id": 4295,
+    "variants": [
+      "5,5",
+      "5 ,25",
+      "2,5",
+      "2,25"
+    ]
+  },
+  {
+    "question_id": 4294,
+    "variants": [
+      "r\"(-\\infty; 0 ] \\cup[ 1 ;+\\infty)\"",
+      "r\"(-\\infty;-1 ] \\cup[ 0 ;+\\infty)\"",
+      "r\"[ 0 ;+\\infty)\"",
+      "r\"\\mathrm{[ 0 ; 1 ]}\""
+    ]
+  },
+  {
+    "question_id": 4273,
+    "variants": [
+      "r\"(-2 ; 3 ]\"",
+      "r\"[-1 ;+\\infty)\"",
+      "r\"[-2 ; 3 )\"",
+      "r\"[ 1 ;+\\infty)\""
+    ]
+  },
+  {
+    "question_id": 4302,
+    "variants": [
+      "36; 12; 4",
+      "20; 12; 4",
+      "13; 5; 1",
+      "32; 8; 2",
+      "37; 18,5; 9.25",
+      "18; 10; 2"
+    ]
+  },
+  {
+    "question_id": 4305,
+    "variants": [
+      "r\"6 \\pi\\sqrt{2} \\mathrm{~ c_{M}}^{2}\"",
+      "r\"3 \\pi\\sqrt{2} \\mathrm{~ c_{M}}^{2}\"",
+      "r\"2 \\pi\\sqrt{2} \\mathrm{~ c_{M}^{2} ~}\"",
+      "r\"2 \\pi\\sqrt{3} \\mathrm{~ c_{M}^{2} ~}\"",
+      "r\"4 \\pi\\sqrt{2} \\mathrm{~ c_{M}}^{2}\"",
+      "r\"4 \\pi\\sqrt{3} \\mathrm{~ c_{M}}^{2}\""
+    ]
+  },
+  {
+    "question_id": 4296,
+    "variants": [
+      "r\"8 2 6 0 0 \\mathrm{~ \\mathrm{M}}^{2}\"",
+      "r\"8 2 8 0 0 \\mathrm{~ \\mathrm{M}}^{2}\"",
+      "r\"8 1 8 0 0 \\mathrm{~ \\mathrm{M}}^{2}\"",
+      "r\"8 1 6 0 0 \\mathrm{~ \\mathrm{M}}^{2}\""
+    ]
+  },
+  {
+    "question_id": 4297,
+    "variants": [
+      "r\"1860\\,\\text{м}^2\"",
+      "r\"1780\\,\\text{м}^2\"",
+      "r\"1680\\,\\text{м}^2\"",
+      "r\"1580\\,\\text{м}^2\""
+    ]
+  },
+  {
+    "question_id": 4281,
+    "variants": [
+      "12 см",
+      "15 см",
+      "13 см",
+      "14 см"
+    ]
+  },
+  {
+    "question_id": 4298,
+    "variants": [
+      "r\"8 1 1 2 0 \\mathrm{\\text{m}}^{2}\"",
+      "r\"8 0 9 4 0 \\mathrm{\\text{m}}^{2}\"",
+      "r\"80020 \\mathrm{m}^{2}\"",
+      "r\"79820 \\mathrm{m}^{2}\""
+    ]
+  },
+  {
+    "question_id": 4299,
+    "variants": [
+      "r\"331200\\,\\text{м}^2\"",
+      "r\"332100\\,\\text{м}^2\"",
+      "r\"313200\\,\\text{м}^2\"",
+      "r\"321200\\,\\text{м}^2\""
+    ]
+  },
+  {
+    "question_id": 4300,
+    "variants": [
+      "r\"5 ( x )=x^{5}+5 8 5 x+7 9 8 2 0\"",
+      "r\"5 ( x )=x^{5}+5 8 5 x+8 2 8 0 0\"",
+      "r\"5 ( x )=x^{5}+5 5 5 x-8 1 8 0 0\"",
+      "r\"5 ( x )=x^{5}+5 8 5 x+8 0 0 2 0\""
+    ]
+  },
+  {
+    "question_id": 4290,
+    "variants": [
+      "r\"- \\frac{\\pi} {6}+2 \\pi n , n \\in Z\"",
+      "r\"- \\frac{\\pi} {1 2}+\\pi n , n \\in Z\"",
+      "r\"- \\frac{\\pi} {1 2}+2 \\pi n , n \\in Z\"",
+      "r\"- \\frac{\\pi} {6}+\\pi n , n \\in Z\""
+    ]
+  },
+  {
+    "question_id": 4284,
+    "variants": [
+      "r\"\\begin{aligned} {\\Big[ \\frac{\\pi} {6}+2 \\pi n , \\frac{5 \\pi} {6}+2 \\pi n \\Big] , n \\in Z} \\\\ \\end{aligned}\"",
+      "r\"\\begin{aligned} {\\Big[ \\frac{5 \\pi} {2 4}+\\pi n , \\, \\frac{1 3 \\pi} {2 4}+\\pi n \\Big] , n \\in Z} \\\\ \\end{aligned}\"",
+      "r\"\\begin{aligned} {\\Big[} & {{} \\frac{5 \\pi} {1 2}+2 \\pi n ; \\, \\frac{7 \\pi} {1 2}+2 \\pi n \\Big] , n \\in Z} \\\\ \\end{aligned}\"",
+      "r\"\\begin{aligned} {\\left[ \\frac{\\pi} {1 2}+\\pi n ; \\frac{5 \\pi} {1 2}+\\pi n \\right] , n \\in Z} \\\\ \\end{aligned}\""
+    ]
+  },
+  {
+    "question_id": 4276,
+    "variants": [
+      "r\"(-\\infty;-2 ] \\cup[ 5 ;+\\infty)\"",
+      "r\"\\left(-\\infty; 1 \\right] \\cup\\left[ 6 ;+\\infty\\right)\"",
+      "r\"(-\\infty; 1 ) \\cup( 6 ;+\\infty)\"",
+      "r\"(-\\infty;-2 ] \\cup( 6 ;+\\infty)\""
+    ]
+  },
+  {
+    "question_id": 4301,
+    "variants": [
+      "r\"(-0.5;\\,+\\infty)\"",
+      "r\"[ 0 ; 2 )\"",
+      "r\"[ 0 ;+\\infty)\"",
+      "r\"( 1 0 0 ; 1 0 0 0 ]\"",
+      "r\"[-150;\\,0.5)\"",
+      "r\"( 3 , 1 4 ; 7 ]\""
+    ]
+  },
+  {
+    "question_id": 4303,
+    "variants": [
+      "2,25",
+      "0,25",
+      "r\"- \\frac1 {2 5}\"",
+      "2",
+      "r\"\\frac{1} {2 5}\"",
+      "r\"2 \\frac{1} {4}\""
+    ]
+  },
+  {
+    "question_id": 4304,
+    "variants": [
+      "I",
+      "III",
+      "IV",
+      "II",
+      "II және III",
+      "I және II"
+    ]
+  },
+  {
+    "question_id": 4275,
+    "variants": [
+      "-2 және 3",
+      "-2 және 6",
+      "-6 және 1",
+      "-3 және 2"
+    ]
+  },
+  {
+    "question_id": 4286,
+    "variants": [
+      "r\"(-1 ; 4 ]\"",
+      "r\"(-5 ; 4 )\"",
+      "r\"(-2 ; 6)\"",
+      "r\"[-2 ; 5 )\""
+    ]
+  },
+  {
+    "question_id": 4278,
+    "variants": [
+      "r\"\\frac{3} {\\operatorname{\\cos}^{2} 3 x}\"",
+      "r\"3 tg(x)\"",
+      "r\"3 tg(3x)\"",
+      "r\"\\frac{3} {\\sin^{2} x}\""
+    ]
+  },
+  {
+    "question_id": 4306,
+    "variants": [
+      "екі",
+      "бір емес",
+      "шексіз көп",
+      "бір"
+    ]
+  },
+  {
+    "question_id": 4307,
+    "variants": [
+      "0,5",
+      "– 2",
+      "– 0,5",
+      "– 1"
+    ]
+  },
+  {
+    "question_id": 4308,
+    "variants": [
+      "120 л",
+      "115 л",
+      "110 л",
+      "100 л"
+    ]
+  },
+  {
+    "question_id": 4309,
+    "variants": [
+      "– 36,8",
+      "– 36.4",
+      "– 33,8",
+      "– 36.2"
+    ]
+  },
+  {
+    "question_id": 4311,
+    "variants": [
+      "100π",
+      "75π",
+      "200π",
+      "150π"
+    ]
+  },
+  {
+    "question_id": 4312,
+    "variants": [
+      "6",
+      "18",
+      "8",
+      "15"
+    ]
+  },
+  {
+    "question_id": 4336,
+    "variants": [
+      "0,6",
+      "-0,32",
+      "– 1.6",
+      "0,6",
+      "– 0,32",
+      "-1,6"
+    ]
+  },
+  {
+    "question_id": 4337,
+    "variants": [
+      "- 0,5",
+      "- 1/4",
+      "0,25",
+      "- 1/2",
+      "- 0,25",
+      "1/4"
+    ]
+  },
+  {
+    "question_id": 4323,
+    "variants": [
+      "4/3",
+      "4",
+      "3/4",
+      "1/4"
+    ]
+  },
+  {
+    "question_id": 4317,
+    "variants": [
+      "16",
+      "13",
+      "18",
+      "23"
+    ]
+  },
+  {
+    "question_id": 4310,
+    "variants": [
+      "(a+b+1)(a+b-2)",
+      "(a-b-1)(a+b+2)",
+      "(a-b-1)(a-b+2)",
+      "(a+b-1)(a+b+2)"
+    ]
+  },
+  {
+    "question_id": 4320,
+    "variants": [
+      "(-1; -3)",
+      "(11; -1)",
+      "(5; -2)",
+      "(-7; -4)"
+    ]
+  },
+  {
+    "question_id": 4339,
+    "variants": [
+      "r\"-2{3\\over4}\"",
+      "r\"-{8\\over3}\"",
+      "r\"-{13\\over3}\"",
+      "r\"-2{2\\over3}\"",
+      "r\"-4{1\\over3}\"",
+      "r\"-{11\\over4}\""
+    ]
+  },
+  {
+    "question_id": 4324,
+    "variants": [
+      "196",
+      "225",
+      "216",
+      "212"
+    ]
+  },
+  {
+    "question_id": 4325,
+    "variants": [
+      "0",
+      "1",
+      "2",
+      "3"
+    ]
+  },
+  {
+    "question_id": 4327,
+    "variants": [
+      "r\"1 2 \\frac{7} {2 4}\"",
+      "r\"1 4 \\frac{7} {2 4}\"",
+      "r\"1 3 \\frac{7} {2 4}\"",
+      "r\"1 4 \\frac{7} {1 2}\""
+    ]
+  },
+  {
+    "question_id": 4329,
+    "variants": [
+      "16",
+      "32",
+      "24",
+      "12"
+    ]
+  },
+  {
+    "question_id": 4331,
+    "variants": [
+      "2000 шаршы метр",
+      "5000 шаршы метр",
+      "2500 шаршы метр",
+      "200 шаршы метр"
+    ]
+  },
+  {
+    "question_id": 4332,
+    "variants": [
+      "75%",
+      "100%",
+      "300%",
+      "400%"
+    ]
+  },
+  {
+    "question_id": 4333,
+    "variants": [
+      "250",
+      "500",
+      "750",
+      "1000"
+    ]
+  },
+  {
+    "question_id": 4335,
+    "variants": [
+      "4 м, 10 м",
+      "3 м, 9 м",
+      "6 м, 12 м",
+      "5 м, 11 м"
+    ]
+  },
+  {
+    "question_id": 4338,
+    "variants": [
+      "200",
+      "240",
+      "720",
+      "750",
+      "250",
+      "600"
+    ]
+  },
+  {
+    "question_id": 4322,
+    "variants": [
+      "(-4; -2]",
+      "(-∞; -2]",
+      "(-∞; -4)",
+      "(-4; +∞)"
+    ]
+  },
+  {
+    "question_id": 4328,
+    "variants": [
+      "11",
+      "- 9",
+      "– 11",
+      "9"
+    ]
+  },
+  {
+    "question_id": 4326,
+    "variants": [
+      "16",
+      "64",
+      "9",
+      "81"
+    ]
+  },
+  {
+    "question_id": 4315,
+    "variants": [
+      "1",
+      "1,5",
+      "1,4",
+      "4,1"
+    ]
+  },
+  {
+    "question_id": 4334,
+    "variants": [
+      "2500",
+      "500",
+      "5000",
+      "2000"
+    ]
+  },
+  {
+    "question_id": 4314,
+    "variants": [
+      "10√6",
+      "10√3",
+      "5√3",
+      "10√2"
+    ]
+  },
+  {
+    "question_id": 4316,
+    "variants": [
+      "0,25",
+      "0,5",
+      "√2",
+      "√2/2"
+    ]
+  },
+  {
+    "question_id": 4319,
+    "variants": [
+      "±π/6+2πn, n∈Z",
+      "π/2+2πn, n∈Z",
+      "±π/4+2πn, n∈Z",
+      "±π/3+2πn, n∈Z"
+    ]
+  },
+  {
+    "question_id": 4321,
+    "variants": [
+      "60º",
+      "– 60º",
+      "45º",
+      "– 45º"
+    ]
+  },
+  {
+    "question_id": 4340,
+    "variants": [
+      "sin0,5α",
+      "cos α/2",
+      "cosα",
+      "cos0,5α",
+      "sinα",
+      "күнә α/2"
+    ]
+  },
+  {
+    "question_id": 4330,
+    "variants": [
+      "4",
+      "3",
+      "6",
+      "12"
+    ]
+  },
+  {
+    "question_id": 4313,
+    "variants": [
+      "1, 3",
+      "2, 4",
+      "2",
+      "1, 5"
+    ]
+  },
+  {
+    "question_id": 4358,
+    "variants": [
+      "r\"\\left(-6 ;-4 \\right) \\cup\\left( 4 ; 7 \\right)\"",
+      "r\"(-5 ;-4 ) \\cup( 4 ;+\\infty)\"",
+      "r\"( 4 ; 5 )\"",
+      "r\"(-\\infty;-4 ) \\cup( 4 ;+\\infty)\""
+    ]
+  },
+  {
+    "question_id": 4342,
+    "variants": [
+      "r\"1 1 0^{\\circ}\"",
+      "r\"1 2 0^{\\circ}\"",
+      "r\"1 1 5^{\\circ}\"",
+      "r\"7 0^{\\circ}\""
+    ]
+  },
+  {
+    "question_id": 4343,
+    "variants": [
+      "r\"x^{2}-2 x+1\"",
+      "r\"x^{2}+2 x+1\"",
+      "r\"x^{2}-2 x-1\"",
+      "r\"x^{2}-x+1\""
+    ]
+  },
+  {
+    "question_id": 4359,
+    "variants": [
+      "r\"(-\\infty;-2 ]\"",
+      "r\"(-\\infty;-1 ]\"",
+      "r\"[-1 ;+\\infty)\"",
+      "r\"(-\\infty; 3 ]\""
+    ]
+  },
+  {
+    "question_id": 4345,
+    "variants": [
+      "r\"- 3 4\"",
+      "r\"2 d^{2}-3 4\"",
+      "r\"2 d^{2}+1 6\"",
+      "r\"1 6\""
+    ]
+  },
+  {
+    "question_id": 4364,
+    "variants": [
+      "r\"8\"",
+      "r\"9\"",
+      "r\"- 8\"",
+      "r\"- 9\""
+    ]
+  },
+  {
+    "question_id": 4347,
+    "variants": [
+      "r\"\\pi\"",
+      "r\"\\frac{5 \\pi} {6}\"",
+      "r\"\\frac{7 \\pi} {6}\"",
+      "r\"\\frac{\\pi} {3}\""
+    ]
+  },
+  {
+    "question_id": 4349,
+    "variants": [
+      "r\"\\frac{\\pi} {6}+\\frac{\\pi} {4} n ; \\, \\frac{\\pi} {2}+\\pi k ; \\, n \\in Z ; \\, k \\in Z\"",
+      "r\"\\frac{\\pi} {4} \\, n ; \\, \\pi k ; \\ n \\in Z ; \\ k \\in Z\"",
+      "r\"\\frac{\\pi} {2}+2 \\pi n ; \\frac{n} {2}+2 \\pi k ; \\ n \\in Z ; \\ k \\in Z\"",
+      "r\"\\pm\\frac{\\pi} {4} \\, n ; \\, \\pm\\pi k ; \\; n \\in Z ; \\; k \\in Z\""
+    ]
+  },
+  {
+    "question_id": 4341,
+    "variants": [
+      "5",
+      "r\"6 \\frac{1} {3}\"",
+      "7",
+      "r\"4 \\frac{2} {3}\""
+    ]
+  },
+  {
+    "question_id": 4352,
+    "variants": [
+      "70",
+      "57",
+      "50",
+      "75"
+    ]
+  },
+  {
+    "question_id": 4353,
+    "variants": [
+      "2",
+      "32",
+      "16",
+      "8"
+    ]
+  },
+  {
+    "question_id": 4354,
+    "variants": [
+      "r\"0^{\\circ}\"",
+      "r\"3 0^{\\circ}\"",
+      "r\"6 0^{\\circ}\"",
+      "r\"9 0^{\\circ}\""
+    ]
+  },
+  {
+    "question_id": 4348,
+    "variants": [
+      "12 см",
+      "7 см",
+      "9 см",
+      "15 см"
+    ]
+  },
+  {
+    "question_id": 4357,
+    "variants": [
+      "2",
+      "3",
+      "1",
+      "4"
+    ]
+  },
+  {
+    "question_id": 4361,
+    "variants": [
+      "r\"\\begin{aligned} {\\left[-1 ; 2 \\right) \\mathrm{U} \\left( 2 ; 3 \\right]} \\\\ {\\left[-1 ; 2 \\right) \\mathrm{U} \\left( 2 ; 3 \\right]} \\\\ \\end{aligned}\"",
+      "r\"(-1 ; 3 )\"",
+      "r\"(-\\infty;-1 ] \\mathrm{U} [ 3 ;+\\infty)\"",
+      "r\"[-1 ; 1 ) \\mathrm{U} ( 1 ; 2 ) \\mathrm{U} ( 2 ; 3 ]\""
+    ]
+  },
+  {
+    "question_id": 4362,
+    "variants": [
+      "r\"6 0 \\mathrm{~ c M}^{2}\"",
+      "r\"9 0 \\ \\mathrm{c M}^{2}\"",
+      "r\"\\begin{matrix} {1 2 0 \\ \\mathrm{c m}^{2}} \\\\ \\end{matrix}\"",
+      "r\"1 0 0 \\mathrm{~ c M}^{2}\""
+    ]
+  },
+  {
+    "question_id": 4363,
+    "variants": [
+      "r\"y=8 x+1 0\"",
+      "r\"y=8 x-1 8\"",
+      "r\"y=8 x+2 0\"",
+      "r\"y=8 x-1 5\""
+    ]
+  },
+  {
+    "question_id": 4360,
+    "variants": [
+      "r\"\\frac{8} {3}\"",
+      "r\"- 1\"",
+      "r\"1\"",
+      "r\"- \\frac{8} {3}\""
+    ]
+  },
+  {
+    "question_id": 4351,
+    "variants": [
+      "r\"3 \\, \\frac{1} {3} \\, \\, \\mathrm{{кв. \\, ед}} .\"",
+      "r\"2 \\, \\frac{5} {6} \\, \\, \\mathrm{{кв. ед}} .\"",
+      "r\"7 \\, \\frac{1} {2} \\, \\, \\mathrm{{кв. ед}} .\"",
+      "r\"4 \\frac{2} {3} \\mathrm{кв. ед} .\""
+    ]
+  },
+  {
+    "question_id": 4371,
+    "variants": [
+      "768",
+      "–128",
+      "– 640",
+      "256",
+      "–256",
+      "512"
+    ]
+  },
+  {
+    "question_id": 4372,
+    "variants": [
+      "r\"(-1 ; 0 )\"",
+      "r\"[ 0 ; 2 ]\"",
+      "r\"[-1 ; 1 ]\"",
+      "r\"(-1 ; 1 )\"",
+      "r\"[ 2 ; 3 ]\"",
+      "r\"( 1 ; 3 )\""
+    ]
+  },
+  {
+    "question_id": 4373,
+    "variants": [
+      "67,6",
+      "r\"5 \\sqrt{1 3}\"",
+      "69 ,6",
+      "r\"6 9 \\frac{3} {5}\"",
+      "r\"6 7 \\frac{3} {5}\"",
+      "r\"\\sqrt{3 2 5}\""
+    ]
+  },
+  {
+    "question_id": 4374,
+    "variants": [
+      "r\"( 2 4-b ) \\cdot( 2 4+b+1 )\"",
+      "r\"( 2 4-b ) \\cdot( 2 4 b-1 )\"",
+      "r\"( 3 4+b ) \\cdot( 3 4-b+1 )\"",
+      "r\"( 1+3 4-b ) \\cdot( 3 4+b )\"",
+      "r\"( 2 4+b ) \\cdot( 2 4+b-1 )\"",
+      "r\"- ( 3 4+b ) \\cdot( b-3 4-1 )\""
+    ]
+  },
+  {
+    "question_id": 4375,
+    "variants": [
+      "r\"[-5 ; 3 ]\"",
+      "r\"[ 0 ; 6 ]\"",
+      "r\"[ 5 ; 8 ]\"",
+      "r\"(-5 ; \\, 8 )\"",
+      "r\"[-3 ; 4 ]\"",
+      "r\"[ 3 ; \\, 5 )\""
+    ]
+  },
+  {
+    "question_id": 4346,
+    "variants": [
+      "a b |=0",
+      "a |>| б",
+      "a b |<0",
+      "а |<| б"
+    ]
+  },
+  {
+    "question_id": 4356,
+    "variants": [
+      "2",
+      "r\"\\frac{1} {4}\"",
+      "r\"\\frac{2} {3}\"",
+      "1"
+    ]
+  },
+  {
+    "question_id": 4344,
+    "variants": [
+      "r\"\\frac{3} {4}\"",
+      "r\"1 \\frac{3} {4}\"",
+      "r\"- \\frac{3} {4}\"",
+      "r\"- 1 \\frac{3} {4}\""
+    ]
+  },
+  {
+    "question_id": 4365,
+    "variants": [
+      "r\"-0.1\"",
+      "r\"1\"",
+      "r\"- \\mathrm{0,1}\"",
+      "r\"0,9\""
+    ]
+  },
+  {
+    "question_id": 4367,
+    "variants": [
+      "3 м",
+      "10 м",
+      "20 м",
+      "6 м"
+    ]
+  },
+  {
+    "question_id": 4369,
+    "variants": [
+      "r\"2 525 \\text{m}^{2}\"",
+      "r\"2520 \\text{m}^{2}\"",
+      "r\"2425 \\text{m}^{2}\"",
+      "r\"2420 \\text{m}^{2}\""
+    ]
+  },
+  {
+    "question_id": 4370,
+    "variants": [
+      "5%",
+      "2,5%",
+      "2%",
+      "1,2%"
+    ]
+  },
+  {
+    "question_id": 4366,
+    "variants": [
+      "r\"400 \\ \\mathrm{\\mathtt{m}}^{2}\"",
+      "r\"600 \\ \\mathrm{\\mathtt{m}}^{2}\"",
+      "r\"800 \\ \\mathrm{\\mathtt{m}}^{2}\"",
+      "r\"500 \\ \\mathrm{\\mathtt{m}}^{2}\""
+    ]
+  },
+  {
+    "question_id": 4368,
+    "variants": [
+      "0,2",
+      "0,25",
+      "0,16",
+      "0,36"
+    ]
+  },
+  {
+    "question_id": 4355,
+    "variants": [
+      "бұрыштың синусы В",
+      "B бұрышының котангенсі",
+      "B бұрышының тангенсі",
+      "B бұрышының косинусы"
+    ]
+  },
+  {
+    "question_id": 4350,
+    "variants": [
+      "r\"(-3 ; 0 )\"",
+      "r\"( 0 ; 3 )\"",
+      "r\"( 0 ; 4 ]\"",
+      "r\"[-3 ; 0 ]\""
+    ]
+  }
+]

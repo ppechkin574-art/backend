@@ -63,6 +63,13 @@ class Variant(Base):
     )  # Вес ответа (1 если правильный ответ один, 1/количество правильных ответов, если их несколько)
     is_correct = Column(Boolean, default=False, nullable=False)  # убрать после добавления веса
 
+    # Phase 7b kk cache — same pattern as Question.question_text_kk.
+    # Populated by alembic e7d8c9b1a2f3 for Math; null elsewhere → RU
+    # fallback at the api/dto layer.  Read by the kk-splice helpers in
+    # quiz.services.ent_attempts (create flow) and the get_attempt_detail
+    # results path.
+    variant_text_kk = Column(Text, nullable=True)
+
     question = relationship("Question", back_populates="variants", passive_deletes=True)
     link = relationship(
         "TextBlockLink",

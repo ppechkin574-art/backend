@@ -745,8 +745,8 @@ class EntAttemptService:
                 raise
 
     def _localize_questions_kk(self, attempt_dto: EntAttemptServiceDTO) -> None:
-        """Splice `question_text_kk` / `hint_text_kk` into each question's
-        blocks for `attempt_dto.questions` (in-place).
+        """Splice `question_text_kk` / `hint_text_kk` / `variant_text_kk`
+        into each question's blocks for `attempt_dto.questions` (in-place).
 
         Why this lives on the create path
         ---------------------------------
@@ -759,10 +759,10 @@ class EntAttemptService:
 
         Safety
         ------
-        * No-op when no question carries `question_text_kk` (e.g. Physics
-          / non-Math subjects in the Phase 7b pilot scope).
-        * One batched SELECT, two columns — cheap relative to the
-          existing question-bank join.
+        * No-op when no question / variant carries a kk string (e.g.
+          Physics / non-Math subjects in the Phase 7b pilot scope).
+        * Two batched SELECTs (questions + variants) per attempt — cheap
+          relative to the question-bank join that already happened.
         * Hint blocks are spliced only when `transform_video_hint` left
           something to splice into.
         """
@@ -787,28 +787,58 @@ class EntAttemptService:
         if not question_ids:
             return
 
-        stmt = text(
+        # 1) Question + hint kk splice
+        q_stmt = text(
             "SELECT id, question_text_kk, hint_text_kk "
             "FROM questions WHERE id IN :ids"
         ).bindparams(bindparam("ids", expanding=True))
-        rows = self._uow.session.execute(stmt, {"ids": question_ids}).fetchall()
-        kk_map: dict[int, tuple[str | None, str | None]] = {
-            row[0]: (row[1], row[2]) for row in rows
+        q_rows = self._uow.session.execute(
+            q_stmt, {"ids": question_ids}
+        ).fetchall()
+        q_kk: dict[int, tuple[str | None, str | None]] = {
+            row[0]: (row[1], row[2]) for row in q_rows
         }
 
+        # 2) Variant kk splice — one batched SELECT keyed by variant.id
+        variant_ids: list[int] = []
         for q in flat_questions:
-            if q.id is None:
-                continue
-            kk = kk_map.get(q.id)
-            if not kk:
-                continue
-            q_text_kk, hint_text_kk = kk
-            if q_text_kk:
-                q.blocks = localize_blocks_with_kk_text(q.blocks, q_text_kk)
-            if hint_text_kk and q.hint is not None and getattr(q.hint, "blocks", None):
-                q.hint.blocks = localize_hint_blocks_with_kk_text(
-                    q.hint.blocks, hint_text_kk
-                )
+            for v in q.variants or []:
+                if v.id is not None:
+                    variant_ids.append(v.id)
+
+        v_kk: dict[int, str] = {}
+        if variant_ids:
+            v_stmt = text(
+                "SELECT id, variant_text_kk "
+                "FROM variants WHERE id IN :ids "
+                "AND variant_text_kk IS NOT NULL"
+            ).bindparams(bindparam("ids", expanding=True))
+            for row in self._uow.session.execute(
+                v_stmt, {"ids": variant_ids}
+            ).fetchall():
+                v_kk[row[0]] = row[1]
+
+        for q in flat_questions:
+            if q.id is not None:
+                kk = q_kk.get(q.id)
+                if kk:
+                    q_text_kk, hint_text_kk = kk
+                    if q_text_kk:
+                        q.blocks = localize_blocks_with_kk_text(q.blocks, q_text_kk)
+                    if (
+                        hint_text_kk
+                        and q.hint is not None
+                        and getattr(q.hint, "blocks", None)
+                    ):
+                        q.hint.blocks = localize_hint_blocks_with_kk_text(
+                            q.hint.blocks, hint_text_kk
+                        )
+            for v in q.variants or []:
+                if v.id is None:
+                    continue
+                kk_str = v_kk.get(v.id)
+                if kk_str:
+                    v.blocks = localize_blocks_with_kk_text(v.blocks, kk_str)
 
     def _load_subject_questions(self, ent_option_id):
         """Загрузить вопросы по предмету"""
@@ -1445,9 +1475,32 @@ class EntAttemptService:
         in the pilot) — the helpers no-op and return the original
         blocks list unchanged.
         """
+        from sqlalchemy import bindparam, text as sql_text
+
         from quiz.dtos.ent_attempts import QuestionWithAnswerDTO, VariantWithAnswerDTO
         from quiz.dtos.hint import localize_hint_blocks_with_kk_text
         from quiz.dtos.questions import localize_blocks_with_kk_text
+
+        # Phase 7b — single batched SELECT for variant_text_kk across all
+        # variants in this attempt. Done once up-front so we don't fire
+        # one SELECT per variant inside the loop. No-op when locale != kk.
+        variant_kk_map: dict[int, str] = {}
+        if locale == "kk":
+            variant_ids: list[int] = []
+            for q_obj in questions:
+                q_dto_preview = self._ensure_question_service_dto(q_obj)
+                variant_ids.extend(
+                    v.id for v in q_dto_preview.variants if v.id is not None
+                )
+            if variant_ids:
+                v_stmt = sql_text(
+                    "SELECT id, variant_text_kk FROM variants "
+                    "WHERE id IN :ids AND variant_text_kk IS NOT NULL"
+                ).bindparams(bindparam("ids", expanding=True))
+                for row in self._uow.session.execute(
+                    v_stmt, {"ids": variant_ids}
+                ).fetchall():
+                    variant_kk_map[row[0]] = row[1]
 
         questions_with_answers = []
 
@@ -1458,10 +1511,15 @@ class EntAttemptService:
             variants = []
             correct_variant_ids = set()
             for variant in question_dto.variants:
+                v_blocks = variant.blocks
+                if locale == "kk":
+                    kk_str = variant_kk_map.get(variant.id)
+                    if kk_str:
+                        v_blocks = localize_blocks_with_kk_text(v_blocks, kk_str)
                 variants.append(
                     VariantWithAnswerDTO(
                         id=variant.id,
-                        blocks=variant.blocks,
+                        blocks=v_blocks,
                         is_correct=variant.is_correct,
                         weight=variant.weight,
                         user_selected=variant.id in user_variant_ids,

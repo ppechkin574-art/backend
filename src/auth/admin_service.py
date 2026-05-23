@@ -162,28 +162,48 @@ class AdminUserService:
         return self.get_user(user_id)
 
     def grant_pro_subscription(self, user_id: UUID, days: int = 30) -> UserDTO:
-        """Forcibly grant a PRO subscription for `days` days.
+        """Grant or extend a PRO subscription by `days` days.
+
+        Smart semantics — automatically picks grant vs extend based on
+        the user's current state:
+          - User has no active PRO (FREE or expired) → start from `now`.
+            New `subscription_end` = now + days.
+          - User has active PRO with future `subscription_end` → extend.
+            New `subscription_end` = current_end + days (adds to the
+            remaining time instead of resetting).
+
+        Mirrors the natural admin intent ("give them N more days")
+        without forcing the caller to decide grant-vs-extend. Operator
+        wanting to truncate a long subscription should reset to FREE
+        first, then grant N days.
 
         Sets:
           - plan → "PRO"
-          - subscription_end → now (UTC) + days, ISO format
+          - subscription_end → calculated as above, ISO format
           - subscription_cancelled → cleared (empty list)
 
-        Used when:
-          - IAP receipt failed to propagate (real payment, missing PRO) —
-            one-shot grant while the receipt-validation bug is fixed
-          - Reviewer / demo accounts need PRO to exercise the gated flows
-            during Apple/Google review
-          - Comping a user after a support request
-
-        Mirrors `reset_subscription` on attribute semantics — empty list
-        means "remove attribute" in our KeycloakAttributesUpdateDTO
-        contract.
+        Empty-list semantics for attrs mirror `reset_subscription`:
+        `[]` means "remove this attribute" in our KeycloakAttributesUpdateDTO.
         """
         if days < 1:
             raise ValueError(f"days must be >= 1 (got {days})")
         keycloak_user = self.identity_provider.get(KeycloakUserQueryDTO(id=user_id))
-        end_iso = (datetime.now(UTC) + timedelta(days=days)).isoformat()
+        # Read current subscription state so we can decide whether to
+        # grant fresh (from now) or extend (from current_end).
+        current = self.get_user(user_id)
+        now_utc = datetime.now(UTC)
+        base_end = now_utc
+        if current.subscription_end:
+            existing = current.subscription_end
+            if existing.tzinfo is None:
+                existing = existing.replace(tzinfo=UTC)
+            # Only extend from existing_end if it's still in the future
+            # — an expired subscription_end shouldn't anchor a backdated
+            # extension (would compress the granted window).
+            if existing > now_utc:
+                base_end = existing
+        new_end = base_end + timedelta(days=days)
+        end_iso = new_end.isoformat()
         attrs = KeycloakAttributesUpdateDTO(
             plan=[PlanType.PRO.value],
             subscription_end=[end_iso],
@@ -196,9 +216,11 @@ class AdminUserService:
                 attributes=attrs,
             ),
         )
+        was_extend = base_end != now_utc
         logger.info(
-            "PRO subscription granted (admin path) to user %s for %d days, "
+            "PRO subscription %s (admin path) for user %s: %+d days, "
             "ends %s",
+            "extended" if was_extend else "granted",
             user_id, days, end_iso,
         )
         return self.get_user(user_id)

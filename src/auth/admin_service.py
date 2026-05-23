@@ -160,3 +160,45 @@ class AdminUserService:
             user_id,
         )
         return self.get_user(user_id)
+
+    def grant_pro_subscription(self, user_id: UUID, days: int = 30) -> UserDTO:
+        """Forcibly grant a PRO subscription for `days` days.
+
+        Sets:
+          - plan → "PRO"
+          - subscription_end → now (UTC) + days, ISO format
+          - subscription_cancelled → cleared (empty list)
+
+        Used when:
+          - IAP receipt failed to propagate (real payment, missing PRO) —
+            one-shot grant while the receipt-validation bug is fixed
+          - Reviewer / demo accounts need PRO to exercise the gated flows
+            during Apple/Google review
+          - Comping a user after a support request
+
+        Mirrors `reset_subscription` on attribute semantics — empty list
+        means "remove attribute" in our KeycloakAttributesUpdateDTO
+        contract.
+        """
+        if days < 1:
+            raise ValueError(f"days must be >= 1 (got {days})")
+        keycloak_user = self.identity_provider.get(KeycloakUserQueryDTO(id=user_id))
+        end_iso = (datetime.now(UTC) + timedelta(days=days)).isoformat()
+        attrs = KeycloakAttributesUpdateDTO(
+            plan=[PlanType.PRO.value],
+            subscription_end=[end_iso],
+            subscription_cancelled=[],
+        )
+        self.identity_provider.update_user(
+            user_id,
+            KeycloakUserUpdateDTO(
+                email=keycloak_user.email,
+                attributes=attrs,
+            ),
+        )
+        logger.info(
+            "PRO subscription granted (admin path) to user %s for %d days, "
+            "ends %s",
+            user_id, days, end_iso,
+        )
+        return self.get_user(user_id)

@@ -92,6 +92,34 @@ async def reset_subscription(
     return service.reset_subscription(user_id)
 
 
+class GrantProSubscriptionRequest(BaseModel):
+    days: int = Field(default=30, ge=1, le=3650)
+
+
+@router.post("/{user_id}/grant-pro-subscription", response_model=UserDTO)
+async def grant_pro_subscription(
+    user_id: UUID,
+    payload: GrantProSubscriptionRequest,
+    service: AdminUserService = Depends(get_admin_user_service),
+):
+    """Forcibly grant a PRO subscription for `days` days (default 30).
+
+    Companion to `/reset-subscription` (which sets plan=FREE). Used when:
+      - A paying user's IAP receipt failed to propagate to the backend
+        (real money was charged but plan stayed FREE). One-shot grant
+        unblocks them while the receipt-validation bug is fixed.
+      - Apple/Google reviewers need PRO access to exercise the gated
+        flows (test creation, etc.) before approving a build.
+      - Customer support needs to comp a user.
+
+    Admin-only (this whole router is `allow_only_admins`).
+    """
+    try:
+        return service.grant_pro_subscription(user_id, days=payload.days)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
 class SeedStreakRequest(BaseModel):
     days: int = Field(default=3, ge=1, le=30)
 

@@ -512,7 +512,17 @@ class EntAttemptService:
                     subject_id = option.subject_id
 
             self._uow.ent_attempts.save_attempt_updates(ent_attempt)
-            if attempt_stat.score > 0:
+            # Business rule (set by operator 23.05.2026): leaderboard
+            # points (stars) accrue only from the full ҰБТ — that is the
+            # "rated game". A single-subject attempt is training and
+            # must NOT bump the leaderboard total. Keeping the score
+            # field on the attempt itself untouched (it still gets
+            # displayed on the test-result screen for both modes), only
+            # the user_points / leaderboard table is gated.
+            if (
+                attempt_stat.score > 0
+                and ent_attempt.exam_type == ExamType.full_exam
+            ):
                 self._uow.user_points.add_points(student_guid, attempt_stat.score)
             self._uow.commit()
             self._cashback_service.check_and_update(student_guid)
@@ -560,7 +570,14 @@ class EntAttemptService:
                     f"user:{student_guid}:ent_options:subject_id={subject_id}"
                 )
 
-            if attempt_stat.score > 0:
+            # Same gating as add_points above — only full_exam can have
+            # changed the user_points table, so only that branch needs
+            # the cache bust. by_subject never touches user_points →
+            # cache stays valid for them.
+            if (
+                attempt_stat.score > 0
+                and ent_attempt.exam_type == ExamType.full_exam
+            ):
                 self._cache_service.delete_pattern(
                     f"user:{student_guid}:user_points:*"
                 )

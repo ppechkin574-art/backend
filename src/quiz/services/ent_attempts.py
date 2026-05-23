@@ -565,6 +565,18 @@ class EntAttemptService:
                     f"user:{student_guid}:user_points:*"
                 )
 
+            # Streak / avg-time / screen-time history all live inside
+            # `enhanced_global_statistic` (1h TTL — see statistic.py:40).
+            # Without busting it here, the Stats screen renders a stale
+            # streak for up to an hour after a finished test, which is
+            # the "иногда показывается, иногда нет" symptom (depends on
+            # how fresh the user's cache happens to be). Invalidate
+            # unconditionally — even a score=0 attempt can change the
+            # streak (today counts as a training day).
+            self._cache_service.delete_pattern(
+                f"user:{student_guid}:enhanced_global_statistic:*"
+            )
+
             return result
 
     # @cached(strategy=CacheStrategy.USER, ttl=604800, resource="ent_statistic")

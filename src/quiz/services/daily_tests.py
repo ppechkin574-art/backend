@@ -298,6 +298,15 @@ class DailyTestService:
 
             self._invalidate_daily_test_cache(student_guid, data.attempt_id)
 
+            # Streak feeds off completed dates from daily/trainer/ent —
+            # a completed daily test is a streak day. Bust the stats
+            # cache so the Stats screen reflects the new streak instead
+            # of holding the pre-completion value for up to 1h (TTL on
+            # get_enhanced_global_statistic).
+            self._cache_service.delete_pattern(
+                f"user:{student_guid}:enhanced_global_statistic:*"
+            )
+
             return DailyTestResultDTO(
                 attempt_id=attempt_id,
                 test_date=test_date,

@@ -289,6 +289,13 @@ class TrainerAttemptService:
                 attempt.topic_id if hasattr(attempt, "topic_id") else None,
             )
 
+            # A completed trainer attempt counts toward streak. Bust
+            # enhanced_global_statistic so Stats screen shows the new
+            # streak immediately instead of waiting up to 1h TTL.
+            self._cache_service.delete_pattern(
+                f"user:{student_guid}:enhanced_global_statistic:*"
+            )
+
             self._cashback_service.check_and_update(student_guid)
 
             return result

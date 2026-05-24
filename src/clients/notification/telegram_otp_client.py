@@ -61,11 +61,22 @@ class TelegramOtpClient:
 
         Raises on transport/4xx errors so the caller can fall through.
         Returns the parsed Telegram response on success.
+
+        Heuristic: when `code` looks like a real numeric OTP we wrap it in
+        the «AIMA — код для входа» template; arbitrary string hints
+        («Код не найден…», «open the AIMA app…») bypass the template so
+        they don't appear next to a bogus «Действителен 10 минут»
+        disclaimer that would mislead the user into thinking the hint
+        text IS the code.
         """
         if not self.settings.bot_token:
             raise RuntimeError("TelegramOtpClient.send_otp called with empty bot_token")
 
-        text = self._format_message(code)
+        text = (
+            self._format_message(code)
+            if isinstance(code, int) or (isinstance(code, str) and code.isdigit())
+            else str(code)
+        )
 
         if self.settings.debug:
             logger.info(

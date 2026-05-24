@@ -50,11 +50,17 @@ class FileService:
         return filename
 
     async def save_subject_image(self, image_file: UploadFile) -> str:
-        """Загружает картинку предмета в S3. Возвращает имя файла."""
-        contents = await self._read_validated_image(image_file)
-        processed = await self._process_image(contents)
+        """Загружает картинку предмета в S3. Возвращает имя файла.
 
-        filename = f"subject_{uuid.uuid4().hex}.jpg"
+        В отличие от аватаров, иконки предметов могут быть прозрачными
+        силуэтами — клиент тонирует их в `Colors.white` через
+        `Image.network(color: ...)`. Поэтому сохраняем PNG c альфа-каналом,
+        если входная картинка имеет прозрачность. Иначе — JPEG как раньше.
+        """
+        contents = await self._read_validated_image(image_file)
+        processed, ext = await self._process_image_keep_alpha(contents)
+
+        filename = f"subject_{uuid.uuid4().hex}.{ext}"
         object_name = f"{self.SUBJECT_PREFIX}/{filename}"
 
         try:
@@ -140,6 +146,36 @@ class FileService:
             image.save(output, format="JPEG", quality=self.JPEG_QUALITY, optimize=True)
 
             return output.getvalue()
+        except Exception as e:
+            logger.exception("Error processing image: %s", e)
+            raise HTTPException(status_code=400, detail="Invalid image file") from e
+
+    async def _process_image_keep_alpha(self, image_data: bytes) -> tuple[bytes, str]:
+        """Сохраняет PNG с альфа-каналом если у входа есть прозрачность,
+        иначе сжимает в JPEG как обычный _process_image.
+
+        Возвращает (bytes, extension) — расширение нужно вызывающему коду
+        для построения имени файла в bucket.
+        """
+        try:
+            image = Image.open(io.BytesIO(image_data))
+            has_alpha = image.mode in ("RGBA", "LA") or (
+                image.mode == "P" and "transparency" in image.info
+            )
+
+            if has_alpha:
+                image = image.convert("RGBA")
+                image.thumbnail(self.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
+                output = io.BytesIO()
+                image.save(output, format="PNG", optimize=True)
+                return output.getvalue(), "png"
+
+            if image.mode != "RGB":
+                image = image.convert("RGB")
+            image.thumbnail(self.THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
+            output = io.BytesIO()
+            image.save(output, format="JPEG", quality=self.JPEG_QUALITY, optimize=True)
+            return output.getvalue(), "jpg"
         except Exception as e:
             logger.exception("Error processing image: %s", e)
             raise HTTPException(status_code=400, detail="Invalid image file") from e

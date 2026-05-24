@@ -196,9 +196,27 @@ async def request_code(
             delivery_channel=channel_used or "none",
         )
 
+        # If every primary channel failed AND the Telegram bot is
+        # configured, include the deep link so the client can render the
+        # "Открыть Telegram" fallback modal. Empty bot_username (= bot not
+        # configured) → field stays null → client falls back to the
+        # generic "Не удалось отправить" snackbar as before.
+        tg_fallback_url: str | None = None
+        if channel_used is None:
+            container = request.app.state.container
+            tg_settings = container.config().telegram_otp
+            if tg_settings.bot_username and tg_settings.bot_token:
+                # Telegram deep-link format: https://t.me/<bot>?start=<payload>
+                # The payload is passed verbatim to the bot's /start handler
+                # via the message text (see routes.py:telegram_webhook).
+                tg_fallback_url = (
+                    f"https://t.me/{tg_settings.bot_username}?start={verification_id}"
+                )
+
         return CodeRequestResponse(
             verification_id=verification_id,
             delivery_channel=channel_used,
+            telegram_fallback_url=tg_fallback_url,
         )
 
     except ValueError as e:
@@ -956,6 +974,138 @@ def delete_account(
         raise e
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# Telegram-bot webhook for OTP delivery (self-hosted WhatsApp alternative).
+# Telegram POSTs an update here whenever the bot receives a message.
+# We act only on /start <verification_id> payloads — that's what links the
+# user's chat_id to their phone so subsequent OTPs can be delivered to DM
+# directly (see services.py:_try_telegram_otp / link_telegram_chat).
+#
+# Auth: Telegram sends the secret we provided at setWebhook back in the
+# `X-Telegram-Bot-Api-Secret-Token` header. A request without it or with
+# a mismatched value is dropped. The endpoint also returns 200 even on
+# logical no-op (unknown vid, non-/start text) so Telegram doesn't retry
+# pointlessly.
+# ---------------------------------------------------------------------------
+@public_router.post("/telegram/webhook", include_in_schema=False)
+async def telegram_webhook(
+    request: Request,
+    service: AuthService = Depends(get_auth_service),
+):
+    from dependency_injector.wiring import Provide, inject
+    from api.containers import Container
+
+    # Pull TelegramOtpClient out of the DI container manually — the
+    # @inject decorator pattern doesn't compose cleanly with the public
+    # Telegram webhook signature (extra args confuse FastAPI's body parser).
+    container: Container = request.app.state.container
+    tg_client = container.telegram_otp_client()
+    tg_settings = container.config().telegram_otp
+
+    # 1. Verify secret. Telegram caches setWebhook(secret) and replays
+    #    the value back on every POST. Missing/mismatched = drop quietly.
+    if tg_settings.webhook_secret:
+        provided = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not _constant_time_eq(provided, tg_settings.webhook_secret):
+            log_warning(
+                "Telegram webhook secret mismatch — dropping update",
+                user_id="anonymous",
+                action="telegram_webhook",
+            )
+            # 200 (not 401) so Telegram doesn't retry, but the log captures it.
+            return {"ok": True, "ignored": "secret_mismatch"}
+
+    try:
+        update = await request.json()
+    except Exception as e:
+        logger.warning("Telegram webhook: malformed JSON: %s", e)
+        return {"ok": True, "ignored": "bad_json"}
+
+    message = update.get("message") if isinstance(update, dict) else None
+    if not message:
+        # Other update types (edited_message, callback_query, etc.) — ignore.
+        return {"ok": True, "ignored": "no_message"}
+
+    text = (message.get("text") or "").strip()
+    chat = message.get("chat") or {}
+    chat_id = chat.get("id")
+    if chat_id is None:
+        return {"ok": True, "ignored": "no_chat_id"}
+
+    # /start with optional payload: "/start abc-vid-1234". Without the
+    # payload — just greet the user; no OTP context to act on.
+    if not text.startswith("/start"):
+        # The bot doesn't run a conversational interface; ignore everything
+        # else so users get no misleading auto-reply.
+        return {"ok": True, "ignored": "not_start"}
+
+    parts = text.split(maxsplit=1)
+    payload = parts[1].strip() if len(parts) == 2 else ""
+    if not payload:
+        # Plain /start. Send a one-time hint so the user understands they
+        # need to come from the AIMA app's deep link.
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            tg_client.send_otp(
+                chat_id,
+                "_open the AIMA app and tap «Получить код в Telegram»_",
+            )
+        return {"ok": True, "ignored": "empty_payload"}
+
+    try:
+        verification_id = uuid.UUID(payload)
+    except ValueError:
+        logger.warning("Telegram /start payload not a UUID: %s", payload[:50])
+        return {"ok": True, "ignored": "bad_payload"}
+
+    delivered, code = service.link_telegram_chat(verification_id, int(chat_id))
+    if not delivered or code is None:
+        # The vid expired or was never stashed. Reply with a soft hint so
+        # the user knows to retry from the app — silent failure here would
+        # look like the bot is broken.
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            tg_client.send_otp(
+                chat_id,
+                "Код не найден или истёк. Запросите новый в приложении.",
+            )
+        return {"ok": True, "ignored": "vid_not_found"}
+
+    try:
+        tg_client.send_otp(chat_id, code)
+        log_info(
+            "OTP delivered via Telegram bot",
+            user_id="anonymous",
+            action="telegram_webhook",
+            verification_id=str(verification_id),
+        )
+    except Exception as e:
+        log_error(
+            "Telegram bot send_otp failed after link",
+            user_id="anonymous",
+            action="telegram_webhook",
+            verification_id=str(verification_id),
+            error_message=str(e),
+        )
+        # Still 200 — we don't want Telegram to keep retrying; the user
+        # will request a fresh code from the app.
+        return {"ok": True, "ignored": "send_failed"}
+
+    return {"ok": True}
+
+
+def _constant_time_eq(a: str, b: str) -> bool:
+    """Constant-time string compare to defeat timing-attacks on the
+    webhook secret. The header value is attacker-controlled; without this
+    a side-channel could leak the secret one byte at a time.
+    """
+    import hmac
+
+    return hmac.compare_digest(a.encode("utf-8"), b.encode("utf-8"))
 
 
 router = APIRouter(prefix="/auth", tags=["Unified - Auth"])

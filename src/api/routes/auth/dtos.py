@@ -226,7 +226,16 @@ class CodeRequestResponse(BaseModel):
     # WhatsApp not configured). Older clients ignore this field.
     delivery_channel: str | None = Field(
         default=None,
-        description="Channel used to deliver the code: 'whatsapp', 'sms', 'email', or null on failure",
+        description="Channel used to deliver the code: 'whatsapp', 'sms', 'email', 'telegram', or null on failure",
+    )
+    # Populated only when delivery_channel is null AND the Telegram-bot
+    # fallback is enabled. The client shows a «Открыть Telegram» modal
+    # with this deep link — tapping it opens the bot with the verification_id
+    # baked in as /start payload. See routes.py:telegram_webhook for the
+    # other side of the handshake.
+    telegram_fallback_url: str | None = Field(
+        default=None,
+        description="Deep link to the Telegram OTP bot for fallback delivery (null when not applicable)",
     )
 
 

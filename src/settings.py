@@ -10,6 +10,7 @@ from clients.media_storage import MinioSettings
 from clients.notification.settings import (
     EmailClientSettings,
     SMSCSettings,
+    TelegramOtpSettings,
     TwilioSettings,
     WazzupSettings,
 )
@@ -35,6 +36,9 @@ class Settings(BaseSettings):
     twilio: TwilioSettings | None = None
     firebase: FirebaseSettings = FirebaseSettings()
     wazzup: WazzupSettings
+    # Optional: Telegram-bot OTP fallback. Empty bot_token disables the
+    # channel; chain falls back to SMS-only.
+    telegram_otp: TelegramOtpSettings = TelegramOtpSettings()
     upload_base_dir: str
     file_base_url: str
     cloudflare_customer_code: str

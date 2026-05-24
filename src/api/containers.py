@@ -15,6 +15,7 @@ from clients.notification.client import (
     # NotificationClientSMSTwilio,  # kept as code-level fallback, see sms_client provider below
     NotificationClientWhatsApp,
 )
+from clients.notification.telegram_otp_client import TelegramOtpClient
 from database import Database
 from payments.services import PaymentService
 from payments.ws_tokens import WebSocketTokenManager
@@ -98,6 +99,14 @@ class Container(containers.DeclarativeContainer):
         telegram_client=notification_client,
     )
 
+    # Self-hosted Telegram OTP delivery — fallback after SMS for users on
+    # broken operator routes (Beeline KZ pending registration). Disabled
+    # when bot_token is empty; chain falls through to current behaviour.
+    telegram_otp_client = providers.Singleton(
+        TelegramOtpClient,
+        settings=config.provided.telegram_otp,
+    )
+
     google_oauth_client = providers.Singleton(
         GoogleOAuthClient,
         settings=config.provided.google_oauth,
@@ -123,6 +132,8 @@ class Container(containers.DeclarativeContainer):
         email_client=email_client,
         sms_client=sms_client,
         whatsapp_client=whatsapp_client,
+        telegram_otp_client=telegram_otp_client,
+        redis=redis,
         google_client=google_oauth_client,
         apple_client=apple_oauth_client,
         oauth_helper=oauth_helper,

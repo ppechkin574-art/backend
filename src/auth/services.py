@@ -425,6 +425,8 @@ class AuthService:
         email_client: NotificationClientInterface,
         sms_client: NotificationClientInterface,
         whatsapp_client: NotificationClientInterface,
+        telegram_otp_client,
+        redis,
         google_client: GoogleOAuthClient,
         apple_client: AppleOAuthClient,
         oauth_helper: OAuthHelper,
@@ -436,6 +438,13 @@ class AuthService:
         self._email_client = email_client
         self._sms_client = sms_client
         self._whatsapp_client = whatsapp_client
+        self._telegram_otp_client = telegram_otp_client
+        # Standalone Redis handle for tg:vid:* and tg:chat:* keys. The
+        # ConfirmationCodeRepository's own Redis is fine to reuse but
+        # keeping a direct handle here keeps the contract obvious for the
+        # webhook path which needs to read the vid bundle outside of any
+        # confirmation-code repo lifecycle.
+        self._redis = redis
         self.google_client = google_client
         self.apple_client = apple_client
         self.oauth_helper = oauth_helper
@@ -443,6 +452,11 @@ class AuthService:
 
         self.CODE_EXPIRATION_SECONDS = 10 * 60
         self.MAX_ATTEMPTS = 3
+        # Persist chat_id ↔ phone mapping for 30 days so the same user
+        # doesn't have to /start the bot again on every Beeline-broken
+        # OTP request. Re-link if the user explicitly /start's a new
+        # verification_id — that overwrites the old chat_id.
+        self.TG_CHAT_TTL_SECONDS = 30 * 24 * 60 * 60
 
     def request_code(
         self, contact: str, platform: CodePlatform, action: ConfirmationCodeAction
@@ -617,7 +631,11 @@ class AuthService:
                 preferred_channel = None
 
             sent_ok, channel_used = self._send_confirmation_code(
-                contact, code, platform, preferred_channel=preferred_channel
+                contact,
+                code,
+                platform,
+                verification_id=verification_id,
+                preferred_channel=preferred_channel,
             )
 
             # Persist the channel that succeeded so a resend within the OTP
@@ -1110,6 +1128,121 @@ class AuthService:
             return False
         return True
 
+    def _try_telegram_otp(self, contact: str, code: int, verification_id) -> bool:
+        """Send the OTP via Telegram bot iff we have a saved chat_id for
+        this phone. Returns False when the user hasn't linked yet — caller
+        falls through, the chain ends, and the post-chain stash places a
+        tg:vid:<id> bundle so that a /start with this verification_id can
+        still deliver the code via the bot.
+        """
+        if not self._telegram_otp_client.is_enabled:
+            return False
+        try:
+            chat_id_raw = self._redis.get(f"tg:chat:{contact}")
+        except Exception as e:
+            logger.warning("Redis read of tg:chat:%s failed: %s", contact, e)
+            return False
+        if not chat_id_raw:
+            logger.debug(
+                "No saved Telegram chat_id for %s — skip TG leg (will stash vid=%s)",
+                contact,
+                verification_id,
+            )
+            return False
+        try:
+            chat_id = int(chat_id_raw)
+            self._telegram_otp_client.send_otp(chat_id, code)
+            return True
+        except Exception as e:
+            logger.warning(
+                "Telegram delivery failed for %s (chat_id=%s): %s",
+                contact,
+                chat_id_raw,
+                e,
+            )
+            # Drop the stale mapping — chat_id no longer reachable (user
+            # blocked the bot / deleted account). The next /start will
+            # re-establish it.
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                self._redis.delete(f"tg:chat:{contact}")
+            return False
+
+    def _stash_vid_for_bot(self, verification_id, contact: str, code: int) -> None:
+        """Save {code, phone} under tg:vid:<verification_id> so the bot's
+        /start handler can deliver the code on-demand when the user opens
+        the deep link. TTL matches the OTP itself — past 10 min the code
+        is dead anyway.
+        """
+        if verification_id is None:
+            return
+        import json
+
+        key = f"tg:vid:{verification_id}"
+        payload = json.dumps({"code": code, "phone": contact})
+        self._redis.setex(key, self.CODE_EXPIRATION_SECONDS, payload)
+        logger.info(
+            "Stashed OTP for bot delivery: vid=%s contact=%s (TTL %ss)",
+            verification_id,
+            _mask_contact(contact),
+            self.CODE_EXPIRATION_SECONDS,
+        )
+
+    def link_telegram_chat(
+        self, verification_id, chat_id: int
+    ) -> tuple[bool, int | None]:
+        """Called by the webhook handler when a user /starts the bot with
+        a verification_id payload. Looks up the stashed OTP, delivers it to
+        the chat_id, and persists the chat_id↔phone mapping for future
+        passive deliveries.
+
+        Returns (delivered, code_to_send_or_None). The webhook itself does
+        not send the bot message — it just returns the code so the bot
+        layer can format and send (keeps the service layer transport-free).
+        """
+        import json
+
+        key = f"tg:vid:{verification_id}"
+        try:
+            raw = self._redis.get(key)
+        except Exception as e:
+            logger.warning("Redis read of %s failed: %s", key, e)
+            return (False, None)
+        if not raw:
+            logger.info(
+                "No stashed OTP for vid=%s (expired or never created)",
+                verification_id,
+            )
+            return (False, None)
+        try:
+            bundle = json.loads(raw)
+            code = int(bundle["code"])
+            phone = str(bundle["phone"])
+        except Exception as e:
+            logger.warning(
+                "Corrupt tg:vid payload for vid=%s: %s", verification_id, e
+            )
+            return (False, None)
+
+        # Persist chat_id ↔ phone (30-day TTL). Subsequent OTPs to this
+        # phone go straight to DM via _try_telegram_otp.
+        try:
+            self._redis.setex(
+                f"tg:chat:{phone}", self.TG_CHAT_TTL_SECONDS, str(chat_id)
+            )
+        except Exception as e:
+            logger.warning(
+                "Could not persist tg:chat for %s: %s", _mask_contact(phone), e
+            )
+        # The vid bundle is single-use — drop so a stolen verification_id
+        # can't be replayed against a different chat_id later.
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            self._redis.delete(key)
+        return (True, code)
+
     def _try_whatsapp_otp(self, contact: str, code: int) -> bool:
         """Direct call to WazzupClient (bypasses NotificationClientWhatsApp.notify
         which has an internal silent-fallback to the dev Telegram channel that
@@ -1143,6 +1276,7 @@ class AuthService:
         contact: str,
         code: int,
         platform: CodePlatform,
+        verification_id: UUID | None = None,
         preferred_channel: str | None = None,
     ) -> tuple[bool, str | None]:
         """Send the OTP and return (sent_ok, channel_used).
@@ -1196,13 +1330,19 @@ class AuthService:
                 return (False, None)
 
         # SMS (default phone case) — run the chain.
-        # Channel order: WhatsApp first (cheap + fast), SMS fallback.
-        # If the user previously succeeded via SMS we know WA doesn't work
-        # for them — skip the failing leg.
+        # Channel order: WhatsApp first (cheap + fast), SMS, then Telegram-bot
+        # for users we have a saved chat_id for. If the user previously
+        # succeeded via SMS we know WA doesn't work for them — skip the
+        # failing leg.
         chain: list[str] = []
         if self._whatsapp_is_configured() and preferred_channel != "sms":
             chain.append("whatsapp")
         chain.append("sms")
+        # Telegram leg is appended unconditionally. The chain entry decides
+        # internally whether to attempt (saved chat_id exists) or skip; that
+        # keeps the chain flat and the decision logic in one place.
+        if self._telegram_otp_client.is_enabled:
+            chain.append("telegram")
 
         for channel in chain:
             if channel == "whatsapp":
@@ -1218,10 +1358,27 @@ class AuthService:
                 except Exception as e:
                     logger.warning("SMS delivery failed for %s: %s", contact, e)
                     self._send_code_to_dev_channel(contact, code, "SMS", str(e))
-                    # No more channels in chain — fall through to "all failed"
+                    # Continue to telegram leg (if enabled + chat_id known).
                     continue
+            if channel == "telegram":
+                if self._try_telegram_otp(contact, code, verification_id):
+                    return (True, "telegram")
+                # No saved chat_id (or send failed) — fall through.
+                continue
 
-        # Every channel exhausted.
+        # Every channel exhausted. Stash {code, phone} under tg:vid:<id> so
+        # that if the user later /starts the bot with this verification_id,
+        # the webhook can hand them the code straight away. Same TTL as the
+        # confirmation code itself — past that the vid is dead anyway.
+        if self._telegram_otp_client.is_enabled:
+            try:
+                self._stash_vid_for_bot(verification_id, contact, code)
+            except Exception as e:
+                logger.warning(
+                    "Could not stash vid for bot fallback (vid=%s): %s",
+                    verification_id,
+                    e,
+                )
         return (False, None)
 
     def _send_code_to_dev_channel(self, contact: str, code: int, source: str, error_msg: str = "") -> None:

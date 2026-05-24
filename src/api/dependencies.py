@@ -152,6 +152,13 @@ def get_notification_client_whatsapp(
 
 
 @inject
+def get_telegram_otp_client(
+    telegram_otp_client=Depends(Provide[Container.telegram_otp_client]),
+):
+    return telegram_otp_client
+
+
+@inject
 def get_google_oauth_client(
     google_client=Depends(Provide[Container.google_oauth_client]),
 ):
@@ -191,6 +198,8 @@ def get_auth_service(
     whatsapp_client: NotificationClientInterface = Depends(
         get_notification_client_whatsapp
     ),
+    telegram_otp_client=Depends(get_telegram_otp_client),
+    redis: Redis = Depends(get_redis),
     google_client: GoogleOAuthClient = Depends(get_google_oauth_client),
     apple_client: AppleOAuthClient = Depends(get_apple_oauth_client),
     oauth_helper: OAuthHelper = Depends(get_oauth_helper),
@@ -205,6 +214,8 @@ def get_auth_service(
         email_client,
         sms_client,
         whatsapp_client,
+        telegram_otp_client,
+        redis,
         google_client,
         apple_client,
         oauth_helper,

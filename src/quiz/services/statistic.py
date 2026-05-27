@@ -333,6 +333,13 @@ class StatisticService:
 
     @staticmethod
     def _compute_screen_time_trend(history: list[dict]) -> int | None:
+        # Temporary instrumentation — verify prod sees the same data the
+        # client logs. Remove once «↓ X%» badge stabilises.
+        logger.info(
+            "[TREND-DEBUG] history_len=%s items=%s",
+            len(history) if history else 0,
+            [it.get("screen_time_seconds") for it in (history or [])],
+        )
         """Trend of screen-time engagement across the returned window.
 
         Splits the history into two halves and compares the second half's

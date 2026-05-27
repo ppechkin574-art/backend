@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -320,6 +320,9 @@ class StatisticService:
                 "screen_time_trend_percentage": self._compute_screen_time_trend(
                     screen_time_history
                 ),
+                "full_ent_attempts_history": self._compute_full_ent_attempts_history(
+                    student_id
+                ),
                 "activity_level": activity_level,
                 "engagement_score": engagement_score,
                 "recommendations": recommendations,
@@ -367,6 +370,91 @@ class StatisticService:
         if delta_pct == 0:
             return None
         return max(-99, min(99, delta_pct))
+
+    def _compute_full_ent_attempts_history(
+        self, student_id: UUID
+    ) -> list[dict[str, Any]]:
+        """Завершённые попытки Полного ЕНТ за последние 365 дней.
+
+        Каждая строка — `{completed_at: ISO8601, score_percentage: int}`,
+        сортировка по `completed_at` DESC (newest first). Это сырьё для
+        pill-чарта на экране статистики; клиент группирует список в 7/4/12
+        бакетов в зависимости от выбранного периода (неделя/месяц/год).
+
+        Считаем только `exam_type=full_exam, status=completed` — операторское
+        решение от 27.05.2026: «по-предметные» тесты сюда не идут.
+
+        Процент = `score / total_questions * 100`. `total_questions` берём
+        из `full_exam_question_ids` (CSV). Попытки с пустым CSV — невалидные,
+        пропускаем (есть warning в логах при `get_attempt_statistic`).
+        """
+        from quiz.dtos.enums import Status
+        from quiz.models.ent import EntAttempt
+
+        cutoff = datetime.utcnow() - timedelta(days=365)
+        attempts = (
+            self.uow.ent_attempts._session.query(EntAttempt)
+            .filter(
+                EntAttempt.student_guid == student_id,
+                EntAttempt.exam_type == ExamType.full_exam,
+                EntAttempt.status == Status.completed,
+                EntAttempt.completed_at.isnot(None),
+                EntAttempt.completed_at >= cutoff,
+            )
+            .order_by(EntAttempt.completed_at.desc())
+            .all()
+        )
+
+        result: list[dict[str, Any]] = []
+        for a in attempts:
+            item = self._project_full_ent_attempt(
+                score=a.score,
+                full_exam_question_ids=a.full_exam_question_ids,
+                completed_at=a.completed_at,
+            )
+            if item is not None:
+                result.append(item)
+        return result
+
+    @staticmethod
+    def _project_full_ent_attempt(
+        *,
+        score: int | None,
+        full_exam_question_ids: str | None,
+        completed_at: datetime | None,
+    ) -> dict[str, Any] | None:
+        """Pure projection of one EntAttempt → history row.
+
+        Returns None when the row isn't representable: missing
+        `completed_at`, empty `full_exam_question_ids`, or unparseable
+        question count. Percentage is clamped to [0, 100] — protects the
+        client chart against bad data (negative score, score > total_questions
+        from a partial backfill) without hiding the underlying attempt
+        from the count.
+        """
+        if completed_at is None:
+            return None
+        csv = (full_exam_question_ids or "").strip()
+        if not csv:
+            return None
+        total_questions = len([q for q in csv.split(",") if q.strip()])
+        if total_questions <= 0:
+            return None
+        pct = round((score or 0) / total_questions * 100)
+        pct = max(0, min(100, pct))
+        # Append explicit UTC marker. `completed_at` is naive-UTC in the DB
+        # (Column(DateTime), no tz) but Dart `DateTime.parse` of a string
+        # without timezone treats it as LOCAL — shifting absolute time by
+        # the user's offset (KZ is UTC+5 → would land 5 hours early).
+        # Forcing `Z` keeps the client-side bucketing aligned with what
+        # the server thinks the attempt's calendar date is.
+        iso = completed_at.isoformat()
+        if not iso.endswith("Z") and "+" not in iso[10:]:
+            iso = iso + "Z"
+        return {
+            "completed_at": iso,
+            "score_percentage": pct,
+        }
 
     def _convert_to_subject_progress_dto(self, subject_list: list[dict]) -> list[SubjectProgressDTO]:
         """Конвертировать список словарей в список SubjectProgressDTO"""

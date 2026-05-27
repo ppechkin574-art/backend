@@ -1,0 +1,157 @@
+"""Tests for StatisticService._project_full_ent_attempt.
+
+The «Ваша статистика» pill-chart was built on top of this projection
+on 27.05.2026. These tests pin the contract so the pill-bar segments
+on the iOS app keep matching what the DB actually holds — bad data
+must NOT crash the chart, and clamps must NOT silently drop a real
+attempt from view.
+"""
+
+from datetime import datetime
+
+from quiz.services.statistic import StatisticService
+
+
+class TestProjectFullEntAttempt:
+    project = staticmethod(StatisticService._project_full_ent_attempt)
+
+    # ─── happy paths ──────────────────────────────────────────────────
+
+    def test_standard_attempt(self):
+        # ENT-style 140 question full exam, 70 correct = 50%
+        ids = ",".join(str(i) for i in range(140))
+        out = self.project(
+            score=70,
+            full_exam_question_ids=ids,
+            completed_at=datetime(2026, 5, 27, 14, 30),
+        )
+        assert out == {
+            "completed_at": "2026-05-27T14:30:00Z",
+            "score_percentage": 50,
+        }
+
+    def test_rounds_to_nearest_percent(self):
+        # 1/3 = 33.33%; round-half-to-even — 33 is fine.
+        out = self.project(
+            score=1,
+            full_exam_question_ids="1,2,3",
+            completed_at=datetime(2026, 5, 27),
+        )
+        assert out is not None and out["score_percentage"] == 33
+
+    def test_perfect_score(self):
+        out = self.project(
+            score=140,
+            full_exam_question_ids=",".join(str(i) for i in range(140)),
+            completed_at=datetime(2026, 5, 27),
+        )
+        assert out is not None and out["score_percentage"] == 100
+
+    def test_zero_score(self):
+        out = self.project(
+            score=0,
+            full_exam_question_ids=",".join(str(i) for i in range(10)),
+            completed_at=datetime(2026, 5, 27),
+        )
+        assert out is not None and out["score_percentage"] == 0
+
+    # ─── unrepresentable rows return None ─────────────────────────────
+
+    def test_none_when_completed_at_missing(self):
+        # Attempt is still `in_progress` — completed_at is NULL.
+        out = self.project(
+            score=70,
+            full_exam_question_ids="1,2,3",
+            completed_at=None,
+        )
+        assert out is None
+
+    def test_none_when_full_exam_question_ids_empty(self):
+        # Legacy by_subject attempts had no full_exam_question_ids.
+        # Defensive — even if our exam_type filter ever fails, the
+        # projection won't fabricate a percentage.
+        out = self.project(
+            score=10,
+            full_exam_question_ids="",
+            completed_at=datetime(2026, 5, 27),
+        )
+        assert out is None
+
+    def test_none_when_full_exam_question_ids_only_whitespace(self):
+        # Same guard but for whitespace-only CSVs.
+        out = self.project(
+            score=10,
+            full_exam_question_ids="   ",
+            completed_at=datetime(2026, 5, 27),
+        )
+        assert out is None
+
+    def test_none_when_full_exam_question_ids_only_commas(self):
+        # Edge case: CSV with no actual ids → total_questions == 0.
+        out = self.project(
+            score=10,
+            full_exam_question_ids=", , ,",
+            completed_at=datetime(2026, 5, 27),
+        )
+        assert out is None
+
+    def test_none_when_full_exam_question_ids_is_None(self):
+        # Real schema allows NULL.
+        out = self.project(
+            score=10,
+            full_exam_question_ids=None,
+            completed_at=datetime(2026, 5, 27),
+        )
+        assert out is None
+
+    # ─── defensive clamps ─────────────────────────────────────────────
+
+    def test_score_None_treated_as_zero(self):
+        # Legacy completed rows sometimes have score=NULL.
+        out = self.project(
+            score=None,
+            full_exam_question_ids="1,2,3,4",
+            completed_at=datetime(2026, 5, 27),
+        )
+        assert out is not None and out["score_percentage"] == 0
+
+    def test_score_higher_than_total_clamped_to_100(self):
+        # Sanity guard against a botched backfill that inflated `score`
+        # beyond total_questions — should not render «120%».
+        out = self.project(
+            score=200,
+            full_exam_question_ids="1,2,3,4,5",
+            completed_at=datetime(2026, 5, 27),
+        )
+        assert out is not None and out["score_percentage"] == 100
+
+    def test_negative_score_clamped_to_0(self):
+        # Should never happen, but a stray negative must not crash UI.
+        out = self.project(
+            score=-5,
+            full_exam_question_ids="1,2,3,4",
+            completed_at=datetime(2026, 5, 27),
+        )
+        assert out is not None and out["score_percentage"] == 0
+
+    # ─── CSV parsing tolerance ────────────────────────────────────────
+
+    def test_tolerates_spaces_in_csv(self):
+        # The CSV is generated by `_serialize_question_ids` which uses
+        # `,`.join(map(str, ids)) — no spaces. But if a future writer
+        # adds them, parsing should still work.
+        out = self.project(
+            score=2,
+            full_exam_question_ids="1, 2, 3, 4",
+            completed_at=datetime(2026, 5, 27),
+        )
+        assert out is not None and out["score_percentage"] == 50
+
+    def test_tolerates_trailing_comma(self):
+        # Trailing comma in CSV should not inflate the total.
+        out = self.project(
+            score=2,
+            full_exam_question_ids="1,2,3,4,",
+            completed_at=datetime(2026, 5, 27),
+        )
+        assert out is not None and out["score_percentage"] == 50

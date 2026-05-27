@@ -16,6 +16,17 @@ class ScreenTimeDailyDTO(BaseModel):
     screen_time_formatted: str
 
 
+class EntAttemptHistoryItemDTO(BaseModel):
+    """Одна завершённая попытка полного ЕНТ для блока «Ваша статистика».
+
+    Клиент группирует список по дням/неделям/месяцам в зависимости от
+    выбранного периода. Сегмент в pill-баре строится из `score_percentage`.
+    """
+
+    completed_at: str  # ISO 8601 (UTC)
+    score_percentage: int  # 0..100
+
+
 # ==================== ENUMS ====================
 
 
@@ -499,6 +510,15 @@ class EnhancedGlobalStatisticDTO(BaseModel):
     screen_time_trend_percentage: int | None = Field(
         default=None,
         description="Тренд экранного времени в процентах (sign: +=рост, −=падение). null когда данных недостаточно",
+    )
+    # Last 12 months of completed full-ENT attempts. Newest first.
+    # Client buckets this list into 7-day / 4-week / 12-month pill bars
+    # based on the period selector. Trial (`by_subject`) attempts are
+    # NOT included — operator decision 27.05.2026: the main chart is the
+    # "exam dynamics" view, not generic practice activity.
+    full_ent_attempts_history: list[EntAttemptHistoryItemDTO] = Field(
+        default_factory=list,
+        description="Завершённые попытки Полного ЕНТ за последние 12 мес (сортировка по completed_at DESC)",
     )
     activity_level: str
     engagement_score: float

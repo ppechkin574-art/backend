@@ -488,6 +488,18 @@ class EnhancedGlobalStatisticDTO(BaseModel):
     average_daily_screen_time: str = Field(
         default="0m", description="Среднее экранное время в день (форматированное)"
     )
+    # Screen-time trend over the returned `screen_time_history` window.
+    # Signed integer percentage: positive = engagement growing (recent avg
+    # exceeds prior avg), negative = dropping off. Computed server-side
+    # over the same data the client sees, so the «↓ 23%» badge on the
+    # stats screen reads exactly what the bars below it tell. `None` when
+    # there isn't enough history (<4 days) or prior-period avg is zero —
+    # client hides the badge in those cases. Capped at ±99 so the badge
+    # stays readable when a long-idle user jumps back in (or vice-versa).
+    screen_time_trend_percentage: int | None = Field(
+        default=None,
+        description="Тренд экранного времени в процентах (sign: +=рост, −=падение). null когда данных недостаточно",
+    )
     activity_level: str
     engagement_score: float
     recommendations: list[str]

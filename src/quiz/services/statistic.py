@@ -317,6 +317,9 @@ class StatisticService:
                 "total_screen_time_seconds": total_screen_time_seconds,
                 "average_daily_screen_time_seconds": average_daily_screen_time_seconds,
                 "average_daily_screen_time": average_daily_screen_time,
+                "screen_time_trend_percentage": self._compute_screen_time_trend(
+                    screen_time_history
+                ),
                 "activity_level": activity_level,
                 "engagement_score": engagement_score,
                 "recommendations": recommendations,
@@ -327,6 +330,43 @@ class StatisticService:
             logger.warning("Statistic validation warnings: %s", validation_errors)
 
         return result
+
+    @staticmethod
+    def _compute_screen_time_trend(history: list[dict]) -> int | None:
+        """Trend of screen-time engagement across the returned window.
+
+        Splits the history into two halves and compares the second half's
+        average to the first half's. Positive → engagement growing,
+        negative → falling off. Capped to ±99 so the frontend «↓ 23%»
+        badge never overflows the card.
+
+        Returns None when the data isn't actionable:
+        - fewer than 4 days in the window (can't make 2-vs-2 comparison)
+        - either half is empty
+        - first half average is zero (would div-by-zero / report ∞%)
+        """
+        if not history or len(history) < 4:
+            return None
+
+        mid = len(history) // 2
+        prior = history[:mid]
+        recent = history[mid:]
+        if not prior or not recent:
+            return None
+
+        def avg(items: list[dict]) -> float:
+            total = sum(int(it.get("screen_time_seconds", 0) or 0) for it in items)
+            return total / len(items)
+
+        prior_avg = avg(prior)
+        recent_avg = avg(recent)
+        if prior_avg <= 0:
+            return None
+
+        delta_pct = round((recent_avg - prior_avg) / prior_avg * 100)
+        if delta_pct == 0:
+            return None
+        return max(-99, min(99, delta_pct))
 
     def _convert_to_subject_progress_dto(self, subject_list: list[dict]) -> list[SubjectProgressDTO]:
         """Конвертировать список словарей в список SubjectProgressDTO"""

@@ -789,3 +789,22 @@ def get_family_service(
     ),
 ) -> FamilyService:
     return FamilyService(session, idp)
+
+
+def get_referral_service(
+    db: Session = Depends(get_db_session),
+    app_settings=Depends(get_app_settings_service),
+    admin_user_service: AdminUserService = Depends(get_admin_user_service),
+):
+    """Referral-code service. Star grants go via UserPointsRepository,
+    Pro-day grants go via AdminUserService.grant_pro_subscription —
+    both already exist for the admin promo flow, we reuse them so the
+    behaviour stays consistent across entry points."""
+    from referrals.service import ReferralService
+
+    return ReferralService(
+        db=db,
+        app_settings=app_settings,
+        admin_user_service=admin_user_service,
+        user_points_repo=UserPointsRepository(db),
+    )

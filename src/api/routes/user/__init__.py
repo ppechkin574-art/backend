@@ -14,6 +14,7 @@ from .leaderboard import router as leaderboard_router
 from .performance import router as performance_router
 from .users import router as users_router
 from .family import router as family_router
+from .referrals import router as referrals_router
 
 routers = [
     subjects_router,
@@ -32,4 +33,5 @@ routers = [
     performance_router,
     users_router,
     family_router,
+    referrals_router,
 ]

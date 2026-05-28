@@ -19,6 +19,7 @@ from analytics import models
 from payments import models
 from promocodes import models
 from referrals import models
+from leaderboard_prizes import models
 from subscription import models
 from bank import models
 
@@ -30,6 +31,7 @@ from quiz.models import *
 from clients.notification.models import *
 from promocodes.models import *
 from referrals.models import *  # noqa: F401, F403
+from leaderboard_prizes.models import *  # noqa: F401, F403
 
 from student import models
 from content import models  # noqa: F401 — discover SubscriptionBenefit table for autogen

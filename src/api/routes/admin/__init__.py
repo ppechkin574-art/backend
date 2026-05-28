@@ -1,5 +1,6 @@
 from .app_settings import router as app_settings_router
 from .bank import router as bank_router
+from .leaderboard_prizes import router as leaderboard_prizes_router
 from .cache import router as cache_router
 from .content import router as content_router
 from .dashboard import router as dashboard_router
@@ -36,4 +37,5 @@ routers = [
     subscription_router,
     content_router,
     app_settings_router,
+    leaderboard_prizes_router,
 ]

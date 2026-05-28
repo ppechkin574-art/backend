@@ -791,6 +791,17 @@ def get_family_service(
     return FamilyService(session, idp)
 
 
+def get_leaderboard_prize_service(
+    db: Session = Depends(get_db_session),
+):
+    """CRUD на таблицу `leaderboard_prizes`. Используется и admin (CRUD)
+    и user (read-only через отдельный route file)."""
+    from leaderboard_prizes.repository import LeaderboardPrizeRepository
+    from leaderboard_prizes.service import LeaderboardPrizeService
+
+    return LeaderboardPrizeService(LeaderboardPrizeRepository(db))
+
+
 def get_referral_service(
     db: Session = Depends(get_db_session),
     app_settings=Depends(get_app_settings_service),

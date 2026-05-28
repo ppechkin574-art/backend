@@ -222,11 +222,43 @@ async def get_my_rank(
     idp: IdentityProviderClientKeycloak = Depends(get_identity_provider_client_keycloak),
     file_service: FileService = Depends(get_file_service),
 ):
+    """User's visible position on the leaderboard.
+
+    Rank computed by replaying the same orphan-filtered iteration as
+    `/leaderboard` (line 184-200) — raw `points_repo.get_user_rank`
+    counts orphan user_points rows (left behind by Keycloak user
+    deletions, see TECH_DEBT) and reports a rank that disagrees
+    with what the top-list shows the same user as. Operator caught
+    this 28.05.2026: «#1 aima 446» on the podium but «#7 aima 446»
+    in the me-pill below.
+
+    Trade-off: a Keycloak round-trip per row of the oversample.
+    Hard-capped at the same `200` ceiling as the /leaderboard
+    endpoint so this is bounded.
+    """
     points_repo = UserPointsRepository(session)
     total = points_repo.get_total_points(user.id)
-    rank = points_repo.get_user_rank(user.id) if total > 0 else 0
-
     name, raw_avatar = _user_display_pair(idp, str(user.id))
+
+    if total <= 0:
+        rank = 0
+    else:
+        # Iterate the same oversample / orphan-filter as /leaderboard
+        # and find this user. Fall back to the raw rank if the user
+        # somehow isn't in the first 200 — unlikely with current
+        # scale but keeps the route resilient.
+        target_id_str = str(user.id)
+        raw_rank = points_repo.get_user_rank(user.id)
+        rank = raw_rank
+        visible_rank = 0
+        for u_id, _points in points_repo.get_all_ranked(200):
+            if _user_display_pair(idp, str(u_id)) is None:
+                continue
+            visible_rank += 1
+            if str(u_id) == target_id_str:
+                rank = visible_rank
+                break
+
     return MyRankEntry(
         rank=rank,
         user_id=str(user.id),

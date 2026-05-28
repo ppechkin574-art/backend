@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
 from api.dependencies import allow_only_admins, get_bank_service
 from bank.dtos import (
@@ -95,3 +96,45 @@ async def update_withdrawal_request(
         InvalidWithdrawalStatus,
     ) as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+class CreditDTO(BaseModel):
+    """Manual coin credit. `reason` lands in the transaction's
+    `description` so the audit trail is readable in withdrawal/bank
+    reports without hunting through metadata JSON."""
+
+    user_id: UUID
+    amount: int = Field(..., ge=1, le=1_000_000)
+    reason: str = Field(..., min_length=1, max_length=200)
+
+
+class CreditResultDTO(BaseModel):
+    user_id: UUID
+    amount: int
+    new_balance: int
+
+
+@router.post("/credit", response_model=CreditResultDTO)
+async def credit_coins(
+    body: CreditDTO,
+    bank_service: BankService = Depends(get_bank_service),
+):
+    """Manually credit coins to a user's bank balance. Auto-creates the
+    bank account with the default card style if the user doesn't have
+    one yet. Logged as a `deposit` transaction with source=admin_credit
+    so it shows up in the user's transaction history with attribution."""
+    bank_service.deposit(
+        student_guid=body.user_id,
+        amount=body.amount,
+        description=body.reason,
+        additional_metadata={
+            "source": "admin_credit",
+        },
+    )
+    # Re-read account to surface the updated balance to the operator.
+    account = bank_service.get_or_create_account(body.user_id)
+    return CreditResultDTO(
+        user_id=body.user_id,
+        amount=body.amount,
+        new_balance=int(account.balance or 0),
+    )

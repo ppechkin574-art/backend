@@ -791,6 +791,22 @@ def get_family_service(
     return FamilyService(session, idp)
 
 
+def get_streak_bonus_service(
+    db: Session = Depends(get_db_session),
+    uow: UnitOfWorkTests = Depends(get_unit_of_work_tests),
+    cache_service: CacheService = Depends(get_cache_service),
+):
+    """Daily-streak coin bonus — credits Bank, idempotent per-day."""
+    from bank.service import BankService
+    from streak_bonus.repository import StreakBonusRepository
+    from streak_bonus.service import StreakBonusService
+
+    return StreakBonusService(
+        repo=StreakBonusRepository(db),
+        bank_service=BankService(uow, cache_service),
+    )
+
+
 def get_leaderboard_prize_service(
     db: Session = Depends(get_db_session),
 ):

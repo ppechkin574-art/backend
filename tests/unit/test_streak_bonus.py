@@ -20,6 +20,7 @@ import quiz.models  # noqa: F401 — orm registry
 import student.models  # noqa: F401
 
 from streak_bonus.dtos import (
+    StreakPushTemplateUpdateDTO,
     StreakRewardTierCreateDTO,
     StreakRewardTierUpdateDTO,
 )
@@ -221,3 +222,108 @@ class TestStatus:
         assert out.has_claimed_today is True
         assert out.reward_coins == 200
         assert out.balance == 200
+
+
+# ─── Push template (singleton admin) ─────────────────────────────────
+
+
+class TestPushTemplateDTO:
+    def test_hours_before_reset_must_be_within_day(self):
+        with pytest.raises(ValidationError):
+            StreakPushTemplateUpdateDTO(hours_before_reset=0)
+        with pytest.raises(ValidationError):
+            StreakPushTemplateUpdateDTO(hours_before_reset=24)
+
+    def test_title_length_bounded(self):
+        with pytest.raises(ValidationError):
+            StreakPushTemplateUpdateDTO(title="")
+        with pytest.raises(ValidationError):
+            StreakPushTemplateUpdateDTO(title="x" * 201)
+
+    def test_body_length_bounded(self):
+        with pytest.raises(ValidationError):
+            StreakPushTemplateUpdateDTO(body="")
+        with pytest.raises(ValidationError):
+            StreakPushTemplateUpdateDTO(body="x" * 501)
+
+    def test_all_fields_optional_for_partial_patch(self):
+        # Editing only the body without touching enabled/offset must
+        # be valid so the admin form can submit a single field.
+        dto = StreakPushTemplateUpdateDTO(body="new body")
+        assert dto.enabled is None
+        assert dto.title is None
+        assert dto.body == "new body"
+
+
+class TestPushTemplateService:
+    def _make_template(self, **overrides):
+        return SimpleNamespace(
+            enabled=True,
+            title="Не теряй стрик!",
+            body="У тебя {streak} дн.",
+            hours_before_reset=8,
+            timezone="Asia/Almaty",
+            **overrides,
+        )
+
+    def test_get_template_missing_raises_404(self):
+        svc, repo, _ = _make_service()
+        repo.get_push_template.return_value = None
+        with pytest.raises(HTTPException) as exc:
+            svc.get_push_template()
+        assert exc.value.status_code == 404
+
+    def test_update_template_applies_partial_patch(self):
+        svc, repo, _ = _make_service()
+        template = self._make_template()
+        repo.get_push_template.return_value = template
+
+        out = svc.update_push_template(
+            StreakPushTemplateUpdateDTO(body="новый текст", hours_before_reset=12)
+        )
+
+        assert out.body == "новый текст"
+        assert out.hours_before_reset == 12
+        # Unchanged fields stay put.
+        assert out.title == "Не теряй стрик!"
+        assert out.enabled is True
+        repo.db.flush.assert_called_once()
+
+    def test_update_template_toggle_disabled(self):
+        svc, repo, _ = _make_service()
+        template = self._make_template(enabled=True)
+        repo.get_push_template.return_value = template
+
+        out = svc.update_push_template(StreakPushTemplateUpdateDTO(enabled=False))
+
+        assert out.enabled is False
+
+
+# ─── Reminder service body templating ───────────────────────────────
+
+
+class TestReminderRendering:
+    """The `{streak}` placeholder substitution is the only piece of
+    logic that runs per audience group. Pin its forgiving behavior so
+    an operator typing a body without the placeholder doesn't blow up
+    the cron mid-batch."""
+
+    def test_renders_streak_placeholder(self):
+        from streak_bonus.reminder_service import StreakReminderService
+
+        out = StreakReminderService._render("У тебя {streak} дн.", streak=14)
+        assert out == "У тебя 14 дн."
+
+    def test_no_placeholder_passes_through(self):
+        from streak_bonus.reminder_service import StreakReminderService
+
+        out = StreakReminderService._render("Не теряй стрик!", streak=14)
+        assert out == "Не теряй стрик!"
+
+    def test_unknown_placeholder_falls_back_to_raw(self):
+        from streak_bonus.reminder_service import StreakReminderService
+
+        # Operator typo {streaks} would normally raise KeyError on
+        # .format() — `_render` swallows it so the cron survives.
+        out = StreakReminderService._render("{streaks} дн.", streak=14)
+        assert out == "{streaks} дн."

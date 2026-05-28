@@ -26,8 +26,15 @@ async def lifespan(app: FastAPI):
     except RuntimeError:
         logger.exception("Failed to start daily test notification scheduler")
 
+    streak_reminder_scheduler = app.state.container.streak_reminder_scheduler()
+    try:
+        streak_reminder_scheduler.start()
+    except RuntimeError:
+        logger.exception("Failed to start streak reminder scheduler")
+
     yield
 
     stop_poller_on_app(app)
     await manager.stop_heartbeat()
     await notification_scheduler.stop()
+    await streak_reminder_scheduler.stop()

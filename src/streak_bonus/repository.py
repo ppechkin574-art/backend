@@ -4,7 +4,11 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from streak_bonus.models import StreakBonusClaim, StreakRewardTier
+from streak_bonus.models import (
+    StreakBonusClaim,
+    StreakPushTemplate,
+    StreakRewardTier,
+)
 
 
 class StreakBonusRepository:
@@ -47,3 +51,8 @@ class StreakBonusRepository:
         self.db.add(claim)
         self.db.flush()
         return claim
+
+    # ─── push template (admin singleton) ────────────────────────────
+
+    def get_push_template(self) -> StreakPushTemplate | None:
+        return self.db.get(StreakPushTemplate, 1)

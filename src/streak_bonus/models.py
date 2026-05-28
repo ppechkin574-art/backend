@@ -18,10 +18,12 @@ Two tables:
 from sqlalchemy import (
     UUID,
     Boolean,
+    CheckConstraint,
     Column,
     Date,
     DateTime,
     Integer,
+    String,
     UniqueConstraint,
 )
 from sqlalchemy.sql import func
@@ -81,5 +83,41 @@ class StreakBonusClaim(Base):
     __table_args__ = (
         UniqueConstraint(
             "user_id", "claim_date", name="uq_streak_bonus_claims_user_date"
+        ),
+    )
+
+
+class StreakPushTemplate(Base):
+    """Singleton settings row for the «streak about to expire» push.
+
+    Cron fires daily at `(00:00 - hours_before_reset)` Asia/Almaty and
+    sends a reminder to every student whose streak ≥ 1 and who hasn't
+    claimed today's bonus yet. Title/body support a `{streak}` placeholder
+    that the service substitutes per user; the row is editable from the
+    admin panel so operators can tweak copy without a redeploy.
+    """
+
+    __tablename__ = "streak_push_template"
+
+    # Hardcoded id=1 + CHECK forces a single row — easier UX in admin
+    # (one form, no list / no «which row?» ambiguity).
+    id = Column(Integer, primary_key=True)
+    enabled = Column(Boolean, nullable=False, server_default="true")
+    title = Column(String(200), nullable=False)
+    body = Column(String(500), nullable=False)
+    hours_before_reset = Column(Integer, nullable=False, server_default="8")
+    timezone = Column(String(64), nullable=False, server_default="Asia/Almaty")
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_streak_push_template_singleton"),
+        CheckConstraint(
+            "hours_before_reset BETWEEN 1 AND 23",
+            name="ck_streak_push_template_hours",
         ),
     )

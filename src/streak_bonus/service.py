@@ -26,10 +26,15 @@ from quiz.utils.period.init import to_kz_date
 from streak_bonus.dtos import (
     ClaimResultDTO,
     DailyStreakStatusDTO,
+    StreakPushTemplateUpdateDTO,
     StreakRewardTierCreateDTO,
     StreakRewardTierUpdateDTO,
 )
-from streak_bonus.models import StreakBonusClaim, StreakRewardTier
+from streak_bonus.models import (
+    StreakBonusClaim,
+    StreakPushTemplate,
+    StreakRewardTier,
+)
 from streak_bonus.repository import StreakBonusRepository
 
 logger = logging.getLogger(__name__)
@@ -215,6 +220,37 @@ class StreakBonusService:
     def delete_tier(self, min_streak: int) -> None:
         tier = self.get_tier(min_streak)
         self.repo.delete_tier(tier)
+
+    # ─── admin push template (singleton) ─────────────────────────────
+
+    def get_push_template(self) -> StreakPushTemplate:
+        template = self.repo.get_push_template()
+        if template is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=(
+                    "Шаблон push-уведомления не инициализирован "
+                    "(должен быть посеян миграцией)"
+                ),
+            )
+        return template
+
+    def update_push_template(
+        self, payload: StreakPushTemplateUpdateDTO
+    ) -> StreakPushTemplate:
+        template = self.get_push_template()
+        if payload.enabled is not None:
+            template.enabled = payload.enabled
+        if payload.title is not None:
+            template.title = payload.title
+        if payload.body is not None:
+            template.body = payload.body
+        if payload.hours_before_reset is not None:
+            template.hours_before_reset = payload.hours_before_reset
+        if payload.timezone is not None:
+            template.timezone = payload.timezone
+        self.repo.db.flush()
+        return template
 
     # ─── internals ───────────────────────────────────────────────────
 

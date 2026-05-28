@@ -63,3 +63,28 @@ class ClaimResultDTO(BaseModel):
     coins_credited: int
     new_balance: int
     streak_after_claim: int
+
+
+# ─── Push reminder template (admin) ──────────────────────────────────
+
+
+class StreakPushTemplateDTO(BaseModel):
+    """Admin reads/writes through this shape; cron renders title/body
+    by substituting `{streak}` with each user's current streak count."""
+
+    enabled: bool
+    title: str
+    body: str
+    hours_before_reset: int = Field(..., ge=1, le=23)
+    timezone: str
+    updated_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+class StreakPushTemplateUpdateDTO(BaseModel):
+    enabled: bool | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    body: str | None = Field(default=None, min_length=1, max_length=500)
+    hours_before_reset: int | None = Field(default=None, ge=1, le=23)
+    timezone: str | None = Field(default=None, min_length=1, max_length=64)

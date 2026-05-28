@@ -25,6 +25,10 @@ from quiz.services.daily_test_notifications import (
     DailyTestNotificationScheduler,
     DailyTestNotificationService,
 )
+from streak_bonus.reminder_service import (
+    StreakReminderScheduler,
+    StreakReminderService,
+)
 from quiz.services.modules import ModuleLessonService
 from quiz.services.questions import QuestionService
 from quiz.uows.uows import UnitOfWorkQuestions, UnitOfWorkTests
@@ -182,6 +186,18 @@ class Container(containers.DeclarativeContainer):
         DailyTestNotificationScheduler,
         notification_service=daily_test_notification_service,
         firebase_settings=config.provided.firebase,
+    )
+
+    streak_reminder_service = providers.Singleton(
+        StreakReminderService,
+        database=database,
+        firebase_client=firebase_client,
+    )
+
+    streak_reminder_scheduler = providers.Singleton(
+        StreakReminderScheduler,
+        database=database,
+        reminder_service=streak_reminder_service,
     )
 
     subscription_service = providers.Singleton(

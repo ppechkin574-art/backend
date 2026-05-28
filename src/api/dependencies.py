@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from dependency_injector.wiring import Provide, inject
-from fastapi import HTTPException, status
+from fastapi import HTTPException, Request, status
 from fastapi.params import Depends
 from fastapi.security import OAuth2PasswordBearer
 from redis import Redis
@@ -805,6 +805,12 @@ def get_streak_bonus_service(
         repo=StreakBonusRepository(db),
         bank_service=BankService(uow, cache_service),
     )
+
+
+def get_streak_reminder_service(request: Request):
+    """Pulls the StreakReminderService singleton from the DI container so
+    admin trigger endpoints can fire the same cron path on demand."""
+    return request.app.state.container.streak_reminder_service()
 
 
 def get_leaderboard_prize_service(

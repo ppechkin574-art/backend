@@ -160,6 +160,49 @@ class StreakReminderService:
         ).all()
         return [t for t in rows if t]
 
+    # ─── QA helpers ─────────────────────────────────────────────────
+
+    def send_test_to_user(
+        self, user_id, fake_streak: int = 5
+    ) -> StreakReminderResult:
+        """Test-send: rendering uses `fake_streak`, audience is just
+        the given user's FCM tokens. Bypasses the attendance_streaks /
+        claims filter so it works for QA accounts whose streak column
+        wasn't bumped by seed-streak (seed only writes attempt rows)."""
+        if not self._firebase_client.enabled:
+            return StreakReminderResult(0, 0, 0, skipped_disabled=True)
+
+        session: Session = self._database.session
+        try:
+            template = session.get(StreakPushTemplate, 1)
+            if template is None:
+                return StreakReminderResult(0, 0, 0, skipped_disabled=True)
+
+            tokens = self._fetch_tokens(session, [user_id])
+            if not tokens:
+                logger.info("Streak reminder test: no FCM tokens for %s", user_id)
+                return StreakReminderResult(0, 0, 0)
+
+            title = self._render(template.title, streak=fake_streak)
+            body = self._render(template.body, streak=fake_streak)
+            result = self._firebase_client.send_multicast(
+                tokens,
+                title=title,
+                body=body,
+                data={
+                    "type": "streak_reminder",
+                    "streak": str(fake_streak),
+                    "test": "true",
+                },
+            )
+            return StreakReminderResult(
+                requested=result.requested,
+                delivered=result.success,
+                failed=result.failure,
+            )
+        finally:
+            session.close()
+
 
 def _chunked(seq, size):
     for i in range(0, len(seq), size):

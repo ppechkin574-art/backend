@@ -3,12 +3,56 @@ import logging
 import uuid
 
 from fastapi import HTTPException, UploadFile
-from PIL import Image
+from PIL import Image, ImageOps
+
+# Register HEIC/HEIF decoder with Pillow (iPhone photos default to HEIC).
+# image_picker on iOS usually converts to JPEG on device, but the
+# Android counterpart and any third-party uploader can send HEIC directly.
+# Soft-failing the import lets the service still run if pillow-heif isn't
+# installed (e.g. in unit-test envs that mock the storage layer).
+try:
+    import pillow_heif  # type: ignore[import-untyped]
+
+    pillow_heif.register_heif_opener()
+except ImportError:  # pragma: no cover
+    logger_warning = logging.getLogger(__name__)
+    logger_warning.warning(
+        "pillow-heif not installed — HEIC uploads will be rejected at PIL decode"
+    )
 
 from clients.media_storage.client import MediaStorageClientInterface
 from clients.media_storage.exceptions import MediaStorageError
 
 logger = logging.getLogger(__name__)
+
+# Magic-byte signatures for image formats we accept. Trusting the
+# multipart `Content-Type` header is unsafe (client-controlled); these
+# are sniffed from the first bytes of the actual file body. JPEG/PNG/
+# GIF/WebP cover everything image_picker emits, plus HEIC for the
+# iPhone-direct case.
+_IMAGE_MAGIC_PREFIXES: tuple[bytes, ...] = (
+    b"\xff\xd8\xff",                # JPEG
+    b"\x89PNG\r\n\x1a\n",           # PNG
+    b"GIF87a",                       # GIF87a
+    b"GIF89a",                       # GIF89a
+    b"BM",                           # BMP
+)
+# WebP and HEIC live inside RIFF/ISO-BMFF containers — both keep their
+# brand tag at byte offset 4, so the sniff matches the brand specifically
+# (not just `RIFF`/`ftyp`) to avoid greenlighting an arbitrary container.
+_IMAGE_BRAND_AT_OFFSET_4: tuple[bytes, ...] = (
+    b"WEBP",                         # RIFF/...WEBP
+    b"ftypheic", b"ftypheix",        # HEIC variants
+    b"ftypmif1", b"ftypmsf1",        # HEIF variants
+    b"ftypavif",                     # AVIF
+)
+
+# Cap on decoded pixel count to defuse a decompression bomb: a 100KB
+# malicious PNG can describe a 50000x50000 image that expands to ~7.5GB
+# in RAM during PIL decode. 25M pixels accommodates 5000x5000 source
+# images (well over what `image_picker.maxWidth=1024` ever produces)
+# while keeping peak RAM in the tens-of-MB range.
+_MAX_DECODED_PIXELS = 25_000_000
 
 
 class FileService:
@@ -125,17 +169,44 @@ class FileService:
             return ""
 
     async def _read_validated_image(self, file: UploadFile) -> bytes:
+        # Cheap header check first to short-circuit obvious mismatches —
+        # the magic-byte sniff below is the actual source of truth.
         if not file.content_type or not file.content_type.startswith("image/"):
             raise HTTPException(status_code=400, detail="File must be an image")
 
         contents = await file.read()
         if len(contents) > self.MAX_FILE_SIZE_BYTES:
             raise HTTPException(status_code=400, detail="File too large. Max 5MB")
+
+        if not self._sniff_image_magic(contents):
+            raise HTTPException(
+                status_code=400,
+                detail="Unsupported or malformed image file",
+            )
         return contents
+
+    @staticmethod
+    def _sniff_image_magic(data: bytes) -> bool:
+        """Validate the first bytes against known image format
+        signatures. Trusting the multipart Content-Type header is
+        unsafe (client-controlled); a real magic-byte check stops
+        polyglot / mis-labelled files from reaching PIL."""
+        if len(data) < 12:
+            return False
+        if data.startswith(_IMAGE_MAGIC_PREFIXES):
+            return True
+        # WebP / HEIC / AVIF: container brand sits at bytes 4..12.
+        brand_region = data[4:16]
+        return any(brand in brand_region for brand in _IMAGE_BRAND_AT_OFFSET_4)
 
     async def _process_image(self, image_data: bytes) -> bytes:
         try:
             image = Image.open(io.BytesIO(image_data))
+            self._guard_dimensions(image)
+            # Defense-in-depth: apply EXIF Orientation to pixels even if
+            # the client already baked it. Covers any future client
+            # (Android/web/integrations) sending raw camera JPEGs.
+            image = ImageOps.exif_transpose(image)
 
             if image.mode in ("RGBA", "LA", "P"):
                 image = image.convert("RGB")
@@ -146,6 +217,8 @@ class FileService:
             image.save(output, format="JPEG", quality=self.JPEG_QUALITY, optimize=True)
 
             return output.getvalue()
+        except HTTPException:
+            raise
         except Exception as e:
             logger.exception("Error processing image: %s", e)
             raise HTTPException(status_code=400, detail="Invalid image file") from e
@@ -159,6 +232,8 @@ class FileService:
         """
         try:
             image = Image.open(io.BytesIO(image_data))
+            self._guard_dimensions(image)
+            image = ImageOps.exif_transpose(image)
             has_alpha = image.mode in ("RGBA", "LA") or (
                 image.mode == "P" and "transparency" in image.info
             )
@@ -176,9 +251,27 @@ class FileService:
             output = io.BytesIO()
             image.save(output, format="JPEG", quality=self.JPEG_QUALITY, optimize=True)
             return output.getvalue(), "jpg"
+        except HTTPException:
+            raise
         except Exception as e:
             logger.exception("Error processing image: %s", e)
             raise HTTPException(status_code=400, detail="Invalid image file") from e
+
+    @staticmethod
+    def _guard_dimensions(image: Image.Image) -> None:
+        """Block decompression-bomb inputs before they hit pixel-level
+        operations. A 50000x50000 PNG can be 100KB on disk but expand
+        to 7.5GB in RAM during PIL processing; the cheap pre-check
+        rejects those at HTTP-400 instead of OOM-killing the worker."""
+        width, height = image.size
+        if width * height > _MAX_DECODED_PIXELS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Image too large: {width}x{height} exceeds "
+                    f"{_MAX_DECODED_PIXELS:,} pixel limit"
+                ),
+            )
 
     def _delete_object(self, object_name: str) -> bool:
         try:

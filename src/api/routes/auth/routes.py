@@ -686,7 +686,9 @@ def get_current_user(
 @protected_router.patch(
     "/profile", response_model=UserDTO, responses=profile_put_responses
 )
+@limiter.limit("10/hour")
 async def update_current_user(
+    request: Request,
     name: str | None = Form(None),
     email: str | None = Form(None),
     phone: str | None = Form(None),

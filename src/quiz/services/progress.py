@@ -171,22 +171,28 @@ class ProgressService:
                 options_with_progress = []
                 completed_options = 0
 
-                for option in ent_options:
-                    # Проверяем, есть ли попытки
-                    has_attempts = self._has_ent_option_attempts(user_id, option.id)
+                # Один запрос на множество вариантов с попытками вместо
+                # поштучной проверки _has_ent_option_attempts, открывавшей
+                # отдельную сессию БД на каждый вариант (тот же N+1, что был
+                # в trainers/summary).
+                attempted_option_ids = (
+                    self._uow.ent_attempts.get_ent_option_ids_with_attempts(user_id)
+                )
 
-                    if has_attempts:
-                        # Только если есть попытки, считаем прогресс
-                        progress = self.get_ent_option_progress(user_id, option.id)
-                        options_with_progress.append(
-                            {
-                                "option_id": option.id,
-                                "option_number": getattr(option, "option_number", option.id),
-                                "progress": progress,
-                                "has_attempts": True,
-                            }
-                        )
-                        completed_options += 1
+                for option in ent_options:
+                    if option.id not in attempted_option_ids:
+                        continue
+                    # Прогресс считаем только для вариантов с попытками.
+                    progress = self.get_ent_option_progress(user_id, option.id)
+                    options_with_progress.append(
+                        {
+                            "option_id": option.id,
+                            "option_number": getattr(option, "option_number", option.id),
+                            "progress": progress,
+                            "has_attempts": True,
+                        }
+                    )
+                    completed_options += 1
 
                 # Логируем детальную информацию
                 self.logger.info("ENT options progress for user %s:", user_id)

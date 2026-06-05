@@ -300,18 +300,21 @@ class QuestionRepository(QuestionRepositoryInterface):
                 q.difficulty = update_dto.difficulty
             if update_dto.type is not None:
                 q.question_type = update_dto.type
-            # Help-panel fields. Use sentinel-free None check: admin sends the
-            # full object, so None means "clear" here (empty string from the
-            # form arrives as "" not None) — but to be safe and match the other
-            # nullable text caches, only overwrite when the attribute is present.
+            # Help-panel fields. Guard on `is not None` exactly like every
+            # sibling field above — otherwise a partial PATCH that omits them
+            # (e.g. the subject/topic reassign in subjects.py / topics.py, which
+            # builds QuestionUpdateRepositoryDTO with only subject_id) would
+            # wipe authored panel content to NULL. The admin form sends the full
+            # object, so clearing a field is done by sending "" (not None).
             for _f in (
                 "task_description_ru",
                 "task_description_kk",
                 "question_translation_ru",
                 "question_translation_kk",
             ):
-                if hasattr(update_dto, _f):
-                    setattr(q, _f, getattr(update_dto, _f))
+                _val = getattr(update_dto, _f, None)
+                if _val is not None:
+                    setattr(q, _f, _val)
 
             if update_dto.blocks is not None:
                 if q.link:

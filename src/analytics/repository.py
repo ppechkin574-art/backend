@@ -14,6 +14,7 @@ from analytics.dtos.activity import (
     UserLocationDTO,
 )
 from analytics.dtos.api_filters import PeriodEnum
+from analytics.dtos.api_timing import ApiTimingRowDTO
 from analytics.dtos.efficienty import (
     EfficientyDTO,
     EntEfficientyDTO,
@@ -78,6 +79,11 @@ class AnalyticRepositoryInterface(Protocol):
     def get_payments_last(
         self, page: int, status: PaymentStatus | None, search: str | None
     ) -> list[LastPaymentRepositoryDTO]:
+        raise NotImplementedError
+
+    def get_api_timing_summary(
+        self, hours: int, platform: str | None, app_version: str | None
+    ) -> list[ApiTimingRowDTO]:
         raise NotImplementedError
 
 
@@ -808,6 +814,63 @@ class AnalyticRepository:
             daily_seconds[session_date] += session_duration
 
         return self._format_screen_time_result(user_id, start_date, end_date, daily_seconds)
+
+    def get_api_timing_summary(
+        self, hours: int, platform: str | None, app_version: str | None
+    ) -> list[ApiTimingRowDTO]:
+        """Aggregate real-user API latency from `api_request` events.
+
+        Reuses the existing user_activity stream: the app's RUM interceptor
+        sends events with event_name='api_request' and
+        meta={endpoint, duration_ms, status}. Per-endpoint p50/p95, average and
+        error rate are computed over the window directly in SQL (ordered-set
+        aggregates), so the dashboard query is a single round-trip.
+
+        A sample is an error when its status is not a 1xx-3xx code (covers
+        4xx/5xx, network 0, and missing/garbage values).
+        """
+        sql = text(
+            """
+            SELECT
+                meta->>'endpoint' AS endpoint,
+                count(*) AS count,
+                percentile_cont(0.5) WITHIN GROUP (
+                    ORDER BY (meta->>'duration_ms')::float
+                ) AS p50,
+                percentile_cont(0.95) WITHIN GROUP (
+                    ORDER BY (meta->>'duration_ms')::float
+                ) AS p95,
+                avg((meta->>'duration_ms')::float) AS avg,
+                sum(
+                    CASE WHEN (meta->>'status') ~ '^[1-3][0-9][0-9]$'
+                         THEN 0 ELSE 1 END
+                )::float / count(*) AS error_rate
+            FROM user_activity
+            WHERE event_name = 'api_request'
+              AND event_time > now() - make_interval(hours => :hours)
+              AND (meta->>'endpoint') IS NOT NULL
+              AND (meta->>'duration_ms') ~ '^[0-9]+(\\.[0-9]+)?$'
+              AND (:platform IS NULL OR platform = :platform)
+              AND (:app_version IS NULL OR app_version = :app_version)
+            GROUP BY meta->>'endpoint'
+            ORDER BY p95 DESC
+            """
+        )
+        rows = self._session.execute(
+            sql,
+            {"hours": hours, "platform": platform, "app_version": app_version},
+        ).fetchall()
+        return [
+            ApiTimingRowDTO(
+                endpoint=r.endpoint,
+                count=int(r.count),
+                p50_ms=round(float(r.p50 or 0), 1),
+                p95_ms=round(float(r.p95 or 0), 1),
+                avg_ms=round(float(r.avg or 0), 1),
+                error_rate=round(float(r.error_rate or 0), 4),
+            )
+            for r in rows
+        ]
 
     def get_user_screen_time_by_activity(
         self, user_id: UUID, start_date: date, end_date: date

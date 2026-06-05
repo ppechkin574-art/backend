@@ -116,6 +116,18 @@ class Question(Base):
     question_text_kk = Column(Text, nullable=True)
     hint_text_kk = Column(Text, nullable=True)
 
+    # «Что требует вопрос?» help panel (authored in admin, served by locale).
+    # Two independent localized strings per question, both nullable — the app
+    # only shows the panel when the locale-resolved pair is non-empty. Unlike
+    # question_text_kk these have NO blocks fallback, so each locale needs its
+    # own column. See migration b1f2a3c4d5e6.
+    #  * task_description_* — what the question asks ("Выберите правильную…").
+    #  * question_translation_* — the question text rendered in that language.
+    task_description_ru = Column(Text, nullable=True)
+    task_description_kk = Column(Text, nullable=True)
+    question_translation_ru = Column(Text, nullable=True)
+    question_translation_kk = Column(Text, nullable=True)
+
     topic = relationship("Topic", back_populates="questions", passive_deletes=True)
     subject = relationship("Subject", back_populates="questions", passive_deletes=True)
     hint = relationship("Hint", back_populates="question", passive_deletes=True)

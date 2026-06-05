@@ -50,6 +50,11 @@ class QuestionRepositoryDTO(BaseModel):
     blocks: list[TextBlockRepositoryDTO]
     hint: HintRepositoryDTO | None = None
     variants: list[VariantRepositoryDTO] | None = None
+    # «Что требует вопрос?» help-panel fields (all 4 raw, locale-picked client-side).
+    task_description_ru: str | None = None
+    task_description_kk: str | None = None
+    question_translation_ru: str | None = None
+    question_translation_kk: str | None = None
 
     @staticmethod
     def custom(question) -> QuestionRepositoryDTO:
@@ -115,6 +120,10 @@ class QuestionRepositoryDTO(BaseModel):
             blocks=question_blocks,
             hint=hint_dto,
             variants=variants_dto,
+            task_description_ru=getattr(question, "task_description_ru", None),
+            task_description_kk=getattr(question, "task_description_kk", None),
+            question_translation_ru=getattr(question, "question_translation_ru", None),
+            question_translation_kk=getattr(question, "question_translation_kk", None),
         )
 
 
@@ -159,6 +168,12 @@ class QuestionServiceDTO(BaseModel):
     blocks: list[TextBlockServiceDTO]
     hint: HintServiceDTO | None = None
     variants: list[VariantServiceDTO]
+    # «Что требует вопрос?» help-panel — all 4 raw, the app picks ru/kk by its
+    # current language. Null pair → app hides the panel.
+    task_description_ru: str | None = None
+    task_description_kk: str | None = None
+    question_translation_ru: str | None = None
+    question_translation_kk: str | None = None
 
 
 class QuestionWithAnswerServiceDTO(QuestionServiceDTO):

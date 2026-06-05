@@ -482,10 +482,14 @@ class IdentityProviderClientKeycloak:
                 raise IdentityNotFound
 
         except KeycloakError as _e:
-            logger.exception("Keycloak error getting user: %s", str(_e))
             if _e.response_code == 404:
-                logger.warning("User not found with provided parameters")
+                # Expected outcome of an existence check — e.g. FamilyService
+                # probing a relationship target that may not exist. The caller
+                # turns this into its own domain error, so it isn't an
+                # unexpected failure: log at info, not as a red traceback.
+                logger.info("User not found in Keycloak for the given query")
                 raise IdentityNotFound
+            logger.exception("Keycloak error getting user: %s", str(_e))
             raise
 
         return self._format_keycloak_user(user_rep)
@@ -498,16 +502,24 @@ class IdentityProviderClientKeycloak:
         normalized_search_phone = self._normalize_phone_for_search(phone)
 
         try:
-            # Primary: Keycloak native attribute search (fast, returns full attrs)
-            candidates = self._keycloak_admin.get_users({"q": f"phone:{normalized_search_phone}"})
+            # Primary: Keycloak native attribute search. briefRepresentation=False
+            # makes Keycloak return attributes inline, so we don't need a
+            # follow-up get_user per candidate (avoids an N+1).
+            candidates = self._keycloak_admin.get_users(
+                {"q": f"phone:{normalized_search_phone}", "briefRepresentation": False}
+            )
             logger.info("Attribute search returned %s candidates", len(candidates))
 
             for candidate in candidates:
-                # get_users with q= may return brief repr — fetch full user to confirm
-                try:
-                    full_user = self._keycloak_admin.get_user(candidate.get("id"))
-                except Exception:
+                # Only fetch the full user if attributes are missing (older
+                # Keycloak / brief fallback) — usually they're already present.
+                if candidate.get("attributes"):
                     full_user = candidate
+                else:
+                    try:
+                        full_user = self._keycloak_admin.get_user(candidate.get("id"))
+                    except Exception:
+                        full_user = candidate
 
                 attrs = full_user.get("attributes") or {}
                 phone_list = attrs.get("phone", [])
@@ -523,16 +535,21 @@ class IdentityProviderClientKeycloak:
         except Exception as e:
             logger.warning("Attribute search failed, falling back to full scan: %s", e)
 
-        # Fallback: full scan — fetch each user individually to get full attributes
+        # Fallback: scan users. briefRepresentation=False returns attributes
+        # inline so we don't issue a get_user per user (previously an N+1 over
+        # the whole user base — a real landmine as the base grows).
         try:
-            all_users = self._keycloak_admin.get_users({})
+            all_users = self._keycloak_admin.get_users({"briefRepresentation": False})
             logger.info("Fallback: scanning %s users from Keycloak", len(all_users))
 
             for user in all_users:
-                try:
-                    full_user = self._keycloak_admin.get_user(user.get("id"))
-                except Exception:
+                if user.get("attributes"):
                     full_user = user
+                else:
+                    try:
+                        full_user = self._keycloak_admin.get_user(user.get("id"))
+                    except Exception:
+                        full_user = user
 
                 attrs = full_user.get("attributes") or {}
                 phone_list = attrs.get("phone", [])

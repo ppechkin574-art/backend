@@ -6,6 +6,8 @@ from datetime import datetime
 from typing import Protocol
 from uuid import UUID
 
+import jwt
+from jwt import ExpiredSignatureError, InvalidTokenError
 from keycloak import KeycloakAdmin, KeycloakError, KeycloakOpenID
 from pydantic import EmailStr
 
@@ -25,6 +27,7 @@ from clients.identity_provider.exceptions import (
 )
 from clients.identity_provider.settings import KeycloakSettings
 from common.enums import PlanType
+from utils.cache import CacheService, CacheStrategy
 from utils.monitoring import log_info
 from utils.validators import KZPhone
 
@@ -238,7 +241,17 @@ class IdentityProviderClientInterface(Protocol):
 
 
 class IdentityProviderClientKeycloak:
-    def __init__(self, keycloak_settings: KeycloakSettings) -> None:
+    # Realm signing public key (PEM), cached at the CLASS level so it is
+    # shared across all per-request instances and fetched from Keycloak
+    # only once per process. Refreshed on signature failure (key rotation).
+    # See _get_realm_public_key_pem / get_user_sub_from_token.
+    _cached_public_key_pem: str | None = None
+
+    def __init__(
+        self,
+        keycloak_settings: KeycloakSettings,
+        cache_service: CacheService | None = None,
+    ) -> None:
         self._keycloak_admin = KeycloakAdmin(**keycloak_settings.admin.model_dump())
         self._keycloak_openid = KeycloakOpenID(**keycloak_settings.open_id.model_dump())
 
@@ -247,10 +260,30 @@ class IdentityProviderClientKeycloak:
         self._client_secret = keycloak_settings.open_id.client_secret_key
         self._base_url = keycloak_settings.open_id.server_url
         self._realm_name = keycloak_settings.open_id.realm_name
+        # Used to invalidate the cached user profile (see UserRepositoryKeycloak)
+        # whenever this client writes to a user — keeps the cache correct.
+        self._cache = cache_service
 
         import requests
 
         self._session = requests.Session()
+
+    def _invalidate_user_profile_cache(self, user_id: UUID) -> None:
+        """Drop the cached profile for a user after a write.
+
+        Keyed identically to the read cache in
+        UserRepositoryKeycloak.get_user_from_token. A cache failure must
+        never break the write it follows, so errors are swallowed.
+        """
+        if self._cache is None:
+            return
+        try:
+            key = self._cache.make_key(
+                CacheStrategy.USER, user_id=user_id, resource="profile"
+            )
+            self._cache.delete(key)
+        except Exception as _e:
+            logger.warning("Failed to invalidate user profile cache: %s", str(_e))
 
     # def _generate_username(
     #     self,
@@ -608,6 +641,7 @@ class IdentityProviderClientKeycloak:
             logger.info(
                 "User active status updated: user=%s, active=%s", user_id, active
             )
+            self._invalidate_user_profile_cache(user_id)
         except KeycloakError as _e:
             logger.exception(
                 "Keycloak error setting active status for user %s: %s", user_id, str(_e)
@@ -720,18 +754,71 @@ class IdentityProviderClientKeycloak:
                 raise IdentityNotFound
             raise
 
+    def _get_realm_public_key_pem(self, force_refresh: bool = False) -> str:
+        """Return the realm RSA public key as PEM, cached process-wide.
+
+        Keycloak's `public_key()` is a network round-trip to the realm
+        endpoint, so the result is cached at the class level and reused
+        across requests. `force_refresh=True` refetches it (used once on a
+        signature failure to survive realm key rotation).
+        """
+        cls = IdentityProviderClientKeycloak
+        if cls._cached_public_key_pem is None or force_refresh:
+            raw_key = self._keycloak_openid.public_key()
+            cls._cached_public_key_pem = (
+                "-----BEGIN PUBLIC KEY-----\n" f"{raw_key}\n" "-----END PUBLIC KEY-----"
+            )
+        return cls._cached_public_key_pem
+
     def get_user_sub_from_token(self, token: str) -> UUID:
-        logger.debug("Getting user sub from token")
+        """Verify the access token locally and return its `sub`.
+
+        Previously this called Keycloak's `/userinfo` endpoint on every
+        request — a network round-trip per authenticated call. We now verify
+        the JWT signature + expiry locally against the realm public key
+        (cached process-wide). The `sub` claim is read straight from the
+        verified payload, so no network call is needed on the hot path.
+
+        Trade-off: local validation checks signature + expiry but not
+        server-side revocation. Access tokens are short-lived (~5 min), so
+        this is the standard, accepted trade-off for performance.
+        """
+        logger.debug("Getting user sub from token (local verify)")
+
+        def _decode(force_refresh: bool) -> dict:
+            return jwt.decode(
+                token,
+                self._get_realm_public_key_pem(force_refresh=force_refresh),
+                algorithms=["RS256"],
+                # Keycloak access tokens carry an `aud` that varies by client
+                # ("account", the client id, etc.); we trust the signature and
+                # don't pin audience here. Signature + expiry are enforced.
+                options={"verify_aud": False},
+            )
+
         try:
-            user_info = self._keycloak_openid.userinfo(token)
-            user_sub = user_info.get("sub")
-            logger.debug("User sub extracted: %s", user_sub)
-            return user_sub
-        except KeycloakError as _e:
-            logger.warning("Failed extracting user sub: %s", str(_e))
-            if _e.response_code == 401:
+            try:
+                payload = _decode(force_refresh=False)
+            except ExpiredSignatureError:
+                # Definitive — an expired token won't be saved by a key refresh.
+                logger.warning("Access token expired")
                 raise InvalidAccessTokenError
-            raise
+            except InvalidTokenError:
+                # May be a stale cached key after realm rotation — refetch once.
+                logger.info("Token verify failed, refreshing realm key and retrying")
+                payload = _decode(force_refresh=True)
+        except ExpiredSignatureError:
+            raise InvalidAccessTokenError
+        except InvalidTokenError as _e:
+            logger.warning("Invalid access token: %s", str(_e))
+            raise InvalidAccessTokenError
+
+        user_sub = payload.get("sub")
+        if not user_sub:
+            logger.warning("Access token has no 'sub' claim")
+            raise InvalidAccessTokenError
+        logger.debug("User sub extracted: %s", user_sub)
+        return user_sub
 
     def logout(self, refresh_token: str) -> None:
         logger.info("Logging out user")
@@ -782,6 +869,7 @@ class IdentityProviderClientKeycloak:
 
             self._keycloak_admin.update_user(user_id=str(user_id), payload=payload)
             logger.info("User updated successfully: %s", user_id)
+            self._invalidate_user_profile_cache(user_id)
 
         except KeycloakError as _e:
             logger.exception("Keycloak error updating user %s: %s", user_id, str(_e))
@@ -1148,6 +1236,7 @@ class IdentityProviderClientKeycloak:
             self._keycloak_admin.update_user(str(user_id), payload)
 
             logger.info("User subscription updated successfully: %s", user_id)
+            self._invalidate_user_profile_cache(user_id)
 
         except KeycloakError as e:
             logger.exception("Keycloak error updating user subscription: %s", e)

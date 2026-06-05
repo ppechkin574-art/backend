@@ -82,22 +82,28 @@ class ProgressService:
                 trainers_with_progress = []
                 completed_trainers = 0
 
-                for trainer in trainers:
-                    # ПРОВЕРЯЕМ: есть ли вообще попытки у этого тренажёра
-                    has_attempts = self._has_trainer_attempts(user_id, trainer.id)
+                # Один запрос на множество тренажёров с попытками вместо
+                # поштучной проверки _has_trainer_attempts, которая открывала
+                # отдельную сессию БД на каждый из ~сотен тренажёров — это и
+                # был N+1, из-за которого эндпоинт занимал ~17 секунд.
+                attempted_trainer_ids = (
+                    self._uow.trainer_attempts.get_trainer_ids_with_attempts(user_id)
+                )
 
-                    if has_attempts:
-                        # Только если есть попытки, считаем прогресс
-                        progress = self.get_trainer_progress(user_id, trainer.id)
-                        trainers_with_progress.append(
-                            {
-                                "trainer_id": trainer.id,
-                                "trainer_name": trainer.name,
-                                "progress": progress,
-                                "has_attempts": True,
-                            }
-                        )
-                        completed_trainers += 1
+                for trainer in trainers:
+                    if trainer.id not in attempted_trainer_ids:
+                        continue
+                    # Прогресс считаем только для тренажёров с попытками.
+                    progress = self.get_trainer_progress(user_id, trainer.id)
+                    trainers_with_progress.append(
+                        {
+                            "trainer_id": trainer.id,
+                            "trainer_name": trainer.name,
+                            "progress": progress,
+                            "has_attempts": True,
+                        }
+                    )
+                    completed_trainers += 1
 
                 # Логируем детальную информацию
                 self.logger.info("Trainers progress for user %s:", user_id)

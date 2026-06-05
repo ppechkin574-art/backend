@@ -99,16 +99,33 @@ def get_file_service(
     return file_service
 
 
-def get_identity_provider_client_keycloak(settings: Settings = Depends(get_settings)):
-    return IdentityProviderClientKeycloak(settings.keycloak)
+@inject
+def get_cache_service(
+    cache_service: CacheService = Depends(Provide[Container.cache_service]),
+) -> CacheService:
+    return cache_service
 
 
-def get_user_repository_keycloak(
-    identity_provider_client: IdentityProviderClientInterface = Depends(
-        get_identity_provider_client_keycloak
+@inject
+def get_identity_provider_client_keycloak(
+    client: IdentityProviderClientKeycloak = Depends(
+        Provide[Container.identity_provider_client]
     ),
+) -> IdentityProviderClientKeycloak:
+    # Process-wide singleton (see Container). Previously a NEW client was
+    # built per request, which constructed a fresh KeycloakAdmin and forced
+    # an admin-login round-trip on every authenticated call. Reusing the
+    # singleton fetches the admin token once and reuses it (auto-refreshed
+    # by python-keycloak on expiry).
+    return client
+
+
+@inject
+def get_user_repository_keycloak(
+    repo: UserRepositoryKeycloak = Depends(Provide[Container.user_repository]),
 ) -> UserRepositoryInterface:
-    return UserRepositoryKeycloak(identity_provider_client)
+    # Singleton too — holds the singleton IDP client + shared cache service.
+    return repo
 
 
 def get_redis(settings: Settings = Depends(get_settings)):
@@ -161,13 +178,6 @@ def get_google_oauth_client(
 @inject
 def get_apple_oauth_client(apple_client=Depends(Provide[Container.apple_oauth_client])):
     return apple_client
-
-
-@inject
-def get_cache_service(
-    cache_service: CacheService = Depends(Provide[Container.cache_service]),
-) -> CacheService:
-    return cache_service
 
 
 def get_oauth_helper(

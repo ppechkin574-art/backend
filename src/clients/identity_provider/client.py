@@ -828,8 +828,23 @@ class IdentityProviderClientKeycloak:
 
         user_sub = payload.get("sub")
         if not user_sub:
-            logger.warning("Access token has no 'sub' claim")
-            raise InvalidAccessTokenError
+            # Some clients (notably the admin panel `tesla-admin-panel` with
+            # Keycloak 26 "lightweight access tokens") issue access tokens
+            # WITHOUT a `sub` claim — it is only available from /userinfo.
+            # Fall back to the network call for those tokens; full tokens
+            # (mobile `web-app`) keep the fast local path above.
+            logger.info("Token has no 'sub' claim; falling back to /userinfo")
+            try:
+                user_info = self._keycloak_openid.userinfo(token)
+                user_sub = user_info.get("sub")
+            except KeycloakError as _e:
+                logger.warning("userinfo fallback failed: %s", str(_e))
+                if getattr(_e, "response_code", None) == 401:
+                    raise InvalidAccessTokenError
+                raise
+            if not user_sub:
+                logger.warning("Access token has no 'sub' even via /userinfo")
+                raise InvalidAccessTokenError
         logger.debug("User sub extracted: %s", user_sub)
         return user_sub
 

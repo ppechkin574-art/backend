@@ -111,6 +111,10 @@ def to_question_create_service(
         blocks=question_create.blocks,
         hint=(to_hint_create_service(question_create.hint) if question_create.hint else None),
         variants=[to_variant_create_service(v) for v in question_create.variants],
+        task_description_ru=getattr(question_create, "task_description_ru", None),
+        task_description_kk=getattr(question_create, "task_description_kk", None),
+        question_translation_ru=getattr(question_create, "question_translation_ru", None),
+        question_translation_kk=getattr(question_create, "question_translation_kk", None),
     )
 
 
@@ -142,6 +146,14 @@ def to_question_update_service(
         update_data["hint"] = to_hint_update_service(question_update.hint)
     if question_update.variants is not None:
         update_data["variants"] = [to_variant_update_service(v) for v in question_update.variants]
+    for _f in (
+        "task_description_ru",
+        "task_description_kk",
+        "question_translation_ru",
+        "question_translation_kk",
+    ):
+        if getattr(question_update, _f, None) is not None:
+            update_data[_f] = getattr(question_update, _f)
 
     return QuestionUpdateServiceDTO(**update_data)
 

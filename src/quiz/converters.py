@@ -253,6 +253,10 @@ def to_question_create_repo(
         "blocks": [TextBlockRepositoryDTO.model_validate(b) for b in question.blocks],
         "variants": [to_variant_create_repo(v) for v in question.variants],
         "hint": to_hint_create_repo(question.hint) if question.hint else None,
+        "task_description_ru": getattr(question, "task_description_ru", None),
+        "task_description_kk": getattr(question, "task_description_kk", None),
+        "question_translation_ru": getattr(question, "question_translation_ru", None),
+        "question_translation_kk": getattr(question, "question_translation_kk", None),
     }
 
     if hasattr(question, "ent_option_id") and question.ent_option_id is not None:
@@ -300,6 +304,10 @@ def to_question_service(question_repo: QuestionRepositoryDTO) -> QuestionService
         blocks=question_blocks,
         hint=hint_service,
         variants=variants_service,
+        task_description_ru=getattr(question_repo, "task_description_ru", None),
+        task_description_kk=getattr(question_repo, "task_description_kk", None),
+        question_translation_ru=getattr(question_repo, "question_translation_ru", None),
+        question_translation_kk=getattr(question_repo, "question_translation_kk", None),
     )
 
 
@@ -377,6 +385,10 @@ def to_question_update_repo(
             if question.variants
             else None
         ),
+        task_description_ru=getattr(question, "task_description_ru", None),
+        task_description_kk=getattr(question, "task_description_kk", None),
+        question_translation_ru=getattr(question, "question_translation_ru", None),
+        question_translation_kk=getattr(question, "question_translation_kk", None),
     )
 
 

@@ -71,6 +71,11 @@ class QuestionCreateRequestDTO(BaseModel):
     blocks: list[TextBlockServiceDTO]
     variants: list[VariantCreateRequestDTO]
     hint: HintCreateRequestDTO
+    # «Что требует вопрос?» help panel — authored in admin (optional).
+    task_description_ru: str | None = None
+    task_description_kk: str | None = None
+    question_translation_ru: str | None = None
+    question_translation_kk: str | None = None
 
 
 class QuestionListQueryDTO(BaseModel):
@@ -181,6 +186,10 @@ class QuestionUpdateRequestDTO(BaseModel):
     blocks: list[TextBlockServiceDTO] | None = None
     hint: HintUpdateRequestDTO | None = None
     variants: list[VariantUpdateRequestDTO] | None = None
+    task_description_ru: str | None = None
+    task_description_kk: str | None = None
+    question_translation_ru: str | None = None
+    question_translation_kk: str | None = None
 
     model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True)
 

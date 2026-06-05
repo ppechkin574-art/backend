@@ -1614,6 +1614,10 @@ class EntAttemptService:
                     or default_subject_name
                     or "Unknown",
                     topic_name=self._extract_topic_name(question_obj),
+                    task_description_ru=getattr(question_obj, "task_description_ru", None),
+                    task_description_kk=getattr(question_obj, "task_description_kk", None),
+                    question_translation_ru=getattr(question_obj, "question_translation_ru", None),
+                    question_translation_kk=getattr(question_obj, "question_translation_kk", None),
                 )
             )
 

@@ -135,6 +135,10 @@ class QuestionRepository(QuestionRepositoryInterface):
                 subject_id=create_dto.subject_id,
                 difficulty=create_dto.difficulty,
                 question_type=create_dto.type,
+                task_description_ru=getattr(create_dto, "task_description_ru", None),
+                task_description_kk=getattr(create_dto, "task_description_kk", None),
+                question_translation_ru=getattr(create_dto, "question_translation_ru", None),
+                question_translation_kk=getattr(create_dto, "question_translation_kk", None),
             )
             self._session.add(q)
             self._session.flush()
@@ -296,6 +300,18 @@ class QuestionRepository(QuestionRepositoryInterface):
                 q.difficulty = update_dto.difficulty
             if update_dto.type is not None:
                 q.question_type = update_dto.type
+            # Help-panel fields. Use sentinel-free None check: admin sends the
+            # full object, so None means "clear" here (empty string from the
+            # form arrives as "" not None) — but to be safe and match the other
+            # nullable text caches, only overwrite when the attribute is present.
+            for _f in (
+                "task_description_ru",
+                "task_description_kk",
+                "question_translation_ru",
+                "question_translation_kk",
+            ):
+                if hasattr(update_dto, _f):
+                    setattr(q, _f, getattr(update_dto, _f))
 
             if update_dto.blocks is not None:
                 if q.link:

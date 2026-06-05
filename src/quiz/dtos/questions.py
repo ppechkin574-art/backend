@@ -151,6 +151,10 @@ class QuestionWithAnswerRepositoryDTO(QuestionRepositoryDTO):
             variants=([VariantRepositoryDTO.custom(v) for v in question.variants] if question.variants else []),
             blocks=[TextBlockRepositoryDTO.model_validate(b) for b in question.link.blocks],
             answers=([TrainerAttemptAnswerRepositoryDTO.model_validate(a) for a in answers] if answers else []),
+            task_description_ru=getattr(question, "task_description_ru", None),
+            task_description_kk=getattr(question, "task_description_kk", None),
+            question_translation_ru=getattr(question, "question_translation_ru", None),
+            question_translation_kk=getattr(question, "question_translation_kk", None),
         )
 
 
@@ -189,6 +193,10 @@ class QuestionUpdateRepositoryDTO(BaseModel):
     blocks: list[TextBlockRepositoryDTO] | None = None
     hint: HintUpdateRepositoryDTO | None = None
     variants: list[VariantUpdateRepositoryDTO] | None = None
+    task_description_ru: str | None = None
+    task_description_kk: str | None = None
+    question_translation_ru: str | None = None
+    question_translation_kk: str | None = None
 
 
 class QuestionUpdateServiceDTO(BaseModel):
@@ -199,9 +207,12 @@ class QuestionUpdateServiceDTO(BaseModel):
     subject_id: int | None = None
     type: QuestionType | None = None
     blocks: list[TextBlockServiceDTO] | None = None
-    blocks: list[TextBlockServiceDTO] | None = None
     hint: HintUpdateServiceDTO | None = None
     variants: list[VariantUpdateServiceDTO] | None = None
+    task_description_ru: str | None = None
+    task_description_kk: str | None = None
+    question_translation_ru: str | None = None
+    question_translation_kk: str | None = None
 
 
 class QuestionQueryRepositoryDTO(BaseModel):
@@ -228,6 +239,10 @@ class QuestionCreateRepositoryDTO(BaseModel):
     blocks: list[TextBlockRepositoryDTO] | None = None
     variants: list[VariantCreateRepositoryDTO]
     hint: HintCreateRepositoryDTO | None = None
+    task_description_ru: str | None = None
+    task_description_kk: str | None = None
+    question_translation_ru: str | None = None
+    question_translation_kk: str | None = None
 
 
 class QuestionCreateServiceDTO(BaseModel):
@@ -241,6 +256,10 @@ class QuestionCreateServiceDTO(BaseModel):
     blocks: list[TextBlockServiceDTO] | None = None
     variants: list[VariantCreateServiceDTO]
     hint: HintCreateServiceDTO | None = None
+    task_description_ru: str | None = None
+    task_description_kk: str | None = None
+    question_translation_ru: str | None = None
+    question_translation_kk: str | None = None
 
 
 class ImportQuestionCreateDTO(BaseModel):

@@ -476,6 +476,10 @@ class TrainerAttemptService:
                 hint=transformed_hint,
                 variants=question.variants,
                 answers=service_answers,
+                task_description_ru=getattr(question, "task_description_ru", None),
+                task_description_kk=getattr(question, "task_description_kk", None),
+                question_translation_ru=getattr(question, "question_translation_ru", None),
+                question_translation_kk=getattr(question, "question_translation_kk", None),
             )
             service_questions.append(service_question)
 

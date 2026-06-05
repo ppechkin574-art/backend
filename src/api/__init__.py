@@ -4,6 +4,7 @@ import os
 from fastapi import FastAPI
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 
 from api.containers import Container
 from api.exceptions.handlers import setup_exception_handlers
@@ -152,6 +153,14 @@ def create_app() -> FastAPI:
             "Set it in Railway → Variables, e.g. "
             "ALLOWED_ORIGINS=https://aima.kz,https://admin.aima.kz"
         )
+
+    # Compress responses. On the long KZ -> Singapore path, smaller bodies mean
+    # fewer packets and less exposure to loss/latency — a cheap, universal win
+    # for JSON-heavy endpoints (subjects, questions, statistics). Added BEFORE
+    # CORS so CORS stays the outermost middleware (preflight handling); GZip
+    # only touches the response body of clients that send Accept-Encoding: gzip.
+    # minimum_size skips tiny payloads where compression overhead isn't worth it.
+    app.add_middleware(GZipMiddleware, minimum_size=500)
 
     app.add_middleware(
         CORSMiddleware,

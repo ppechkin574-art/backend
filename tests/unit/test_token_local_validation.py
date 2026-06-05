@@ -46,9 +46,16 @@ class _FakeOpenID:
         self._public_b64 = public_b64
         self.public_key_calls = 0
 
+        self.userinfo_calls = 0
+        self.userinfo_return = None
+
     def public_key(self) -> str:
         self.public_key_calls += 1
         return self._public_b64
+
+    def userinfo(self, token):
+        self.userinfo_calls += 1
+        return self.userinfo_return or {}
 
 
 def _make_client(public_b64: str) -> tuple[IdentityProviderClientKeycloak, _FakeOpenID]:
@@ -107,12 +114,32 @@ def test_token_signed_by_wrong_key_raises_invalid():
     assert fake_openid.public_key_calls >= 2
 
 
-def test_token_without_sub_raises_invalid():
+def test_lightweight_token_without_sub_falls_back_to_userinfo():
+    # Keycloak 26 "lightweight access tokens" (admin panel client) are valid
+    # RS256 JWTs but omit `sub` — it must be fetched from /userinfo.
     private_pem, public_b64 = _gen_keypair()
-    client, _ = _make_client(public_b64)
+    client, fake_openid = _make_client(public_b64)
+    fake_openid.userinfo_return = {"sub": str(SUB := "11111111-2222-3333-4444-555555555555")}
     now = int(time.time())
     token = jwt.encode(
-        {"iat": now, "exp": now + 300, "aud": "account"},  # no sub
+        {"iat": now, "exp": now + 300, "aud": "account"},  # no sub in token
+        private_pem,
+        algorithm="RS256",
+    )
+
+    sub = client.get_user_sub_from_token(token)
+
+    assert str(sub) == SUB
+    assert fake_openid.userinfo_calls == 1  # fallback was used
+
+
+def test_token_without_sub_and_userinfo_empty_raises_invalid():
+    private_pem, public_b64 = _gen_keypair()
+    client, fake_openid = _make_client(public_b64)
+    fake_openid.userinfo_return = {}  # userinfo also has no sub
+    now = int(time.time())
+    token = jwt.encode(
+        {"iat": now, "exp": now + 300, "aud": "account"},
         private_pem,
         algorithm="RS256",
     )

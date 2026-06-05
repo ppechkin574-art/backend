@@ -740,6 +740,21 @@ class EntAttemptRepository:
             filter_value=ent_option_id,
         )
 
+    def get_ent_option_ids_with_attempts(self, user_id: str) -> set[int]:
+        """Множество ent_option_id, по которым у пользователя есть попытки.
+
+        Один запрос (DISTINCT) вместо поштучной проверки каждого варианта —
+        устраняет N+1 (по сессии БД на каждый вариант). Статус не фильтруется,
+        совпадает с поведением get_attempt_count.
+        """
+        rows = (
+            self._session.query(EntAttempt.ent_option_id)
+            .filter(EntAttempt.student_guid == user_id)
+            .distinct()
+            .all()
+        )
+        return {row[0] for row in rows if row[0] is not None}
+
     def get_user_total_attempts(self, user_id: str) -> int:
         """Получить общее количество попыток пользователя во всех вариантах ЕНТ"""
         return RepositoryHelpers.get_user_total_attempts(

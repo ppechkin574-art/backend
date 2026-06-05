@@ -9,6 +9,7 @@ from analytics.converters import (
 )
 from analytics.dtos.activity import ActivityDTO
 from analytics.dtos.api_filters import PeriodEnum
+from analytics.dtos.api_timing import ApiTimingSummaryDTO
 from analytics.dtos.efficienty import EfficientyDTO
 from analytics.dtos.events import EventCreateServiceDTO
 from analytics.dtos.payments import (
@@ -63,6 +64,14 @@ class AnalyticServiceInterface(Protocol):
     def get_user_screen_time_by_activity(
         self, user_id: UUID, start_date: date, end_date: date
     ) -> ScreenTimeByActivityDTO:
+        raise NotImplementedError
+
+    def get_api_timing_summary(
+        self,
+        hours: int = 24,
+        platform: str | None = None,
+        app_version: str | None = None,
+    ) -> ApiTimingSummaryDTO:
         raise NotImplementedError
 
 
@@ -133,3 +142,17 @@ class AnalyticService:
     ) -> ScreenTimeByActivityDTO:
         with self._uow:
             return self._uow.anlytic_repo.get_user_screen_time_by_activity(user_id, start_date, end_date)
+
+    def get_api_timing_summary(
+        self,
+        hours: int = 24,
+        platform: str | None = None,
+        app_version: str | None = None,
+    ) -> ApiTimingSummaryDTO:
+        with self._uow:
+            rows = self._uow.anlytic_repo.get_api_timing_summary(hours, platform, app_version)
+        return ApiTimingSummaryDTO(
+            window_hours=hours,
+            total_samples=sum(r.count for r in rows),
+            rows=rows,
+        )

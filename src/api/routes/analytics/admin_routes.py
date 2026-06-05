@@ -77,3 +77,14 @@ def get_payments_last(
     service: AnalyticServiceInterface = Depends(get_analytics_service),
 ):
     return service.get_payments_last(page, search, status)
+
+
+@router.get("/api-timing")
+def get_api_timing(
+    hours: int = Query(24, ge=1, le=720, description="Окно в часах"),
+    platform: str | None = Query(None, description="Фильтр по платформе (Android/iOS)"),
+    app_version: str | None = Query(None, description="Фильтр по версии приложения"),
+    service: AnalyticServiceInterface = Depends(get_analytics_service),
+):
+    """RUM: реальная задержка API с телефонов (из событий api_request)."""
+    return service.get_api_timing_summary(hours, platform, app_version)

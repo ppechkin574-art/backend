@@ -418,6 +418,12 @@ class TrainerAttemptService:
                         question_number=prepared_question["question_number"],
                         is_correct=prepared_question["is_correct"],
                         topic_name=topic.name if topic else None,
+                        task_description_ru=prepared_question.get("task_description_ru"),
+                        task_description_kk=prepared_question.get("task_description_kk"),
+                        question_translation_ru=prepared_question.get("question_translation_ru"),
+                        question_translation_kk=prepared_question.get("question_translation_kk"),
+                        explanation_ru=prepared_question.get("explanation_ru"),
+                        explanation_kk=prepared_question.get("explanation_kk"),
                     )
                 )
 
@@ -480,6 +486,8 @@ class TrainerAttemptService:
                 task_description_kk=getattr(question, "task_description_kk", None),
                 question_translation_ru=getattr(question, "question_translation_ru", None),
                 question_translation_kk=getattr(question, "question_translation_kk", None),
+                explanation_ru=getattr(question, "explanation_ru", None),
+                explanation_kk=getattr(question, "explanation_kk", None),
             )
             service_questions.append(service_question)
 
@@ -936,6 +944,12 @@ class TrainerAttemptService:
                         question_number=prepared_question["question_number"],
                         is_correct=prepared_question["is_correct"],
                         topic_name=topic.name if topic else None,
+                        task_description_ru=prepared_question.get("task_description_ru"),
+                        task_description_kk=prepared_question.get("task_description_kk"),
+                        question_translation_ru=prepared_question.get("question_translation_ru"),
+                        question_translation_kk=prepared_question.get("question_translation_kk"),
+                        explanation_ru=prepared_question.get("explanation_ru"),
+                        explanation_kk=prepared_question.get("explanation_kk"),
                     )
                 )
 

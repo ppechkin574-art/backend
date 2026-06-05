@@ -1618,6 +1618,8 @@ class EntAttemptService:
                     task_description_kk=getattr(question_obj, "task_description_kk", None),
                     question_translation_ru=getattr(question_obj, "question_translation_ru", None),
                     question_translation_kk=getattr(question_obj, "question_translation_kk", None),
+                    explanation_ru=getattr(question_obj, "explanation_ru", None),
+                    explanation_kk=getattr(question_obj, "explanation_kk", None),
                 )
             )
 

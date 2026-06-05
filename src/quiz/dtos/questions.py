@@ -55,6 +55,9 @@ class QuestionRepositoryDTO(BaseModel):
     task_description_kk: str | None = None
     question_translation_ru: str | None = None
     question_translation_kk: str | None = None
+    # Post-test «memorisation rule» (both raw, locale-picked client-side; nullable).
+    explanation_ru: str | None = None
+    explanation_kk: str | None = None
 
     @staticmethod
     def custom(question) -> QuestionRepositoryDTO:
@@ -124,6 +127,8 @@ class QuestionRepositoryDTO(BaseModel):
             task_description_kk=getattr(question, "task_description_kk", None),
             question_translation_ru=getattr(question, "question_translation_ru", None),
             question_translation_kk=getattr(question, "question_translation_kk", None),
+            explanation_ru=getattr(question, "explanation_ru", None),
+            explanation_kk=getattr(question, "explanation_kk", None),
         )
 
 
@@ -155,6 +160,8 @@ class QuestionWithAnswerRepositoryDTO(QuestionRepositoryDTO):
             task_description_kk=getattr(question, "task_description_kk", None),
             question_translation_ru=getattr(question, "question_translation_ru", None),
             question_translation_kk=getattr(question, "question_translation_kk", None),
+            explanation_ru=getattr(question, "explanation_ru", None),
+            explanation_kk=getattr(question, "explanation_kk", None),
         )
 
 
@@ -178,6 +185,9 @@ class QuestionServiceDTO(BaseModel):
     task_description_kk: str | None = None
     question_translation_ru: str | None = None
     question_translation_kk: str | None = None
+    # Post-test «memorisation rule» (both raw, locale-picked client-side; nullable).
+    explanation_ru: str | None = None
+    explanation_kk: str | None = None
 
 
 class QuestionWithAnswerServiceDTO(QuestionServiceDTO):
@@ -197,6 +207,8 @@ class QuestionUpdateRepositoryDTO(BaseModel):
     task_description_kk: str | None = None
     question_translation_ru: str | None = None
     question_translation_kk: str | None = None
+    explanation_ru: str | None = None
+    explanation_kk: str | None = None
 
 
 class QuestionUpdateServiceDTO(BaseModel):
@@ -213,6 +225,8 @@ class QuestionUpdateServiceDTO(BaseModel):
     task_description_kk: str | None = None
     question_translation_ru: str | None = None
     question_translation_kk: str | None = None
+    explanation_ru: str | None = None
+    explanation_kk: str | None = None
 
 
 class QuestionQueryRepositoryDTO(BaseModel):
@@ -243,6 +257,8 @@ class QuestionCreateRepositoryDTO(BaseModel):
     task_description_kk: str | None = None
     question_translation_ru: str | None = None
     question_translation_kk: str | None = None
+    explanation_ru: str | None = None
+    explanation_kk: str | None = None
 
 
 class QuestionCreateServiceDTO(BaseModel):
@@ -260,6 +276,8 @@ class QuestionCreateServiceDTO(BaseModel):
     task_description_kk: str | None = None
     question_translation_ru: str | None = None
     question_translation_kk: str | None = None
+    explanation_ru: str | None = None
+    explanation_kk: str | None = None
 
 
 class ImportQuestionCreateDTO(BaseModel):

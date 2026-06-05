@@ -257,6 +257,8 @@ def to_question_create_repo(
         "task_description_kk": getattr(question, "task_description_kk", None),
         "question_translation_ru": getattr(question, "question_translation_ru", None),
         "question_translation_kk": getattr(question, "question_translation_kk", None),
+        "explanation_ru": getattr(question, "explanation_ru", None),
+        "explanation_kk": getattr(question, "explanation_kk", None),
     }
 
     if hasattr(question, "ent_option_id") and question.ent_option_id is not None:
@@ -308,6 +310,8 @@ def to_question_service(question_repo: QuestionRepositoryDTO) -> QuestionService
         task_description_kk=getattr(question_repo, "task_description_kk", None),
         question_translation_ru=getattr(question_repo, "question_translation_ru", None),
         question_translation_kk=getattr(question_repo, "question_translation_kk", None),
+        explanation_ru=getattr(question_repo, "explanation_ru", None),
+        explanation_kk=getattr(question_repo, "explanation_kk", None),
     )
 
 
@@ -389,6 +393,8 @@ def to_question_update_repo(
         task_description_kk=getattr(question, "task_description_kk", None),
         question_translation_ru=getattr(question, "question_translation_ru", None),
         question_translation_kk=getattr(question, "question_translation_kk", None),
+        explanation_ru=getattr(question, "explanation_ru", None),
+        explanation_kk=getattr(question, "explanation_kk", None),
     )
 
 

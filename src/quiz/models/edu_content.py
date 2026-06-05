@@ -127,6 +127,11 @@ class Question(Base):
     task_description_kk = Column(Text, nullable=True)
     question_translation_ru = Column(Text, nullable=True)
     question_translation_kk = Column(Text, nullable=True)
+    # Post-test review «Запомни» card — a short memorisation rule / why the
+    # correct answer is correct. Localized, nullable, served in review payloads.
+    # See migration c2a3b4d5e6f7.
+    explanation_ru = Column(Text, nullable=True)
+    explanation_kk = Column(Text, nullable=True)
 
     topic = relationship("Topic", back_populates="questions", passive_deletes=True)
     subject = relationship("Subject", back_populates="questions", passive_deletes=True)

@@ -76,6 +76,9 @@ class QuestionCreateRequestDTO(BaseModel):
     task_description_kk: str | None = None
     question_translation_ru: str | None = None
     question_translation_kk: str | None = None
+    # Post-test «memorisation rule» — authored in admin (optional).
+    explanation_ru: str | None = None
+    explanation_kk: str | None = None
 
 
 class QuestionListQueryDTO(BaseModel):
@@ -190,6 +193,8 @@ class QuestionUpdateRequestDTO(BaseModel):
     task_description_kk: str | None = None
     question_translation_ru: str | None = None
     question_translation_kk: str | None = None
+    explanation_ru: str | None = None
+    explanation_kk: str | None = None
 
     model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True)
 

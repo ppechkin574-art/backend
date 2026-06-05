@@ -115,6 +115,8 @@ def to_question_create_service(
         task_description_kk=getattr(question_create, "task_description_kk", None),
         question_translation_ru=getattr(question_create, "question_translation_ru", None),
         question_translation_kk=getattr(question_create, "question_translation_kk", None),
+        explanation_ru=getattr(question_create, "explanation_ru", None),
+        explanation_kk=getattr(question_create, "explanation_kk", None),
     )
 
 
@@ -151,6 +153,8 @@ def to_question_update_service(
         "task_description_kk",
         "question_translation_ru",
         "question_translation_kk",
+        "explanation_ru",
+        "explanation_kk",
     ):
         if getattr(question_update, _f, None) is not None:
             update_data[_f] = getattr(question_update, _f)

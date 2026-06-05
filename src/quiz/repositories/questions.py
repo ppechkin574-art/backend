@@ -139,6 +139,8 @@ class QuestionRepository(QuestionRepositoryInterface):
                 task_description_kk=getattr(create_dto, "task_description_kk", None),
                 question_translation_ru=getattr(create_dto, "question_translation_ru", None),
                 question_translation_kk=getattr(create_dto, "question_translation_kk", None),
+                explanation_ru=getattr(create_dto, "explanation_ru", None),
+                explanation_kk=getattr(create_dto, "explanation_kk", None),
             )
             self._session.add(q)
             self._session.flush()
@@ -311,6 +313,8 @@ class QuestionRepository(QuestionRepositoryInterface):
                 "task_description_kk",
                 "question_translation_ru",
                 "question_translation_kk",
+                "explanation_ru",
+                "explanation_kk",
             ):
                 _val = getattr(update_dto, _f, None)
                 if _val is not None:

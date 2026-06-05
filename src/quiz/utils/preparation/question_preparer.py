@@ -66,6 +66,12 @@ class QuestionPreparer:
             "subject_name": getattr(question_dto, "subject_name", None),
             "correct_variant_ids": list(correct_variant_ids),
             "user_variant_ids": user_variant_ids,
+            "task_description_ru": getattr(question_dto, "task_description_ru", None),
+            "task_description_kk": getattr(question_dto, "task_description_kk", None),
+            "question_translation_ru": getattr(question_dto, "question_translation_ru", None),
+            "question_translation_kk": getattr(question_dto, "question_translation_kk", None),
+            "explanation_ru": getattr(question_dto, "explanation_ru", None),
+            "explanation_kk": getattr(question_dto, "explanation_kk", None),
         }
 
     # @staticmethod

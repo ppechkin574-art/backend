@@ -418,6 +418,12 @@ class DailyTestService:
                         variants=variants,
                         question_number=prepared_question["question_number"],
                         is_correct=prepared_question["is_correct"],
+                        task_description_ru=prepared_question.get("task_description_ru"),
+                        task_description_kk=prepared_question.get("task_description_kk"),
+                        question_translation_ru=prepared_question.get("question_translation_ru"),
+                        question_translation_kk=prepared_question.get("question_translation_kk"),
+                        explanation_ru=prepared_question.get("explanation_ru"),
+                        explanation_kk=prepared_question.get("explanation_kk"),
                     )
                 )
 

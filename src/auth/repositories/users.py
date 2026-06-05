@@ -30,6 +30,7 @@ from clients.identity_provider.exceptions import (
     InvalidRefreshTokenError,
     NotVerifiedError,
 )
+from utils.cache import CacheService, CacheStrategy
 from utils.validators import KZPhone
 
 logger = logging.getLogger(__name__)
@@ -210,8 +211,19 @@ class UserRepositoryInterface(Protocol):
 
 
 class UserRepositoryKeycloak:
-    def __init__(self, identity_provider_client: IdentityProviderClientInterface):
+    # Short TTL for the cached profile. Writes that go through
+    # IdentityProviderClientKeycloak (update_user / update_user_subscription /
+    # set_active) invalidate the key immediately, so this TTL only bounds
+    # staleness for any change that bypasses the client.
+    _PROFILE_CACHE_TTL = 60
+
+    def __init__(
+        self,
+        identity_provider_client: IdentityProviderClientInterface,
+        cache_service: CacheService | None = None,
+    ):
         self.identity_provider_client = identity_provider_client
+        self._cache = cache_service
 
     def create(self, user: UserCreateDTO) -> UserDTO:
         kc_dto = to_keycloak_create_user_dto(user)
@@ -280,13 +292,31 @@ class UserRepositoryKeycloak:
     def get_user_from_token(self, access_token: str) -> UserDTO:
         try:
             keycloak_user_sub = self.identity_provider_client.get_user_sub_from_token(access_token)
-            user_query = to_user_query_dto(user_id=keycloak_user_sub)
-            try:
-                user = self.identity_provider_client.get(to_keycloak_user_query_dto(user_query))
-                roles = self.identity_provider_client.get_roles(user.id)
-                return to_user_dto(user, roles)
-            except IdentityNotFound:
-                raise UserNotFoundError
+
+            def _fetch() -> UserDTO:
+                # The two Keycloak network round-trips (get user + get roles)
+                # live here so they only run on a cache miss.
+                user_query = to_user_query_dto(user_id=keycloak_user_sub)
+                try:
+                    user = self.identity_provider_client.get(
+                        to_keycloak_user_query_dto(user_query)
+                    )
+                    roles = self.identity_provider_client.get_roles(user.id)
+                    return to_user_dto(user, roles)
+                except IdentityNotFound:
+                    raise UserNotFoundError
+
+            if self._cache is None:
+                return _fetch()
+
+            # Cache the resolved profile by sub. Keyed identically to the
+            # invalidation in IdentityProviderClientKeycloak's write methods.
+            key = self._cache.make_key(
+                CacheStrategy.USER, user_id=keycloak_user_sub, resource="profile"
+            )
+            return self._cache.get_or_set(
+                key, _fetch, ttl=self._PROFILE_CACHE_TTL, return_type=UserDTO
+            )
         except InvalidAccessTokenError:
             raise UserInvalidAccessTokenError
 

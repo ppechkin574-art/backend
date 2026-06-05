@@ -64,11 +64,13 @@ class Container(containers.DeclarativeContainer):
     identity_provider_client = providers.Singleton(
         IdentityProviderClientKeycloak,
         keycloak_settings=config.provided.keycloak,
+        cache_service=cache_service,
     )
 
     user_repository = providers.Singleton(
         UserRepositoryKeycloak,
         identity_provider_client=identity_provider_client,
+        cache_service=cache_service,
     )
 
     confirmation_code_repository = providers.Singleton(

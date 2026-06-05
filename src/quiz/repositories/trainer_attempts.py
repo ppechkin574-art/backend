@@ -821,6 +821,21 @@ class TrainerAttemptRepository:
             user_id=user_id,
         )
 
+    def get_trainer_ids_with_attempts(self, user_id: str) -> set[int]:
+        """Множество trainer_id, по которым у пользователя есть попытки.
+
+        Один запрос (DISTINCT) вместо поштучной проверки каждого тренажёра.
+        Статус не фильтруется — совпадает с поведением get_attempt_count,
+        которым раньше пользовалась проверка наличия попыток.
+        """
+        rows = (
+            self._session.query(TrainerAttempt.trainer_id)
+            .filter(TrainerAttempt.student_guid == user_id)
+            .distinct()
+            .all()
+        )
+        return {row[0] for row in rows if row[0] is not None}
+
     # def get_completed_dates(self, user_id: str) -> Set[date]:
     #     """Получить даты завершённых попыток пользователя"""
     #     from quiz.models.trainer import TrainerAttempt

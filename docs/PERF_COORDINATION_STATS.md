@@ -55,10 +55,21 @@ TTFB, indexes notwithstanding) is a **per-attempt fan-out**:
 aggregations (GROUP BY), and fetch each `(student_guid, period)` slice once and
 reuse. The indexes above make whatever queries remain cheap.
 
-> 🔒 **CLAIMED by the client/iOS side (2026-06-06).** To avoid double work, I'm
-> taking this N+1 refactor on a branch (`perf/stats-n-plus-1`) with a strict
-> correctness gate — old vs new output diffed on real prod data per student
-> before merge. If you've already started it, ping me and I'll back off.
+> ✅ **PARTLY SHIPPED (2026-06-06/07).** The *redundant-passes* half is done &
+> deployed (commit on `main`): `get_enhanced_global_statistic` no longer
+> re-fetches the period attempts or re-runs the per-attempt `get_attempt_statistic`
+> loop for spend-time/dates — those are now computed once in the period helpers
+> and reused (removed 8 redundant fetches + 3 redundant loops). Verified on prod:
+> old-vs-new diff = 0 mismatches across all 40 students × 2 periods; post-deploy
+> smoke PASS.
+>
+> ⏳ **STILL OPEN (owner's call):** the *core* per-attempt fan-out — looping
+> `get_attempt_statistic(attempt.id)` (≈5 sub-queries each) + `get_attempt_
+> answers_with_questions` per attempt in `_get_period_ent_statistic` /
+> `_get_overall_ent_statistic`. Collapsing that to set-based GROUP-BY aggregates
+> is the remaining win; left untouched (risky on the calc — full_exam Python
+> question-id parsing + the multi-variant correctness CASE). NOTE the endpoint is
+> `@cached(USER, ttl=3600)`, so this only runs on a cache miss (~1×/h/user).
 
 ## RUM
 Saw `feat(analytics): RUM API-timing aggregation endpoint` on `main` — good, did

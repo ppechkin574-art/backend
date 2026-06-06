@@ -1,4 +1,5 @@
 from datetime import date
+from decimal import Decimal
 from typing import Protocol
 from uuid import UUID
 
@@ -10,6 +11,7 @@ from analytics.converters import (
 from analytics.dtos.activity import ActivityDTO
 from analytics.dtos.api_filters import PeriodEnum
 from analytics.dtos.api_timing import ApiTimingSummaryDTO
+from analytics.dtos.payments_by_gateway import PaymentsByGatewaySummaryDTO
 from analytics.dtos.efficienty import EfficientyDTO
 from analytics.dtos.events import EventCreateServiceDTO
 from analytics.dtos.payments import (
@@ -72,6 +74,9 @@ class AnalyticServiceInterface(Protocol):
         platform: str | None = None,
         app_version: str | None = None,
     ) -> ApiTimingSummaryDTO:
+        raise NotImplementedError
+
+    def get_payments_by_gateway(self, hours: int = 720) -> PaymentsByGatewaySummaryDTO:
         raise NotImplementedError
 
 
@@ -154,5 +159,14 @@ class AnalyticService:
         return ApiTimingSummaryDTO(
             window_hours=hours,
             total_samples=sum(r.count for r in rows),
+            rows=rows,
+        )
+
+    def get_payments_by_gateway(self, hours: int = 720) -> PaymentsByGatewaySummaryDTO:
+        with self._uow:
+            rows = self._uow.anlytic_repo.get_payments_by_gateway(hours)
+        return PaymentsByGatewaySummaryDTO(
+            window_hours=hours,
+            total_amount=sum((r.total_amount for r in rows), start=Decimal("0")),
             rows=rows,
         )

@@ -88,3 +88,12 @@ def get_api_timing(
 ):
     """RUM: реальная задержка API с телефонов (из событий api_request)."""
     return service.get_api_timing_summary(hours, platform, app_version)
+
+
+@router.get("/payments/by-gateway")
+def get_payments_by_gateway(
+    hours: int = Query(720, ge=1, le=8760, description="Окно в часах (по умолчанию 30 дней)"),
+    service: AnalyticServiceInterface = Depends(get_analytics_service),
+):
+    """Выручка (paid) по шлюзам: Google Play vs FreedomPay."""
+    return service.get_payments_by_gateway(hours)

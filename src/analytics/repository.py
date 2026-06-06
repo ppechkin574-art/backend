@@ -15,6 +15,7 @@ from analytics.dtos.activity import (
 )
 from analytics.dtos.api_filters import PeriodEnum
 from analytics.dtos.api_timing import ApiTimingRowDTO
+from analytics.dtos.payments_by_gateway import PaymentByGatewayRowDTO
 from analytics.dtos.efficienty import (
     EfficientyDTO,
     EntEfficientyDTO,
@@ -84,6 +85,9 @@ class AnalyticRepositoryInterface(Protocol):
     def get_api_timing_summary(
         self, hours: int, platform: str | None, app_version: str | None
     ) -> list[ApiTimingRowDTO]:
+        raise NotImplementedError
+
+    def get_payments_by_gateway(self, hours: int) -> list[PaymentByGatewayRowDTO]:
         raise NotImplementedError
 
 
@@ -868,6 +872,37 @@ class AnalyticRepository:
                 p95_ms=round(float(r.p95 or 0), 1),
                 avg_ms=round(float(r.avg or 0), 1),
                 error_rate=round(float(r.error_rate or 0), 4),
+            )
+            for r in rows
+        ]
+
+    def get_payments_by_gateway(self, hours: int) -> list[PaymentByGatewayRowDTO]:
+        """Paid-payment totals split by gateway over the window.
+
+        Buckets google_play (recorded by the IAP verify + RTDN flows) vs
+        freedompay (everything else). Only status='paid' counts as revenue —
+        same definition the subscription activation uses.
+        """
+        sql = text(
+            """
+            SELECT
+                CASE WHEN pg_payment_method = 'google_play'
+                     THEN 'google_play' ELSE 'freedompay' END AS gateway,
+                count(*) AS count,
+                COALESCE(sum(amount), 0) AS total_amount
+            FROM payments
+            WHERE status = 'paid'
+              AND created_at > now() - make_interval(hours => :hours)
+            GROUP BY 1
+            ORDER BY total_amount DESC
+            """
+        )
+        rows = self._session.execute(sql, {"hours": hours}).fetchall()
+        return [
+            PaymentByGatewayRowDTO(
+                gateway=r.gateway,
+                count=int(r.count),
+                total_amount=r.total_amount or 0,
             )
             for r in rows
         ]

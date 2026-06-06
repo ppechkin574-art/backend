@@ -10,11 +10,14 @@ This is the Android counterpart to `/payments/apple/verify` — the verification
 logic lives in `payments/android_iap.py`, mirroring `payments/apple_iap.py`.
 """
 
+import base64
 import hashlib
+import json
 import logging
+import os
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -44,6 +47,61 @@ _verifier = AndroidIAPVerifier()
 _PRO_FALLBACK_PRICE = Decimal("4990")
 
 
+def _pro_price(plan_service: SubscriptionPlanService) -> Decimal:
+    """PRO plan price from the DB, or the fallback. Best-effort."""
+    try:
+        pro = next(
+            (
+                p
+                for p in plan_service.get_available_plans()
+                if str(p.plan_type).upper().endswith("PRO")
+            ),
+            None,
+        )
+        if pro is not None and pro.price:
+            return Decimal(str(pro.price))
+    except Exception:  # noqa: BLE001 — price lookup is best-effort
+        logger.warning("Could not read PRO price; using fallback %s", _PRO_FALLBACK_PRICE)
+    return _PRO_FALLBACK_PRICE
+
+
+def _insert_google_payment(
+    session: Session,
+    plan_service: SubscriptionPlanService,
+    order_id: str,
+    user_id: str,
+    product_id: str,
+    desc: str,
+) -> None:
+    """Idempotently insert a paid Google Play Payment row.
+
+    Best-effort: any failure is swallowed (never breaks the caller). Idempotent
+    on order_id, so repeated verify/RTDN deliveries don't create duplicates.
+    Amount is gross (pre-Google-fee); exact payouts come from Google's reports.
+    """
+    try:
+        if session.query(Payment).filter(Payment.order_id == order_id).first():
+            return  # already recorded
+        session.add(
+            Payment(
+                order_id=order_id,
+                amount=_pro_price(plan_service),
+                currency="KZT",
+                status="paid",
+                pg_payment_method="google_play",
+                is_subscription_payment=True,
+                subscription_plan="PRO",
+                user_id=str(user_id),
+                pg_status_desc=desc,
+            )
+        )
+        session.commit()
+        logger.info("Recorded Google Play payment %s for user %s", order_id, user_id)
+    except Exception:  # noqa: BLE001 — bookkeeping must never break the caller
+        session.rollback()
+        logger.exception("Failed to record Google Play payment for user %s", user_id)
+
+
 def _record_google_payment(
     session: Session,
     plan_service: SubscriptionPlanService,
@@ -51,54 +109,11 @@ def _record_google_payment(
     product_id: str,
     purchase_token: str,
 ) -> None:
-    """Record a verified Google Play purchase as a Payment row.
-
-    Lets the admin panel show Google Billing purchases alongside FreedomPay
-    (same `payments` table / analytics). Best-effort: a failure here must NOT
-    break activation — PRO is already granted by the time we're called.
-
-    Idempotent: order_id is derived from the purchase token, so repeated verify
-    calls (app retries / restarts) don't create duplicate rows. The amount is
-    gross (pre-Google-fee); exact payouts come later from Google's reports.
-    """
+    """Record the INITIAL verified purchase (order_id derived from the token)."""
     order_id = "gplay-" + hashlib.sha256(purchase_token.encode()).hexdigest()[:40]
-    try:
-        if session.query(Payment).filter(Payment.order_id == order_id).first():
-            return  # already recorded this purchase
-
-        amount = _PRO_FALLBACK_PRICE
-        try:
-            pro = next(
-                (
-                    p
-                    for p in plan_service.get_available_plans()
-                    if str(p.plan_type).upper().endswith("PRO")
-                ),
-                None,
-            )
-            if pro is not None and pro.price:
-                amount = Decimal(str(pro.price))
-        except Exception:  # noqa: BLE001 — price lookup is best-effort
-            logger.warning("Could not read PRO price; using fallback %s", amount)
-
-        session.add(
-            Payment(
-                order_id=order_id,
-                amount=amount,
-                currency="KZT",
-                status="paid",
-                pg_payment_method="google_play",
-                is_subscription_payment=True,
-                subscription_plan="PRO",
-                user_id=str(user_id),
-                pg_status_desc=f"Google Play IAP: {product_id}",
-            )
-        )
-        session.commit()
-        logger.info("Recorded Google Play payment %s for user %s", order_id, user_id)
-    except Exception:  # noqa: BLE001 — never fail verify because of bookkeeping
-        session.rollback()
-        logger.exception("Failed to record Google Play payment for user %s", user_id)
+    _insert_google_payment(
+        session, plan_service, order_id, user_id, product_id, f"Google Play IAP: {product_id}"
+    )
 
 
 class AndroidVerifyIn(BaseModel):
@@ -177,3 +192,111 @@ async def verify_android_purchase(
         environment=result.environment,
         user=updated_user,
     )
+
+
+# Google subscription notificationType → label. "Money-in" types record a
+# renewal/purchase payment so recurring revenue shows in the admin panel.
+_RTDN_TYPES = {
+    1: "RECOVERED",
+    2: "RENEWED",
+    3: "CANCELED",
+    4: "PURCHASED",
+    5: "ON_HOLD",
+    6: "IN_GRACE_PERIOD",
+    7: "RESTARTED",
+    8: "PRICE_CHANGE_CONFIRMED",
+    9: "DEFERRED",
+    10: "PAUSED",
+    11: "PAUSE_SCHEDULE_CHANGED",
+    12: "REVOKED",
+    13: "EXPIRED",
+}
+_RTDN_MONEY_IN = {1, 2, 4, 7}  # RECOVERED, RENEWED, PURCHASED, RESTARTED
+
+
+@router.post("/rtdn")
+async def google_rtdn(
+    request: Request,
+    token: str = Query(default=""),
+    db_session: Session = Depends(get_db_session),
+    plan_service: SubscriptionPlanService = Depends(get_subscription_plan_service),
+):
+    """Real-time Developer Notifications from Google Play (via Pub/Sub push).
+
+    Captures the subscription lifecycle (renewals, cancels, refunds) so the
+    admin panel reflects recurring revenue, not just first purchases. Renewals
+    are mapped to our user via the original purchase Payment and recorded as a
+    new paid row; lifecycle events (cancel/expire/refund) are logged for now —
+    entitlement sync (downgrade on expire/refund) is a later phase.
+
+    Security: shared secret in the `?token=` query param. Set GOOGLE_RTDN_SECRET
+    in Railway and append `?token=<secret>` to the Pub/Sub push endpoint URL.
+
+    Always returns 200 so Pub/Sub doesn't retry on our bookkeeping hiccups.
+    """
+    secret = os.getenv("GOOGLE_RTDN_SECRET", "")
+    if not secret or token != secret:
+        raise HTTPException(status_code=403, detail="forbidden")
+
+    try:
+        envelope = await request.json()
+        data_b64 = (envelope.get("message") or {}).get("data")
+        if not data_b64:
+            return {"ok": True}  # Pub/Sub verification / empty message
+        notif = json.loads(base64.b64decode(data_b64).decode())
+    except Exception:  # noqa: BLE001 — malformed push must not 500 (Pub/Sub retries)
+        logger.warning("RTDN: could not decode notification payload")
+        return {"ok": True}
+
+    voided = notif.get("voidedPurchaseNotification")
+    if voided:
+        # Refund / chargeback. Log now; entitlement revoke is a later phase.
+        logger.info(
+            "RTDN voided/refund: orderId=%s token=%s",
+            voided.get("orderId"),
+            str(voided.get("purchaseToken", ""))[:16],
+        )
+        return {"ok": True}
+
+    sub = notif.get("subscriptionNotification")
+    if not sub:
+        logger.info("RTDN non-subscription notification keys=%s", list(notif.keys()))
+        return {"ok": True}
+
+    ntype = sub.get("notificationType")
+    product_id = sub.get("subscriptionId") or "kz.aima.aima.pro.monthly"
+    purchase_token = sub.get("purchaseToken", "")
+    logger.info(
+        "RTDN subscription: type=%s(%s) product=%s token=%s",
+        ntype,
+        _RTDN_TYPES.get(ntype, "?"),
+        product_id,
+        purchase_token[:16],
+    )
+
+    if ntype in _RTDN_MONEY_IN and purchase_token:
+        # Map back to our user via the original purchase row (the purchase token
+        # stays the same across renewals for Play subscriptions).
+        token_hash = hashlib.sha256(purchase_token.encode()).hexdigest()
+        original = (
+            db_session.query(Payment)
+            .filter(Payment.order_id == "gplay-" + token_hash[:40])
+            .first()
+        )
+        if not original or not original.user_id:
+            logger.warning("RTDN: no user mapped for token (no original Payment), type=%s", ntype)
+            return {"ok": True}
+
+        event_ms = str(notif.get("eventTimeMillis", "0"))
+        # Unique per event so each renewal is its own row (idempotent on redelivery).
+        order_id = f"gplay-evt-{token_hash[:24]}-{event_ms}"
+        _insert_google_payment(
+            db_session,
+            plan_service,
+            order_id,
+            original.user_id,
+            product_id,
+            f"Google Play RTDN: {_RTDN_TYPES.get(ntype, ntype)}",
+        )
+
+    return {"ok": True}

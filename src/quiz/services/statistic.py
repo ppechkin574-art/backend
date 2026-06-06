@@ -70,14 +70,13 @@ class StatisticService:
             overall_trainer = self._get_overall_trainer_statistic(student_id)
             overall_daily = self._get_overall_daily_statistic(student_id)
 
-            ent_subject_dates = self._get_completed_dates_for_ent(
-                student_id, start_datetime, end_datetime, ExamType.by_subject
-            )
-            ent_full_dates = self._get_completed_dates_for_ent(
-                student_id, start_datetime, end_datetime, ExamType.full_exam
-            )
-            trainer_dates = self._get_completed_dates_for_trainer(student_id, start_datetime, end_datetime)
-            daily_dates = self._get_completed_dates_for_daily(student_id, start_datetime, end_datetime)
+            # Reuse the completed-dates sets already computed by the period
+            # helpers above (identical {to_kz_date(...)} computation) instead
+            # of re-fetching the same attempts.
+            ent_subject_dates = period_ent_subject["completed_dates"]
+            ent_full_dates = period_ent_full["completed_dates"]
+            trainer_dates = period_trainer["completed_dates"]
+            daily_dates = period_daily["completed_dates"]
 
             all_dates = ent_subject_dates | ent_full_dates | trainer_dates | daily_dates
 
@@ -97,14 +96,13 @@ class StatisticService:
                 {"date": date_str, "streak": active} for date_str, active in streak_history.items()
             ]
 
-            ent_subject_spend_time = self._calculate_ent_spend_time(
-                student_id, start_datetime, end_datetime, ExamType.by_subject
-            )
-            ent_full_spend_time = self._calculate_ent_spend_time(
-                student_id, start_datetime, end_datetime, ExamType.full_exam
-            )
-            trainer_spend_time = self._calculate_trainer_spend_time(student_id, start_datetime, end_datetime)
-            daily_spend_time = self._calculate_daily_spend_time(student_id, start_datetime, end_datetime)
+            # Reuse the spend-time totals already accumulated by the period
+            # helpers above (same get_attempt_statistic values) instead of
+            # re-fetching the same attempts and re-running the loop.
+            ent_subject_spend_time = period_ent_subject["total_spend_time"]
+            ent_full_spend_time = period_ent_full["total_spend_time"]
+            trainer_spend_time = period_trainer["total_spend_time"]
+            daily_spend_time = period_daily["total_spend_time"]
 
             ent_subject_dto = EntStatisticSummaryDTO(
                 period_attempts_count=period_ent_subject["period_attempts_count"],
@@ -500,6 +498,7 @@ class StatisticService:
         total_questions = 0
         total_correct = 0
         total_score = 0
+        total_spend_time = 0
         progress_by_subject = {}
 
         for attempt in attempts:
@@ -508,6 +507,7 @@ class StatisticService:
             total_questions += attempt_stats.total_questions
             total_correct += attempt_stats.correct
             total_score += attempt_stats.score
+            total_spend_time += getattr(attempt_stats, "spend_time", 0)
 
             answers_with_questions = self.uow.ent_attempts.get_attempt_answers_with_questions(attempt.id)
 
@@ -558,6 +558,8 @@ class StatisticService:
             "average_score": total_score / len(attempts) if attempts else 0,
             "progress_by_subject": period_progress_by_subject,
             "current_streak": current_streak,
+            "total_spend_time": total_spend_time,
+            "completed_dates": ent_dates,
         }
 
     def _get_overall_ent_statistic(
@@ -631,6 +633,7 @@ class StatisticService:
 
         total_questions = 0
         total_correct = 0
+        total_spend_time = 0
         progress_by_topic = {}
         progress_by_subject = {}
 
@@ -639,6 +642,7 @@ class StatisticService:
 
             total_questions += attempt_stats.get("total_questions", 0)
             total_correct += attempt_stats.get("correct", 0)
+            total_spend_time += attempt_stats.get("spend_time", 0)
 
             if hasattr(attempt, "questions") and attempt.questions:
                 for question_attempt in attempt.questions:
@@ -719,6 +723,8 @@ class StatisticService:
             "progress_by_topic": progress_by_topic_list,
             "progress_by_subject": progress_by_subject_list,
             "current_streak": current_streak,
+            "total_spend_time": total_spend_time,
+            "completed_dates": trainer_dates,
         }
 
     def _get_overall_trainer_statistic(
@@ -808,12 +814,14 @@ class StatisticService:
 
         total_questions = 0
         total_correct = 0
+        total_spend_time = 0
         progress_by_subject = {}
 
         for attempt in attempts:
             attempt_total = attempt.correct_answers + attempt.incorrect_answers + attempt.skipped_answers
             total_questions += attempt_total
             total_correct += attempt.correct_answers
+            total_spend_time += getattr(attempt, "spend_time", 0)
 
             if attempt.subject_id:
                 subject_id = attempt.subject_id
@@ -894,6 +902,8 @@ class StatisticService:
             "accuracy": period_accuracy,
             "progress_by_subject": progress_by_subject_list,
             "current_streak": current_streak,
+            "total_spend_time": total_spend_time,
+            "completed_dates": daily_dates,
         }
 
     def _get_overall_daily_statistic(
@@ -956,6 +966,8 @@ class StatisticService:
             "average_score": 0.0,
             "progress_by_subject": [],
             "current_streak": 0,
+            "total_spend_time": 0,
+            "completed_dates": set(),
         }
 
     def _get_empty_trainer_statistic(self) -> dict[str, Any]:
@@ -967,6 +979,8 @@ class StatisticService:
             "progress_by_topic": [],
             "progress_by_subject": [],
             "current_streak": 0,
+            "total_spend_time": 0,
+            "completed_dates": set(),
         }
 
     def _get_empty_daily_statistic(self) -> dict[str, Any]:
@@ -977,42 +991,9 @@ class StatisticService:
             "accuracy": 0.0,
             "progress_by_subject": [],
             "current_streak": 0,
+            "total_spend_time": 0,
+            "completed_dates": set(),
         }
-
-    def _calculate_ent_spend_time(
-        self,
-        student_id: UUID,
-        start_date: datetime,
-        end_date: datetime,
-        exam_type: ExamType,
-    ) -> int:
-        attempts = self.uow.ent_attempts.get_completed_attempts_by_period(student_id, start_date, end_date, exam_type)
-
-        total_spend_time = 0
-        for attempt in attempts:
-            attempt_stats = self.uow.ent_attempts.get_attempt_statistic(attempt.id, None)
-            total_spend_time += getattr(attempt_stats, "spend_time", 0)
-
-        return total_spend_time
-
-    def _calculate_trainer_spend_time(self, student_id: UUID, start_date: datetime, end_date: datetime) -> int:
-        attempts = self.uow.trainer_attempts.get_all_completed_attempts_by_period(student_id, start_date, end_date)
-
-        total_spend_time = 0
-        for attempt in attempts:
-            attempt_stats = self.uow.trainer_attempts.get_attempt_statistic(attempt.id)
-            total_spend_time += attempt_stats.get("spend_time", 0)
-
-        return total_spend_time
-
-    def _calculate_daily_spend_time(self, student_id: UUID, start_date: datetime, end_date: datetime) -> int:
-        attempts = self.uow.daily_tests.get_completed_attempts_by_period(student_id, start_date, end_date)
-
-        total_spend_time = 0
-        for attempt in attempts:
-            total_spend_time += getattr(attempt, "spend_time", 0)
-
-        return total_spend_time
 
     def _format_seconds(self, seconds: float) -> str:
         hours = int(seconds // 3600)
@@ -1045,32 +1026,6 @@ class StatisticService:
                 for daily in getattr(screen_time_dto, "daily_screen_times", [])
             ],
         }
-
-    def _get_completed_dates_for_ent(
-        self,
-        student_id: UUID,
-        start_date: datetime,
-        end_date: datetime,
-        exam_type: ExamType,
-    ) -> set[date]:
-        """Получить даты завершенных попыток ЕНТ за период.
-
-        Returns KZ-local dates: an attempt completed at 22:00 UTC counts as
-        the next day in Almaty (03:00 the following morning local time),
-        which is what the user perceives and what the streak should reflect.
-        """
-        attempts = self.uow.ent_attempts.get_completed_attempts_by_period(student_id, start_date, end_date, exam_type)
-        return {kz_date for attempt in attempts if (kz_date := to_kz_date(attempt.completed_at)) is not None}
-
-    def _get_completed_dates_for_trainer(self, student_id: UUID, start_date: datetime, end_date: datetime) -> set[date]:
-        """Получить даты завершенных попыток тренажеров за период (KZ-local)."""
-        attempts = self.uow.trainer_attempts.get_all_completed_attempts_by_period(student_id, start_date, end_date)
-        return {kz_date for attempt in attempts if (kz_date := to_kz_date(attempt.completed_at)) is not None}
-
-    def _get_completed_dates_for_daily(self, student_id: UUID, start_date: datetime, end_date: datetime) -> set[date]:
-        """Получить даты завершенных попыток daily тестов за период (KZ-local)."""
-        attempts = self.uow.daily_tests.get_completed_attempts_by_period(student_id, start_date, end_date)
-        return {kz_date for attempt in attempts if (kz_date := to_kz_date(attempt.completed_at)) is not None}
 
     def _calculate_engagement_score(
         self,

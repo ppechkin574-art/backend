@@ -71,9 +71,55 @@ reuse. The indexes above make whatever queries remain cheap.
 > question-id parsing + the multi-variant correctness CASE). NOTE the endpoint is
 > `@cached(USER, ttl=3600)`, so this only runs on a cache miss (~1×/h/user).
 
-## RUM
-Saw `feat(analytics): RUM API-timing aggregation endpoint` on `main` — good, did
-NOT build a parallel RUM. The client currently only has a debug-only timing log
-(`[cachethennet] <label> netMs=…`, debugPrint, no-op in release) as a local
-stopgap. When the RUM client SDK/contract is ready, point me at it and I'll wire
-`time-to-first-paint` + `cache-hit` from the cache-then-network layer.
+## RUM — client now feeds it ✅
+Saw `feat(analytics): RUM API-timing aggregation endpoint` (the `GET .../api-timing`
+that aggregates `event_name='api_request'`). The client previously sent **no**
+`api_request` events → the dashboard had no phone data. **Now shipped (client):**
+a `RumTimingInterceptor` emits `api_request` events to `POST /analytics/events`
+with `meta:{endpoint, duration_ms, status}` (endpoint normalized: numeric/UUID
+segments → `:id`). Low-overhead: **20% sampling**, in-memory buffer, flushed in
+the **background on app-pause** (never competes with foreground). Excludes
+`/analytics/events` + `/health`. → `GET .../api-timing` should start showing real
+KZ-phone p50/p95/error-rate per endpoint.
+
+> 🙏 **Backend ask (nice-to-have):** `/analytics/events` is single-event only, so
+> RUM events go one POST each (sampled/deferred to keep it cheap). A **batch
+> ingest** (`POST /analytics/events/batch` accepting an array) would let us raise
+> the sampling rate without per-event POST overhead.
+
+---
+
+# Broader client-perf pass (2026-06-07) — what shipped client-side + backend backlog
+
+The iOS/client side did a full perf pass (app branch `perf/cache-then-network`).
+**Shipped on the client:** cache-then-network (profile / statistics / leaderboard /
+home-subjects+training / lessons), launch prefetch + TLS warm-up, **HTTP/2**
+(dio_http2_adapter), **disk-cached + downscaled images** everywhere
+(cached_network_image — was raw Image.network) + next-question image prefetch,
+lazy lists (ListView.builder) for long lists, parallelized cold-start init, the
+RUM capture above, and a **conservative server-driven HTTP cache interceptor**
+(dio_cache_interceptor, `CachePolicy.request`).
+
+## Backend items left for you (by impact)
+1. **#6 — Cache headers on static endpoints.** The client HTTP-cache interceptor
+   is live but **server-driven** (caches only when you send `Cache-Control`/`ETag`)
+   → no-op until you opt endpoints in. **Use ETag/Last-Modified (conditional →
+   304)** — it stays compatible with our ObjectBox cache-then-network (the
+   revalidate still hits network, just transfers nothing when unchanged). **Avoid
+   `Cache-Control: max-age>0` on the ObjectBox-cached endpoints** (`/auth/profile`,
+   `/user/statistics/global`, leaderboard, `/user/daily-tests/subjects`,
+   `/user/progress/trainers/summary`, lessons) — a fresh HTTP-cache hit there would
+   short-circuit our stream revalidation. Good `max-age` candidates: truly static
+   content (subject lists, lesson bodies) — but ETag is safest everywhere.
+2. **#11 — the core statistics N+1** (still open): `get_enhanced_global_statistic`
+   loops `get_attempt_statistic(attempt.id)` (~5 sub-queries each) +
+   `get_attempt_answers_with_questions` per attempt. Collapse to set-based GROUP BY.
+   (The reuse-of-redundant-passes half is already shipped + verified.) Under
+   `@cached(USER,1h)` so it's cache-miss-only — lower urgency.
+3. **#8 — server-side response cache** on other heavy read endpoints (the pattern
+   `@cached(...)` already on global-statistics) with short TTL + invalidation —
+   helps the cold/uncached hit (client cache covers warm).
+4. **#7 — payload trimming + pagination.** Send only fields the screen needs;
+   paginate long lists (leaderboard up to 200, history). gzip (already on 👍)
+   helps, but smaller payloads + pagination cut transfer + parse further. The
+   client now lazy-renders these lists, so server-side pagination would pair well.

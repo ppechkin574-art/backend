@@ -51,11 +51,14 @@ TTFB, indexes notwithstanding) is a **per-attempt fan-out**:
 4. `get_overall_subject_progress` + `get_overall_topic_progress` (trainer) run
    two near-identical 5-table joins back-to-back.
 
-**Suggested fix (your domain):** collapse the per-attempt loop into a few
-set-based aggregations (GROUP BY), and fetch each `(student_guid, period)` slice
-once and reuse. The indexes above make whatever queries remain cheap. This is
-logic, so it's left to whoever owns the stats service — flagging it so the index
-migration + this refactor aren't done twice.
+**Suggested fix:** collapse the per-attempt loop into a few set-based
+aggregations (GROUP BY), and fetch each `(student_guid, period)` slice once and
+reuse. The indexes above make whatever queries remain cheap.
+
+> 🔒 **CLAIMED by the client/iOS side (2026-06-06).** To avoid double work, I'm
+> taking this N+1 refactor on a branch (`perf/stats-n-plus-1`) with a strict
+> correctness gate — old vs new output diffed on real prod data per student
+> before merge. If you've already started it, ping me and I'll back off.
 
 ## RUM
 Saw `feat(analytics): RUM API-timing aggregation endpoint` on `main` — good, did

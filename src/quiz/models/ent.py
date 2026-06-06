@@ -98,6 +98,22 @@ class EntAttempt(Base):
             unique=True,
             postgresql_where=(status == "in_progress"),
         ),
+        # Statistics hot paths (/user/statistics/global):
+        # overall ENT stats filter (student_guid + exam_type + status==completed).
+        Index(
+            "ix_ent_attempts_student_examtype_completed",
+            "student_guid",
+            "exam_type",
+            "completed_at",
+        ),
+        # period ENT stats filter (student_guid + status==completed + completed_at range)
+        # — the period helper does NOT filter exam_type, so a status-led index serves it.
+        Index(
+            "ix_ent_attempts_student_status_completed",
+            "student_guid",
+            "status",
+            "completed_at",
+        ),
     )
 
 
@@ -114,6 +130,13 @@ class EntAttemptAnswer(Base):
 
     variant = relationship(Variant, passive_deletes=False)
     ent_attempt = relationship(EntAttempt, passive_deletes=False)
+
+    __table_args__ = (
+        # FK fan-out: answers are fetched per-attempt in the statistics loop
+        # (get_attempt_answers_with_questions) and joined by attempt id in
+        # get_attempt_subjects_statistics.
+        Index("ix_ent_attempt_answers_attempt", "ent_attempt_id"),
+    )
 
 
 class EntSubjectCombination(Base):

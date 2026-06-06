@@ -67,6 +67,15 @@ class DailyTestAttempt(Base):
         Index("idx_daily_attempts_student", "student_guid"),
         Index("idx_daily_attempts_date", "test_date"),
         Index("idx_daily_attempts_subject", "subject_id"),
+        # Statistics hot path: period + overall daily stats filter
+        # student_guid + status=='completed' (+ completed_at range for period).
+        # The existing student-only index can't satisfy the status/range predicate.
+        Index(
+            "ix_daily_attempts_student_status_completed",
+            "student_guid",
+            "status",
+            "completed_at",
+        ),
     )
 
 

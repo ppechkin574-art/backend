@@ -9,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     func,
@@ -56,6 +57,17 @@ class TrainerAttempt(Base):
     trainer = relationship(Trainer, back_populates="attempts", passive_deletes=True)
     questions = relationship("TrainerAttemptQuestion", back_populates="trainer_attempt", passive_deletes=True)
 
+    __table_args__ = (
+        # Statistics hot path: period + overall trainer stats both filter
+        # student_guid + status==completed (+ completed_at range for period).
+        Index(
+            "ix_trainer_attempts_student_status_completed",
+            "student_guid",
+            "status",
+            "completed_at",
+        ),
+    )
+
 
 class TrainerAttemptQuestion(Base):
     __tablename__ = "trainer_attempt_questions"
@@ -67,6 +79,12 @@ class TrainerAttemptQuestion(Base):
     trainer_attempt = relationship(TrainerAttempt, back_populates="questions", passive_deletes=True)
     question = relationship("Question", back_populates="trainer_attempt_questions", passive_deletes=True)
     answers = relationship("TrainerAttemptAnswer", back_populates="attempt_question", passive_deletes=True)
+
+    __table_args__ = (
+        # FK fan-out: questions loaded per-attempt (relationship) and joined by
+        # attempt id in get_overall_subject/topic_progress.
+        Index("ix_trainer_attempt_questions_attempt", "trainer_attempt_id"),
+    )
 
 
 class TrainerAttemptAnswer(Base):
@@ -84,3 +102,9 @@ class TrainerAttemptAnswer(Base):
 
     attempt_question = relationship(TrainerAttemptQuestion, back_populates="answers", passive_deletes=True)
     variant = relationship("Variant", passive_deletes=True)
+
+    __table_args__ = (
+        # FK fan-out: answers joined by trainer_attempt_question_id in
+        # get_overall_subject/topic_progress.
+        Index("ix_trainer_attempt_answers_question", "trainer_attempt_question_id"),
+    )

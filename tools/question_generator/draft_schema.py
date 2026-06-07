@@ -119,8 +119,14 @@ def normalize_draft(
     raw: Dict[str, Any],
     subject_name: str,
     source: Optional[Dict[str, Any]] = None,
+    lang: str = "ru",
 ) -> Dict[str, Any]:
     """Coerce one raw model dict into a backend-ready draft dict.
+
+    The model returns language-neutral fields (task_description, explanation,
+    question_translation); we route them into the backend's _ru or _kk columns
+    based on `lang` so a Kazakh textbook fills the Kazakh fields. Falls back to
+    legacy _ru/_kk-suffixed keys if the model used them.
 
     Raises DraftValidationError if the draft is structurally unusable
     (no question blocks, fewer than 2 options, or zero correct answers).
@@ -143,6 +149,11 @@ def normalize_draft(
     qtype = _coerce_question_type(raw.get("question_type"), n_correct)
     difficulty = _coerce_difficulty(raw.get("difficulty"))
 
+    sfx = "kk" if (lang or "ru").lower() == "kk" else "ru"
+    task = raw.get("task_description") or raw.get(f"task_description_{sfx}") or None
+    trans = raw.get("question_translation") or raw.get(f"question_translation_{sfx}") or None
+    expl = raw.get("explanation") or raw.get(f"explanation_{sfx}") or None
+
     draft: Dict[str, Any] = {
         "subject_name": subject_name,
         "topic_name": (raw.get("topic_name") or None),
@@ -150,9 +161,9 @@ def normalize_draft(
         "question_type": qtype,
         "blocks": blocks,
         "variants": variants,
-        "task_description_ru": raw.get("task_description_ru") or None,
-        "question_translation_ru": raw.get("question_translation_ru") or None,
-        "explanation_ru": raw.get("explanation_ru") or None,
+        f"task_description_{sfx}": task,
+        f"question_translation_{sfx}": trans,
+        f"explanation_{sfx}": expl,
         "source": source or raw.get("source") or None,
         # validation filled by verify step; carry through if present.
         "validation": raw.get("validation") if isinstance(raw.get("validation"), dict) else None,
@@ -165,6 +176,7 @@ def normalize_many(
     raws: List[Dict[str, Any]],
     subject_name: str,
     source: Optional[Dict[str, Any]] = None,
+    lang: str = "ru",
 ) -> Tuple[List[Dict[str, Any]], List[str]]:
     """Normalize a list; collect per-item errors instead of aborting.
 
@@ -174,7 +186,7 @@ def normalize_many(
     errors: List[str] = []
     for i, raw in enumerate(raws):
         try:
-            ok.append(normalize_draft(raw, subject_name, source))
+            ok.append(normalize_draft(raw, subject_name, source, lang=lang))
         except DraftValidationError as e:
             errors.append(f"draft #{i}: {e}")
     return ok, errors

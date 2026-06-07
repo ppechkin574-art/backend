@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional
 from .config import get_logger
 from .draft_schema import normalize_many
 from .llm import call_json
-from .prompts import GENERATION_SCHEMA, GENERATION_SYSTEM, build_generation_prompt
+from .prompts import GENERATION_SCHEMA, build_generation_prompt, generation_system
 
 logger = get_logger("qgen.generate")
 
@@ -114,7 +114,7 @@ def generate_for_section(
         parsed = call_json(
             client=client,
             model=model,
-            system=GENERATION_SYSTEM,
+            system=generation_system(lang),
             user=user,
             schema=GENERATION_SCHEMA,
         )
@@ -127,7 +127,7 @@ def generate_for_section(
         logger.error("Section '%s': model output had no questions list.", section_label)
         return []
 
-    drafts, errors = normalize_many(raws, subject, source)
+    drafts, errors = normalize_many(raws, subject, source, lang=lang)
     for err in errors:
         logger.warning("Section '%s': dropped %s", section_label, err)
     logger.info(

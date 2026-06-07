@@ -54,16 +54,16 @@ GENERATION_SCHEMA: Dict = {
                             "required": ["value", "is_correct"],
                         },
                     },
-                    "task_description_ru": {"type": "string"},
-                    "question_translation_ru": {"type": "string"},
-                    "explanation_ru": {"type": "string"},
+                    "task_description": {"type": "string"},
+                    "question_translation": {"type": "string"},
+                    "explanation": {"type": "string"},
                 },
                 "required": [
                     "difficulty",
                     "question_type",
                     "blocks",
                     "variants",
-                    "explanation_ru",
+                    "explanation",
                 ],
             },
         }
@@ -94,18 +94,35 @@ VERIFICATION_SCHEMA: Dict = {
 }
 
 
-GENERATION_SYSTEM = (
-    "Ты — методист, составляющий вопросы для ЕНТ (Единого национального "
-    "тестирования Республики Казахстан). Ты пишешь строго на русском языке. "
-    "Ты создаёшь корректные тестовые задания с одним или несколькими "
-    "правильными ответами (MCQ), опираясь ИСКЛЮЧИТЕЛЬНО на предоставленный "
-    "фрагмент учебника. Запрещено использовать факты, которых нет в тексте. "
-    "Если в тексте есть формулы — записывай их в LaTeX (внутри $...$). "
-    "Каждый вопрос должен иметь ровно один однозначный ключ для single_choice, "
-    "и два-три правильных варианта для multiple_choice — только когда это "
-    "естественно вытекает из материала. Дистракторы (неверные варианты) "
-    "должны быть правдоподобными, но однозначно неверными по тексту."
-)
+_LANG_NAMES = {"ru": "русском", "kk": "казахском"}
+
+
+def lang_name(lang: str) -> str:
+    return _LANG_NAMES.get((lang or "ru").lower(), "русском")
+
+
+def generation_system(lang: str = "ru") -> str:
+    ln = lang_name(lang)
+    return (
+        "Ты — методист, составляющий вопросы для ЕНТ (Единого национального "
+        f"тестирования Республики Казахстан). Ты пишешь СТРОГО на {ln} языке — "
+        f"текст вопроса, ВСЕ варианты ответа и объяснение должны быть на {ln} "
+        "языке (математические формулы остаются в LaTeX). "
+        "Ты создаёшь корректные тестовые задания с одним или несколькими "
+        "правильными ответами (MCQ), опираясь ИСКЛЮЧИТЕЛЬНО на предоставленный "
+        "фрагмент учебника. Запрещено использовать факты, которых нет в тексте. "
+        "Если в тексте есть формулы — записывай их в LaTeX (внутри $...$). "
+        "ВАЖНО: в JSON все обратные слэши LaTeX экранируй как \\\\ "
+        "(например \\\\frac, \\\\sqrt), иначе JSON сломается. "
+        "Каждый вопрос должен иметь ровно один однозначный ключ для single_choice, "
+        "и два-три правильных варианта для multiple_choice — только когда это "
+        "естественно вытекает из материала. Дистракторы (неверные варианты) "
+        "должны быть правдоподобными, но однозначно неверными по тексту."
+    )
+
+
+# Back-compat alias (RU). Prefer generation_system(lang).
+GENERATION_SYSTEM = generation_system("ru")
 
 
 def build_generation_prompt(
@@ -130,12 +147,13 @@ def build_generation_prompt(
                     {"value": "вариант C", "is_correct": False},
                     {"value": "вариант D", "is_correct": False},
                 ],
-                "task_description_ru": "формулировка задания (необязательно)",
-                "question_translation_ru": "перефразировка вопроса (необязательно)",
-                "explanation_ru": "почему ключ верен, со ссылкой на текст",
+                "task_description": "формулировка задания (необязательно)",
+                "question_translation": "перефразировка вопроса (необязательно)",
+                "explanation": "почему ключ верен, со ссылкой на текст",
             }
         ]
     }
+    ln = lang_name(lang)
     parts: List[str] = []
     parts.append(f"Предмет: {subject}")
     parts.append(f"Раздел: {section_label}")
@@ -144,13 +162,13 @@ def build_generation_prompt(
     )
     parts.append(
         "Требования:\n"
-        "- Только на русском языке.\n"
+        f"- Весь вывод (текст вопроса, варианты, объяснение) — ТОЛЬКО на {ln} языке.\n"
         "- Строго по тексту фрагмента, без внешних знаний.\n"
         "- 4 варианта ответа на каждый вопрос (если естественно — больше).\n"
         "- Смешивай single_choice и multiple_choice там, где это уместно.\n"
         "- Для multiple_choice должно быть 2–3 правильных варианта.\n"
-        "- Формулы — в LaTeX ($...$).\n"
-        "- explanation_ru обязателен и должен ссылаться на текст.\n"
+        "- Формулы — в LaTeX ($...$); обратные слэши в JSON экранируй как \\\\.\n"
+        "- explanation обязателен и должен ссылаться на текст.\n"
         "- difficulty оцени честно (easy/medium/hard)."
     )
     if fewshot:
@@ -184,7 +202,7 @@ def build_verification_prompt(section_text: str, draft: Dict) -> str:
         "question_type": draft.get("question_type"),
         "blocks": draft.get("blocks"),
         "variants": draft.get("variants"),
-        "explanation_ru": draft.get("explanation_ru"),
+        "explanation": draft.get("explanation_ru") or draft.get("explanation_kk"),
     }
     return (
         "Проверь вопрос строго по фрагменту. Ответь JSON по схеме "

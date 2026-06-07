@@ -115,6 +115,27 @@ def extract_json(text: str) -> Any:
     raise ValueError("could not extract JSON from model response")
 
 
+# Control chars that a bare LaTeX command produced when the model emitted a
+# single backslash in JSON (\f -> U+000C, \b -> U+0008, \t -> U+0009). In our
+# math content these never appear legitimately, so map them back to the literal
+# backslash+letter (restores \frac, \binom, \beta, \theta, \times, ...).
+_LATEX_REPAIR = {"\x0c": "\\f", "\x08": "\\b", "\x0b": "\\v"}
+
+
+def _repair_latex(obj):
+    """Recursively undo \\f/\\b JSON-escape corruption of LaTeX commands."""
+    if isinstance(obj, str):
+        for bad, good in _LATEX_REPAIR.items():
+            if bad in obj:
+                obj = obj.replace(bad, good)
+        return obj
+    if isinstance(obj, list):
+        return [_repair_latex(x) for x in obj]
+    if isinstance(obj, dict):
+        return {k: _repair_latex(v) for k, v in obj.items()}
+    return obj
+
+
 def _oa_post(url, headers, body, attempts: int = 4):
     """POST with retry/backoff on 429 (rate limit) and 5xx. Returns response."""
     import time
@@ -131,7 +152,12 @@ def _oa_post(url, headers, body, attempts: int = 4):
             wait = float(resp.headers.get("retry-after", ""))
         except ValueError:
             wait = 0.0
-        wait = wait or min(20.0, 4.0 * (i + 1))
+        wait = wait or 4.0 * (i + 1)
+        # NEVER honor a huge Retry-After: Groq's free tier returns minutes (e.g.
+        # 1388s) when the daily token budget is spent — sleeping that long is the
+        # "очень долго" hang. Cap it; if the limit is truly spent the retries
+        # fail fast and the caller moves on instead of blocking 20+ minutes.
+        wait = min(wait, 15.0)
         logger.warning(
             "Groq %s — retry in %.0fs (attempt %d/%d)",
             resp.status_code, wait, i + 1, attempts,
@@ -168,7 +194,7 @@ def _oa_call_json(client, model, system, user, max_tokens) -> Any:
         resp = _oa_post(url, headers, body)
     resp.raise_for_status()
     content = resp.json()["choices"][0]["message"]["content"]
-    return extract_json(content)
+    return _repair_latex(extract_json(content))
 
 
 def call_json(
@@ -206,7 +232,7 @@ def call_json(
         message = stream.get_final_message()
 
     text = _extract_text(message)
-    return extract_json(text)
+    return _repair_latex(extract_json(text))
 
 
 def call_vision_text(

@@ -79,21 +79,48 @@ def _render_page_png_b64(path: str, page_index0: int, zoom: float = 2.0) -> Opti
         return None
 
 
+_WATERMARK_MARKERS = (
+    "okulyk",
+    "учебники казахстана",
+    "книга предоставлена",
+    "приказа министр",
+)
+
+
+def _strip_watermark(text: str) -> str:
+    """Drop the per-page OKULYK.KZ watermark lines that pollute scanned pages
+    (both in the thin text layer and in OCR output)."""
+    if not text:
+        return text
+    out = []
+    for line in text.split("\n"):
+        low = line.lower()
+        if any(m in low for m in _WATERMARK_MARKERS):
+            continue
+        out.append(line)
+    return "\n".join(out).strip()
+
+
 def ingest_chapter(
     path: str,
     client=None,
     ocr_model: Optional[str] = None,
     max_pages: Optional[int] = None,
     scan_threshold: int = SCAN_TEXT_THRESHOLD,
+    start_page: int = 1,
+    force_ocr: bool = False,
 ) -> str:
     """Return cleaned chapter text.
 
     Args:
         path: chapter file (.pdf / .txt / .md).
-        client: Anthropic client (required only if any page needs OCR).
+        client: vision client (required only if any page needs OCR).
         ocr_model: model id for vision OCR.
-        max_pages: cap pages processed (None = all).
+        max_pages: number of pages to process FROM start_page (None = all).
         scan_threshold: chars/page below which a page is OCR'd.
+        start_page: 1-indexed first page to process (skip front matter).
+        force_ocr: OCR every page even if it has a text layer — needed for
+            scans whose only text layer is a per-page watermark.
     """
     if not os.path.exists(path):
         raise FileNotFoundError(path)
@@ -104,10 +131,12 @@ def ingest_chapter(
     elif ext == ".pdf":
         pages = []
         for page_no, txt in _extract_pdf_text_layer(path):
-            if max_pages and page_no > max_pages:
+            if page_no < start_page:
+                continue
+            if max_pages and (page_no - start_page + 1) > max_pages:
                 break
-            clean = (txt or "").strip()
-            if len(clean) >= scan_threshold:
+            clean = _strip_watermark((txt or "").strip())
+            if not force_ocr and len(clean) >= scan_threshold:
                 pages.append(PageText(page_no, clean, "text-layer"))
             else:
                 # Likely a scan — OCR via vision if we can.
@@ -126,7 +155,7 @@ def ingest_chapter(
                 if b64 is None:
                     pages.append(PageText(page_no, clean, "empty"))
                     continue
-                ocr_text = _ocr_page(client, ocr_model, b64, page_no)
+                ocr_text = _strip_watermark(_ocr_page(client, ocr_model, b64, page_no))
                 pages.append(
                     PageText(page_no, ocr_text, "ocr" if ocr_text else "empty")
                 )

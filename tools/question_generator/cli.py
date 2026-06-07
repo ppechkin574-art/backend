@@ -19,13 +19,19 @@ from .config import (
     DEFAULT_DEDUP_THRESHOLD,
     DEFAULT_FEWSHOT_COUNT,
     DEFAULT_GEN_MODEL,
+    DEFAULT_GROQ_GEN_MODEL,
+    DEFAULT_GROQ_OCR_MODEL,
+    DEFAULT_GROQ_VERIFY_MODEL,
     DEFAULT_MAX_CHUNK_CHARS,
+    DEFAULT_OA_BASE_URL,
     DEFAULT_OCR_MODEL,
     DEFAULT_OUTPUT_FILE,
+    DEFAULT_PROVIDER,
     DEFAULT_VERIFY_MODEL,
     ENV_ADMIN_TOKEN,
     ENV_ANTHROPIC_KEY,
     ENV_API_URL,
+    ENV_GROQ_KEY,
     get_logger,
     load_dotenv_if_available,
     read_env,
@@ -66,13 +72,35 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-pages",
         type=int,
         default=None,
-        help="Limit number of PDF pages ingested",
+        help="Number of pages to process FROM --start-page",
+    )
+    p.add_argument(
+        "--start-page",
+        type=int,
+        default=1,
+        help="1-indexed first page to process (skip front matter)",
+    )
+    p.add_argument(
+        "--force-ocr",
+        action="store_true",
+        help="OCR every page (for scans whose text layer is only a watermark)",
     )
     p.add_argument(
         "--max-chunk-chars",
         type=int,
         default=DEFAULT_MAX_CHUNK_CHARS,
         help="Soft cap on section size (default: %(default)s)",
+    )
+    p.add_argument(
+        "--provider",
+        default=DEFAULT_PROVIDER,
+        choices=("anthropic", "groq", "openai-compatible"),
+        help="LLM provider (default: %(default)s). groq = free, no card.",
+    )
+    p.add_argument(
+        "--base-url",
+        default=None,
+        help=f"OpenAI-compatible base URL (default: {DEFAULT_OA_BASE_URL})",
     )
     p.add_argument("--gen-model", default=DEFAULT_GEN_MODEL, help="Generation model id")
     p.add_argument("--verify-model", default=DEFAULT_VERIFY_MODEL, help="Verification model id")
@@ -108,16 +136,25 @@ def main(argv: Optional[List[str]] = None) -> int:
             get_logger(f"qgen.{sub}", level=logging.DEBUG)
 
     load_dotenv_if_available()
-    api_key = read_env(ENV_ANTHROPIC_KEY)
+    is_oa = args.provider in ("groq", "openai-compatible")
+    key_env = ENV_GROQ_KEY if is_oa else ENV_ANTHROPIC_KEY
+    api_key = read_env(key_env)
     admin_token = read_env(ENV_ADMIN_TOKEN)
     api_url = read_env(ENV_API_URL)
 
+    # When using Groq (or any OpenAI-compatible) and the model flags are left at
+    # their Claude defaults, switch to the provider's defaults.
+    if is_oa:
+        if args.gen_model == DEFAULT_GEN_MODEL:
+            args.gen_model = DEFAULT_GROQ_GEN_MODEL
+        if args.verify_model == DEFAULT_VERIFY_MODEL:
+            args.verify_model = DEFAULT_GROQ_VERIFY_MODEL
+        if args.ocr_model == DEFAULT_OCR_MODEL:
+            args.ocr_model = DEFAULT_GROQ_OCR_MODEL
+
     # --- Credential preconditions -------------------------------------------
     if not api_key:
-        logger.error(
-            "%s is not set. Get one at the Anthropic Console and export it.",
-            ENV_ANTHROPIC_KEY,
-        )
+        logger.error("%s is not set. Export it (provider=%s).", key_env, args.provider)
         return 2
     if not args.dry_run:
         missing = [
@@ -130,13 +167,13 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
             return 2
 
-    # --- Build Anthropic client ---------------------------------------------
+    # --- Build LLM client ---------------------------------------------------
     try:
         from .llm import make_client
 
-        client = make_client(api_key)
+        client = make_client(api_key, provider=args.provider, base_url=args.base_url)
     except Exception as e:
-        logger.error("Could not initialize Anthropic client: %s", e)
+        logger.error("Could not initialize LLM client (%s): %s", args.provider, e)
         return 2
 
     book_title = args.book_title or args.book.split("/")[-1]
@@ -151,6 +188,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             client=client,
             ocr_model=args.ocr_model,
             max_pages=args.max_pages,
+            start_page=args.start_page,
+            force_ocr=args.force_ocr,
         )
     except FileNotFoundError:
         logger.error("Chapter file not found: %s", args.book)

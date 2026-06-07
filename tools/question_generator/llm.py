@@ -19,9 +19,29 @@ from .config import get_logger
 logger = get_logger("qgen.llm")
 
 
-def make_client(api_key: Optional[str] = None):
-    """Construct an Anthropic client. Imported lazily so the rest of the tool
-    (pure functions, tests) works without the SDK installed."""
+class OAClient:
+    """Marker client for an OpenAI-compatible provider (Groq / OpenRouter /
+    Mistral / any /chat/completions endpoint). Talks raw HTTP via requests, so
+    no extra SDK is needed."""
+
+    def __init__(self, api_key: str, base_url: str):
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+
+
+def make_client(api_key: Optional[str] = None, provider: str = "anthropic",
+                base_url: Optional[str] = None):
+    """Construct an LLM client for the chosen provider. Lazy imports so the
+    pure functions/tests work without any SDK installed.
+
+    - provider="anthropic" → Anthropic SDK client.
+    - provider in {"groq","openai","openai-compatible"} → OAClient (HTTP).
+    """
+    if provider in ("groq", "openai", "openai-compatible"):
+        if not base_url:
+            base_url = "https://api.groq.com/openai/v1"
+        return OAClient(api_key=api_key or "", base_url=base_url)
+
     import anthropic  # noqa: WPS433 (lazy import is intentional)
 
     if api_key:
@@ -95,6 +115,62 @@ def extract_json(text: str) -> Any:
     raise ValueError("could not extract JSON from model response")
 
 
+def _oa_post(url, headers, body, attempts: int = 4):
+    """POST with retry/backoff on 429 (rate limit) and 5xx. Returns response."""
+    import time
+
+    import requests  # lazy
+
+    last = None
+    for i in range(attempts):
+        resp = requests.post(url, headers=headers, json=body, timeout=120)
+        if resp.status_code not in (429, 500, 502, 503):
+            return resp
+        last = resp
+        try:
+            wait = float(resp.headers.get("retry-after", ""))
+        except ValueError:
+            wait = 0.0
+        wait = wait or min(20.0, 4.0 * (i + 1))
+        logger.warning(
+            "Groq %s — retry in %.0fs (attempt %d/%d)",
+            resp.status_code, wait, i + 1, attempts,
+        )
+        time.sleep(wait)
+    return last
+
+
+def _oa_call_json(client, model, system, user, max_tokens) -> Any:
+    """OpenAI-compatible (Groq/etc.) chat completion expecting JSON."""
+    # Groq free tier rejects very large max_tokens (16000 → HTTP 413); 8000 is
+    # safe and far more than a few questions need.
+    max_tokens = min(max_tokens, 8000)
+    body: Dict[str, Any] = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+        "max_tokens": max_tokens,
+        "temperature": 0.4,
+        "response_format": {"type": "json_object"},
+    }
+    headers = {
+        "Authorization": f"Bearer {client.api_key}",
+        "Content-Type": "application/json",
+    }
+    url = f"{client.base_url}/chat/completions"
+    resp = _oa_post(url, headers, body)
+    if resp.status_code == 400:
+        # Some models reject response_format — retry without it (extract_json
+        # still recovers the JSON from the text).
+        body.pop("response_format", None)
+        resp = _oa_post(url, headers, body)
+    resp.raise_for_status()
+    content = resp.json()["choices"][0]["message"]["content"]
+    return extract_json(content)
+
+
 def call_json(
     client,
     model: str,
@@ -104,11 +180,14 @@ def call_json(
     max_tokens: int = 16000,
     effort: str = "high",
 ) -> Any:
-    """Make one Claude call expected to return JSON; return the parsed object.
+    """Make one call expected to return JSON; return the parsed object.
 
-    Uses output_config.format when a schema is given (guarantees valid JSON on
-    supported models), adaptive thinking, and streaming for safety.
+    Anthropic: output_config.format (schema) + adaptive thinking + streaming.
+    OpenAI-compatible (Groq): chat/completions with response_format json_object.
     """
+    if isinstance(client, OAClient):
+        return _oa_call_json(client, model, system, user, max_tokens)
+
     kwargs: Dict[str, Any] = {
         "model": model,
         "max_tokens": max_tokens,
@@ -141,6 +220,31 @@ def call_vision_text(
     effort: str = "high",
 ) -> str:
     """OCR-style call: one image + instruction -> plain text. Returns text."""
+    if isinstance(client, OAClient):
+        data_uri = f"data:{media_type};base64,{image_b64}"
+        prompt = (system + "\n\n" + user) if system else user
+        body = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": data_uri}},
+                    ],
+                }
+            ],
+            "max_tokens": min(max_tokens, 8000),
+            "temperature": 0.1,
+        }
+        headers = {
+            "Authorization": f"Bearer {client.api_key}",
+            "Content-Type": "application/json",
+        }
+        resp = _oa_post(f"{client.base_url}/chat/completions", headers, body)
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"].strip()
+
     content = [
         {
             "type": "image",

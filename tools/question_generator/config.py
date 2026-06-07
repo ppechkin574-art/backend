@@ -15,8 +15,16 @@ from typing import Optional
 
 # --- Env var names -----------------------------------------------------------
 ENV_ANTHROPIC_KEY = "ANTHROPIC_API_KEY"
+ENV_GROQ_KEY = "GROQ_API_KEY"  # OpenAI-compatible provider (Groq / others)
 ENV_ADMIN_TOKEN = "AIMA_ADMIN_TOKEN"
 ENV_API_URL = "AIMA_API_URL"
+
+# --- Provider --------------------------------------------------------------
+# "anthropic" (Claude) or "groq" (OpenAI-compatible; free tier, no card).
+DEFAULT_PROVIDER = "anthropic"
+# Base URL for the OpenAI-compatible provider (Groq by default; also works for
+# OpenRouter / Mistral / any OpenAI-compatible endpoint via --base-url).
+DEFAULT_OA_BASE_URL = "https://api.groq.com/openai/v1"
 
 # --- Model defaults (overridable via CLI flags) ------------------------------
 # Generation: Sonnet 4.6 — strong quality/cost for batch generation.
@@ -25,6 +33,12 @@ DEFAULT_GEN_MODEL = "claude-sonnet-4-6"
 DEFAULT_VERIFY_MODEL = "claude-opus-4-8"
 # OCR / vision for scanned pages: Opus 4.8 (best vision + formula→LaTeX).
 DEFAULT_OCR_MODEL = "claude-opus-4-8"
+# Groq (OpenAI-compatible) defaults — used when --provider groq and the model
+# flags are left at their Claude defaults.
+DEFAULT_GROQ_GEN_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_GROQ_VERIFY_MODEL = "llama-3.3-70b-versatile"
+# Groq vision model for OCR of scanned pages (reads Kazakh text + LaTeX well).
+DEFAULT_GROQ_OCR_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"
 
 # --- Backend enum value contracts (mirror src/quiz/dtos/enums.py) ------------
 # Difficulty enum values.

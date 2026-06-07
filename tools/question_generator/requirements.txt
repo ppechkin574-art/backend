@@ -1,0 +1,13 @@
+# Standalone deps for the Aima ЕНТ question-generator tool.
+# NOT part of the backend's main requirements.txt — keeps the prod image lean.
+# Install:  pip install -r tools/question_generator/requirements.txt
+
+anthropic>=0.49,<1.0        # Claude SDK (messages.stream, output_config.format, vision)
+requests>=2.31,<3.0         # HTTP POST to /admin/question-drafts + admin GETs
+pypdf>=4.2,<6.0             # PDF text-layer extraction
+pymupdf>=1.24,<2.0          # render scanned pages to images for vision OCR (imports as `fitz`)
+pillow>=10.0,<12.0          # image handling support
+python-dotenv>=1.0,<2.0     # optional: load the 3 env vars from a .env file
+
+# Dev / tests only (pure functions need none of the above):
+# pytest>=8.0

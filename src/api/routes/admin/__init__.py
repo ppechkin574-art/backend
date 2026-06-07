@@ -11,6 +11,7 @@ from .modules import router as modules_router
 from .notifications import router as notifications_router
 from .notifications_send import router as notifications_send_router
 from .promocodes import router as promocodes_router
+from .question_drafts import router as question_drafts_router
 from .questions import router as questions_router
 from .statistics import router as statistics_router
 from .subject_combinations import router as subject_combinations_router
@@ -25,6 +26,7 @@ routers = [
     subjects_router,
     topics_router,
     questions_router,
+    question_drafts_router,
     ents_router,
     trainers_router,
     statistics_router,

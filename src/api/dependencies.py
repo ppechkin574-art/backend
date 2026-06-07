@@ -834,6 +834,29 @@ def get_leaderboard_prize_service(
     return LeaderboardPrizeService(LeaderboardPrizeRepository(db))
 
 
+def get_question_draft_service(
+    db: Session = Depends(get_db_session),
+    question_service: QuestionServiceInterface = Depends(get_question_service),
+    subject_service: SubjectServiceInterface = Depends(get_subject_service),
+    topic_service: TopicServiceInterface = Depends(get_topic_service),
+):
+    """CRUD + publish/reject for the AI question-draft review pipeline.
+
+    The draft table is read/written through a plain Session (mirrors
+    leaderboard-prizes); `publish` delegates the live-question creation
+    to the existing UoW-based QuestionService so published drafts get the
+    same normalized blocks/variants as imported / admin-authored ones."""
+    from quiz.repositories.question_drafts import QuestionDraftRepository
+    from quiz.services.question_drafts import QuestionDraftService
+
+    return QuestionDraftService(
+        repo=QuestionDraftRepository(db),
+        question_service=question_service,
+        subject_service=subject_service,
+        topic_service=topic_service,
+    )
+
+
 def get_referral_service(
     db: Session = Depends(get_db_session),
     app_settings=Depends(get_app_settings_service),

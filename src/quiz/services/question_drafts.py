@@ -18,6 +18,13 @@ Subject / topic resolution mirrors the importer:
 - topic:   `topic_service.get_or_create_topic(topic_name, subject_id)` when a name is present.
 """
 
+# NOTE: this module defines a `list(...)` method on QuestionDraftService, which
+# shadows the builtin `list` inside the class body — that broke the bare
+# `list | None` annotations on `_to_block_dtos`/`_to_variant_dtos` at class-def
+# time (TypeError: function | None). PEP 563 makes annotations lazy strings so
+# they're never evaluated at runtime → fixes the startup crash.
+from __future__ import annotations
+
 import logging
 
 from fastapi import HTTPException, status

@@ -153,11 +153,12 @@ def _oa_post(url, headers, body, attempts: int = 4):
         except ValueError:
             wait = 0.0
         wait = wait or 4.0 * (i + 1)
-        # NEVER honor a huge Retry-After: Groq's free tier returns minutes (e.g.
-        # 1388s) when the daily token budget is spent — sleeping that long is the
-        # "очень долго" hang. Cap it; if the limit is truly spent the retries
-        # fail fast and the caller moves on instead of blocking 20+ minutes.
-        wait = min(wait, 15.0)
+        # Cap the wait at 60s: long enough to ride out Groq's per-MINUTE token
+        # window (12k TPM) in background batches, but never the multi-minute
+        # Retry-After it returns when the per-DAY budget (100k TPD) is spent —
+        # honoring that literally was the "очень долго" hang. If TPD is spent the
+        # retries fail fast and the caller moves on.
+        wait = min(wait, 60.0)
         logger.warning(
             "Groq %s — retry in %.0fs (attempt %d/%d)",
             resp.status_code, wait, i + 1, attempts,

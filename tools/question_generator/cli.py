@@ -86,6 +86,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="OCR every page (for scans whose text layer is only a watermark)",
     )
     p.add_argument(
+        "--no-ocr-cache",
+        action="store_true",
+        help="Disable the per-page OCR cache (~/.qgen_ocr_cache.json)",
+    )
+    p.add_argument(
         "--max-chunk-chars",
         type=int,
         default=DEFAULT_MAX_CHUNK_CHARS,
@@ -190,6 +195,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             max_pages=args.max_pages,
             start_page=args.start_page,
             force_ocr=args.force_ocr,
+            ocr_cache_path=(None if args.no_ocr_cache else "__default__"),
         )
     except FileNotFoundError:
         logger.error("Chapter file not found: %s", args.book)

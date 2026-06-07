@@ -101,6 +101,30 @@ def _strip_watermark(text: str) -> str:
     return "\n".join(out).strip()
 
 
+def _default_cache_path() -> str:
+    return os.path.join(os.path.expanduser("~"), ".qgen_ocr_cache.json")
+
+
+def _load_ocr_cache(path: Optional[str]) -> dict:
+    if not path or not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_ocr_cache(path: Optional[str], cache: dict) -> None:
+    if not path:
+        return
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False)
+    except Exception as e:
+        logger.warning("Could not save OCR cache: %s", e)
+
+
 def ingest_chapter(
     path: str,
     client=None,
@@ -109,6 +133,7 @@ def ingest_chapter(
     scan_threshold: int = SCAN_TEXT_THRESHOLD,
     start_page: int = 1,
     force_ocr: bool = False,
+    ocr_cache_path: Optional[str] = "__default__",
 ) -> str:
     """Return cleaned chapter text.
 
@@ -121,9 +146,19 @@ def ingest_chapter(
         start_page: 1-indexed first page to process (skip front matter).
         force_ocr: OCR every page even if it has a text layer — needed for
             scans whose only text layer is a per-page watermark.
+        ocr_cache_path: JSON file caching per-page OCR text so re-runs never
+            re-spend vision tokens on the same page (vision is the biggest token
+            cost — caching keeps us well under the 100k/day free budget).
+            "__default__" → ~/.qgen_ocr_cache.json; None → disabled.
     """
     if not os.path.exists(path):
         raise FileNotFoundError(path)
+
+    if ocr_cache_path == "__default__":
+        ocr_cache_path = _default_cache_path()
+    cache = _load_ocr_cache(ocr_cache_path)
+    cache_key = lambda pno: f"{os.path.basename(path)}:{ocr_model}:{pno}"  # noqa: E731
+    n_cached = 0
 
     ext = os.path.splitext(path)[1].lower()
     if ext in (".txt", ".md"):
@@ -139,11 +174,17 @@ def ingest_chapter(
             if not force_ocr and len(clean) >= scan_threshold:
                 pages.append(PageText(page_no, clean, "text-layer"))
             else:
+                # cached OCR? reuse it — no vision call, no tokens spent.
+                ck = cache_key(page_no)
+                if ck in cache:
+                    pages.append(PageText(page_no, cache[ck], "ocr"))
+                    n_cached += 1
+                    continue
                 # Likely a scan — OCR via vision if we can.
                 if client is None:
                     logger.warning(
-                        "Page %d looks scanned (%d chars) but no Claude client "
-                        "provided for OCR; keeping the sparse text.",
+                        "Page %d looks scanned (%d chars) but no client for OCR; "
+                        "keeping the sparse text.",
                         page_no,
                         len(clean),
                     )
@@ -159,8 +200,14 @@ def ingest_chapter(
                 pages.append(
                     PageText(page_no, ocr_text, "ocr" if ocr_text else "empty")
                 )
+                if ocr_text:
+                    cache[ck] = ocr_text
+                    _save_ocr_cache(ocr_cache_path, cache)  # save incrementally
     else:
         raise ValueError(f"Unsupported chapter file type: {ext}")
+
+    if n_cached:
+        logger.info("Reused %d cached OCR page(s) — 0 vision tokens for those.", n_cached)
 
     n_ocr = sum(1 for p in pages if p.source == "ocr")
     logger.info(

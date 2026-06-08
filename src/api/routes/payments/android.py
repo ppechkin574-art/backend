@@ -16,6 +16,7 @@ import json
 import logging
 import os
 from decimal import Decimal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -25,9 +26,11 @@ from api.dependencies import (
     get_db_session,
     get_subscription_plan_service,
     get_subscription_service,
+    get_user_repository_keycloak,
 )
 from api.routes.auth.routes import get_current_user
-from auth.dtos.users import UserDTO
+from auth.dtos.users import UserDTO, UserQueryDTO
+from auth.repositories.users import UserRepositoryInterface
 from common.enums import PlanType
 from payments.android_iap import AndroidIAPVerifier
 from payments.models import Payment
@@ -220,6 +223,8 @@ async def google_rtdn(
     token: str = Query(default=""),
     db_session: Session = Depends(get_db_session),
     plan_service: SubscriptionPlanService = Depends(get_subscription_plan_service),
+    subscription_service: SubscriptionService = Depends(get_subscription_service),
+    users: UserRepositoryInterface = Depends(get_user_repository_keycloak),
 ):
     """Real-time Developer Notifications from Google Play (via Pub/Sub push).
 
@@ -298,5 +303,32 @@ async def google_rtdn(
             product_id,
             f"Google Play RTDN: {_RTDN_TYPES.get(ntype, ntype)}",
         )
+
+        # Extend PRO on renewal. Without this the user's subscription_end (set
+        # to ~1 month at the first purchase) lapses and the backend
+        # auto-downgrades to FREE — even though Google keeps charging. Re-verify
+        # the token (the renewal keeps the same token) and, while it's active,
+        # re-activate PRO so subscription_end moves forward. Best-effort: never
+        # break the 200 response.
+        try:
+            result = _verifier.verify(purchase_token, product_id)
+            if result.is_valid and result.is_active_subscription:
+                user = users.get(UserQueryDTO(id=UUID(str(original.user_id))))
+                await subscription_service.activate_subscription(
+                    user, PlanType.PRO, months=1
+                )
+                logger.info(
+                    "RTDN: extended PRO for user %s (type=%s)", original.user_id, ntype
+                )
+            else:
+                logger.info(
+                    "RTDN: token not active on renewal for user %s (type=%s)",
+                    original.user_id,
+                    ntype,
+                )
+        except Exception:  # noqa: BLE001 — entitlement sync must not 500 the push
+            logger.exception(
+                "RTDN: failed to extend PRO for user %s", original.user_id
+            )
 
     return {"ok": True}

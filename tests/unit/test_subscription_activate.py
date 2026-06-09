@@ -278,3 +278,32 @@ async def test_auth_service_failure_propagates_as_500():
         )
 
     assert exc.value.status_code == 500
+
+
+# ─────────────────────────── revoke_subscription (#3 — refund/REVOKED) ───────────────────────────
+
+
+def test_revoke_downgrades_active_pro_to_free():
+    svc, auth = _make_service()
+    user = _make_user(
+        plan=PlanType.PRO,
+        subscription_end=datetime.now(UTC) + timedelta(days=20),
+    )
+
+    updated = svc.revoke_subscription(user)
+
+    assert len(auth.calls) == 1
+    _, update_data = auth.calls[0]
+    assert update_data.plan == PlanType.FREE
+    assert update_data.subscription_end is None
+    assert updated.plan == PlanType.FREE
+
+
+def test_revoke_is_noop_for_free_user():
+    svc, auth = _make_service()
+    user = _make_user(plan=PlanType.FREE)
+
+    updated = svc.revoke_subscription(user)
+
+    assert auth.calls == []  # nothing to revoke
+    assert updated.plan == PlanType.FREE

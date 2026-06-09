@@ -1,6 +1,7 @@
 import contextlib
 import logging
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 from uuid import UUID
 from xml.etree.ElementTree import Element, SubElement, tostring
 
@@ -117,12 +118,22 @@ async def result_notify(
         payment.pg_user_phone = data.get("pg_user_phone") or payment.pg_user_phone
 
         pg_status = (data.get("pg_status") or data.get("pg_result") or "").lower()
-        if pg_status in ("ok", "success", "1"):
+        status_ok = pg_status in ("ok", "success", "1")
+        amount_ok = _amount_ok(data, payment)
+        if status_ok and amount_ok:
             payment.status = "paid"
             logger.info("Payment marked as paid for order: %s", order_id)
         else:
             payment.status = "failed"
-            logger.warning("Payment marked as failed for order: %s", order_id)
+            if status_ok and not amount_ok:
+                logger.warning(
+                    "Payment amount mismatch order=%s expected=%s got pg_amount=%s → failed",
+                    order_id,
+                    payment.amount,
+                    data.get("pg_amount"),
+                )
+            else:
+                logger.warning("Payment marked as failed for order: %s", order_id)
 
         session.add(payment)
         session.commit()
@@ -153,8 +164,10 @@ async def result_notify(
                 logger.exception("WebSocket broadcast failed for order %s: %s", order_id, ws_error)
 
     else:
-        logger.warning("Payment not found for order ID: %s", order_id)
-        return _create_success_response(data, method_name, settings.secret)
+        logger.warning("Payment not found for order ID: %s — rejecting", order_id)
+        return _create_rejected_response(
+            data, method_name, settings.secret, "unknown order"
+        )
 
     if payment and payment.status == "paid" and payment.is_subscription_payment:
         logger.info("Processing subscription activation for payment: %s", payment.id)
@@ -244,6 +257,40 @@ async def result_notify(
             # Не возвращаем ошибку, чтобы FreedomPay не повторял запрос
 
     return _create_success_response(data, method_name, settings.secret)
+
+
+def _amount_ok(data: dict, payment: Payment) -> bool:
+    """Guard against activating PRO when less than the order amount was charged.
+
+    The callback is already signature-verified, so this catches misconfiguration
+    / partial charges rather than forgery. Permissive when the amount field is
+    absent or unparseable, to never reject a genuine payment.
+    """
+    raw = data.get("pg_amount")
+    if raw is None or payment.amount is None:
+        return True
+    try:
+        return Decimal(str(raw)) >= Decimal(str(payment.amount))
+    except (InvalidOperation, ValueError):
+        return True
+
+
+def _create_rejected_response(
+    data: dict, method_name: str, secret_key: str, description: str
+) -> Response:
+    """Signed `rejected` response — used when we will NOT process the callback
+    (e.g. unknown order), so we never ack a foreign/forged order id as success."""
+    response_data = {
+        "pg_status": "rejected",
+        "pg_description": description,
+        "pg_salt": data.get("pg_salt", ""),
+    }
+    root = Element("response")
+    SubElement(root, "pg_status").text = "rejected"
+    SubElement(root, "pg_description").text = description
+    SubElement(root, "pg_salt").text = data.get("pg_salt", "")
+    SubElement(root, "pg_sig").text = make_pg_sig(response_data, method_name, secret_key)
+    return Response(content=tostring(root), media_type="application/xml", status_code=200)
 
 
 def _create_success_response(data: dict, method_name: str, secret_key: str) -> Response:

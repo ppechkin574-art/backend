@@ -45,6 +45,24 @@ PACKAGE_NAME = os.getenv("GOOGLE_PLAY_PACKAGE_NAME", "kz.aima.aima")
 
 SERVICE_ACCOUNT_JSON_ENV = "GOOGLE_PLAY_SERVICE_ACCOUNT_JSON"
 
+# subscriptionsv2 states that mean the user is within a paid/entitled period.
+# CANCELED = auto-renew off but access continues until expiry, so still entitled.
+_V2_ACTIVE_STATES = {
+    "SUBSCRIPTION_STATE_ACTIVE",
+    "SUBSCRIPTION_STATE_IN_GRACE_PERIOD",
+    "SUBSCRIPTION_STATE_CANCELED",
+}
+
+
+def _parse_rfc3339(value: str | None) -> "datetime | None":
+    """Parse a Google RFC3339 timestamp (e.g. '2026-07-09T12:00:00Z')."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
 
 @dataclass(frozen=True)
 class AndroidVerifyResult:
@@ -131,9 +149,13 @@ class AndroidIAPVerifier:
                 error=f"auth: {exc.__class__.__name__}",
             )
 
+        # subscriptionsv2 is the model-correct endpoint for base-plan/offer
+        # subscriptions (the deprecated v1 `subscriptions.get` can misreport
+        # status/expiry for them). v2 keys off the token only — no product_id in
+        # the path.
         url = (
             f"{_BASE_URL}/applications/{self._package_name}"
-            f"/purchases/subscriptions/{product_id}/tokens/{purchase_token}"
+            f"/purchases/subscriptionsv2/tokens/{purchase_token}"
         )
         return self._call_api(url, token, product_id)
 
@@ -208,34 +230,34 @@ class AndroidIAPVerifier:
 
         payload = response.json()
 
-        # purchaseType: 0=test, 1=promo, absent=real. Treat all as
-        # activatable (test purchases are used by Google's review team).
-        purchase_type = payload.get("purchaseType")
-        environment = "Sandbox" if purchase_type == 0 else "Production"
-
-        expiry_ms = int(payload.get("expiryTimeMillis", 0))
-        expires_at = (
-            datetime.fromtimestamp(expiry_ms / 1000, tz=timezone.utc)
-            if expiry_ms
-            else None
+        # --- subscriptionsv2 response shape ---
+        # `testPurchase` present → Sandbox (Google review / licence testers).
+        environment = (
+            "Sandbox" if payload.get("testPurchase") is not None else "Production"
         )
 
-        # paymentState 1=received, 2=free_trial. Absent means Google
-        # hasn't confirmed payment yet (pending billing). We require
-        # explicit confirmation before activating PRO.
-        payment_state = payload.get("paymentState")
-        payment_confirmed = payment_state in (1, 2)
+        state = payload.get("subscriptionState", "")
+
+        # Expiry = latest lineItem.expiryTime (RFC3339); capture its productId.
+        expires_at: "datetime | None" = None
+        product_from_payload: str | None = None
+        for item in payload.get("lineItems", []):
+            if item.get("productId"):
+                product_from_payload = item["productId"]
+            exp = _parse_rfc3339(item.get("expiryTime"))
+            if exp and (expires_at is None or exp > expires_at):
+                expires_at = exp
 
         is_active = bool(
-            payment_confirmed
+            state in _V2_ACTIVE_STATES
             and expires_at
             and expires_at > datetime.now(timezone.utc)
         )
 
         logger.info(
-            "Google Play verify: product=%s payment_state=%s expires=%s active=%s env=%s",
-            product_id,
-            payment_state,
+            "Google Play verify v2: product=%s state=%s expires=%s active=%s env=%s",
+            product_from_payload or product_id,
+            state,
             expires_at,
             is_active,
             environment,
@@ -244,7 +266,7 @@ class AndroidIAPVerifier:
         return AndroidVerifyResult(
             is_valid=True,
             is_active_subscription=is_active,
-            product_id=product_id,
+            product_id=product_from_payload or product_id,
             expires_at=expires_at,
             environment=environment,
         )

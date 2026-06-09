@@ -12,13 +12,14 @@ logic lives in `payments/android_iap.py`, mirroring `payments/apple_iap.py`.
 
 import base64
 import hashlib
+import hmac
 import json
 import logging
 import os
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -38,6 +39,11 @@ from subscription.plan_service import SubscriptionPlanService
 from subscription.service import SubscriptionService
 
 logger = logging.getLogger(__name__)
+
+# The only Google Play products that unlock PRO. product_id arrives from the
+# client, so it must be checked against this allow-list before activation.
+_DEFAULT_PRODUCT_ID = "kz.aima.aima.pro.monthly"
+_ALLOWED_PRODUCT_IDS = {_DEFAULT_PRODUCT_ID}
 
 router = APIRouter(prefix="/payments/android", tags=["User - Payments"])
 
@@ -203,6 +209,17 @@ async def verify_android_purchase(
     Returns the latest user DTO so the client can refresh local state in
     one round trip (no separate `/me` call needed after purchase).
     """
+    # Only our own PRO product unlocks PRO. The product_id is client-supplied;
+    # without this an unrelated/cheaper SKU that happens to be active could be
+    # used to grant PRO.
+    if body.product_id not in _ALLOWED_PRODUCT_IDS:
+        logger.warning(
+            "Google Play verify rejected: unknown product_id=%s (user %s)",
+            body.product_id,
+            current_user.id,
+        )
+        raise HTTPException(status_code=400, detail="Unknown product")
+
     result = _verifier.verify(body.purchase_token, body.product_id)
 
     if not result.is_valid:
@@ -243,9 +260,14 @@ async def verify_android_purchase(
             user=current_user,
         )
 
-    # Token valid + currently within the paid period → activate PRO.
+    # Token valid + currently within the paid period → activate PRO. Use
+    # Google's authoritative expiry so the PRO period matches what was actually
+    # bought (monthly, annual, trial, grace) instead of a hardcoded 30 days.
     updated_user = await subscription_service.activate_subscription(
-        current_user, PlanType.PRO, months=1
+        current_user,
+        PlanType.PRO,
+        months=1,
+        expires_at=result.expires_at,
     )
 
     # Record the purchase so it shows up in the admin panel next to FreedomPay.
@@ -296,6 +318,7 @@ _RTDN_REVOKE = {12, 13}  # REVOKED, EXPIRED → strip PRO now (CANCELED=3 keeps
 async def google_rtdn(
     request: Request,
     token: str = Query(default=""),
+    x_rtdn_secret: str = Header(default=""),
     db_session: Session = Depends(get_db_session),
     plan_service: SubscriptionPlanService = Depends(get_subscription_plan_service),
     subscription_service: SubscriptionService = Depends(get_subscription_service),
@@ -303,19 +326,20 @@ async def google_rtdn(
 ):
     """Real-time Developer Notifications from Google Play (via Pub/Sub push).
 
-    Captures the subscription lifecycle (renewals, cancels, refunds) so the
-    admin panel reflects recurring revenue, not just first purchases. Renewals
-    are mapped to our user via the original purchase Payment and recorded as a
-    new paid row; lifecycle events (cancel/expire/refund) are logged for now —
-    entitlement sync (downgrade on expire/refund) is a later phase.
+    Captures the subscription lifecycle (renewals, cancels, refunds): renewals
+    extend PRO, refund/REVOKED/EXPIRED strip it, all mapped to our user via the
+    original purchase Payment.
 
-    Security: shared secret in the `?token=` query param. Set GOOGLE_RTDN_SECRET
-    in Railway and append `?token=<secret>` to the Pub/Sub push endpoint URL.
+    Security: shared secret, preferred in the `X-RTDN-Secret` header (kept out of
+    URLs/logs); the `?token=` query param is still accepted for the current
+    Pub/Sub push config. Set GOOGLE_RTDN_SECRET in Railway. Compared in constant
+    time.
 
     Always returns 200 so Pub/Sub doesn't retry on our bookkeeping hiccups.
     """
     secret = os.getenv("GOOGLE_RTDN_SECRET", "")
-    if not secret or token != secret:
+    provided = x_rtdn_secret or token
+    if not secret or not hmac.compare_digest(provided, secret):
         raise HTTPException(status_code=403, detail="forbidden")
 
     try:
@@ -405,7 +429,10 @@ async def google_rtdn(
             if result.is_valid and result.is_active_subscription:
                 user = users.get(UserQueryDTO(id=UUID(str(original.user_id))))
                 await subscription_service.activate_subscription(
-                    user, PlanType.PRO, months=1
+                    user,
+                    PlanType.PRO,
+                    months=1,
+                    expires_at=result.expires_at,
                 )
                 logger.info(
                     "RTDN: extended PRO for user %s (type=%s)", original.user_id, ntype

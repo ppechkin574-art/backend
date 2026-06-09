@@ -12,13 +12,14 @@ logic lives in `payments/android_iap.py`, mirroring `payments/apple_iap.py`.
 
 import base64
 import hashlib
+import hmac
 import json
 import logging
 import os
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -38,6 +39,11 @@ from subscription.plan_service import SubscriptionPlanService
 from subscription.service import SubscriptionService
 
 logger = logging.getLogger(__name__)
+
+# The only Google Play products that unlock PRO. product_id arrives from the
+# client, so it must be checked against this allow-list before activation.
+_DEFAULT_PRODUCT_ID = "kz.aima.aima.pro.monthly"
+_ALLOWED_PRODUCT_IDS = {_DEFAULT_PRODUCT_ID}
 
 router = APIRouter(prefix="/payments/android", tags=["User - Payments"])
 
@@ -105,6 +111,35 @@ def _insert_google_payment(
         logger.exception("Failed to record Google Play payment for user %s", user_id)
 
 
+def _token_order_id(purchase_token: str) -> str:
+    """Stable order_id derived from the Google purchase token.
+
+    The same token maps to the same row across the initial verify and every
+    RTDN renewal (Play keeps the token stable for a subscription), so this also
+    binds the token to one account. Single source of truth for the derivation.
+    """
+    return "gplay-" + hashlib.sha256(purchase_token.encode()).hexdigest()[:40]
+
+
+def _token_owner(session: Session, purchase_token: str) -> str | None:
+    """Return the user_id that first verified this token, or None if unseen.
+
+    Used to reject replay of one purchase token across multiple accounts: the
+    initial verify records a Payment whose order_id is derived from the token,
+    binding the purchase to that first account.
+    """
+    try:
+        row = (
+            session.query(Payment)
+            .filter(Payment.order_id == _token_order_id(purchase_token))
+            .first()
+        )
+        return str(row.user_id) if row and row.user_id else None
+    except Exception:  # noqa: BLE001 — a lookup hiccup must not block a real buyer
+        logger.exception("token-owner lookup failed")
+        return None
+
+
 def _record_google_payment(
     session: Session,
     plan_service: SubscriptionPlanService,
@@ -113,10 +148,40 @@ def _record_google_payment(
     purchase_token: str,
 ) -> None:
     """Record the INITIAL verified purchase (order_id derived from the token)."""
-    order_id = "gplay-" + hashlib.sha256(purchase_token.encode()).hexdigest()[:40]
     _insert_google_payment(
-        session, plan_service, order_id, user_id, product_id, f"Google Play IAP: {product_id}"
+        session,
+        plan_service,
+        _token_order_id(purchase_token),
+        user_id,
+        product_id,
+        f"Google Play IAP: {product_id}",
     )
+
+
+def _revoke_pro_for_token(
+    db_session: Session,
+    users: "UserRepositoryInterface",
+    subscription_service: "SubscriptionService",
+    purchase_token: str,
+    reason: str,
+) -> None:
+    """Map a purchase token to its owner and immediately strip PRO.
+
+    Used for refund/chargeback (voided) and Google REVOKED/EXPIRED RTDN events,
+    so a user who got their money back no longer keeps PRO. Best-effort.
+    """
+    if not purchase_token:
+        return
+    try:
+        owner_id = _token_owner(db_session, purchase_token)
+        if not owner_id:
+            logger.warning("RTDN revoke: no user mapped for token (%s)", reason)
+            return
+        user = users.get(UserQueryDTO(id=UUID(str(owner_id))))
+        subscription_service.revoke_subscription(user)
+        logger.info("RTDN revoke: PRO stripped for user %s (%s)", owner_id, reason)
+    except Exception:  # noqa: BLE001 — must not 500 the Pub/Sub push
+        logger.exception("RTDN revoke failed (%s)", reason)
 
 
 class AndroidVerifyIn(BaseModel):
@@ -144,6 +209,17 @@ async def verify_android_purchase(
     Returns the latest user DTO so the client can refresh local state in
     one round trip (no separate `/me` call needed after purchase).
     """
+    # Only our own PRO product unlocks PRO. The product_id is client-supplied;
+    # without this an unrelated/cheaper SKU that happens to be active could be
+    # used to grant PRO.
+    if body.product_id not in _ALLOWED_PRODUCT_IDS:
+        logger.warning(
+            "Google Play verify rejected: unknown product_id=%s (user %s)",
+            body.product_id,
+            current_user.id,
+        )
+        raise HTTPException(status_code=400, detail="Unknown product")
+
     result = _verifier.verify(body.purchase_token, body.product_id)
 
     if not result.is_valid:
@@ -154,6 +230,20 @@ async def verify_android_purchase(
             result.error,
         )
         raise HTTPException(status_code=400, detail="Purchase verification failed")
+
+    # Bind the purchase to the first account that verified it. A single Google
+    # purchase token must not unlock PRO on many accounts (token sharing/replay).
+    existing_owner = _token_owner(db_session, body.purchase_token)
+    if existing_owner is not None and existing_owner != str(current_user.id):
+        logger.warning(
+            "Google Play token replay: already linked to %s, rejected for %s",
+            existing_owner,
+            current_user.id,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="This purchase is already linked to another account",
+        )
 
     if not result.is_active_subscription:
         # Token is authentic but subscription has already expired or
@@ -170,9 +260,14 @@ async def verify_android_purchase(
             user=current_user,
         )
 
-    # Token valid + currently within the paid period → activate PRO.
+    # Token valid + currently within the paid period → activate PRO. Use
+    # Google's authoritative expiry so the PRO period matches what was actually
+    # bought (monthly, annual, trial, grace) instead of a hardcoded 30 days.
     updated_user = await subscription_service.activate_subscription(
-        current_user, PlanType.PRO, months=1
+        current_user,
+        PlanType.PRO,
+        months=1,
+        expires_at=result.expires_at,
     )
 
     # Record the purchase so it shows up in the admin panel next to FreedomPay.
@@ -215,12 +310,15 @@ _RTDN_TYPES = {
     13: "EXPIRED",
 }
 _RTDN_MONEY_IN = {1, 2, 4, 7}  # RECOVERED, RENEWED, PURCHASED, RESTARTED
+_RTDN_REVOKE = {12, 13}  # REVOKED, EXPIRED → strip PRO now (CANCELED=3 keeps
+#                          access until period end, so it is NOT revoked here)
 
 
 @router.post("/rtdn")
 async def google_rtdn(
     request: Request,
     token: str = Query(default=""),
+    x_rtdn_secret: str = Header(default=""),
     db_session: Session = Depends(get_db_session),
     plan_service: SubscriptionPlanService = Depends(get_subscription_plan_service),
     subscription_service: SubscriptionService = Depends(get_subscription_service),
@@ -228,19 +326,20 @@ async def google_rtdn(
 ):
     """Real-time Developer Notifications from Google Play (via Pub/Sub push).
 
-    Captures the subscription lifecycle (renewals, cancels, refunds) so the
-    admin panel reflects recurring revenue, not just first purchases. Renewals
-    are mapped to our user via the original purchase Payment and recorded as a
-    new paid row; lifecycle events (cancel/expire/refund) are logged for now —
-    entitlement sync (downgrade on expire/refund) is a later phase.
+    Captures the subscription lifecycle (renewals, cancels, refunds): renewals
+    extend PRO, refund/REVOKED/EXPIRED strip it, all mapped to our user via the
+    original purchase Payment.
 
-    Security: shared secret in the `?token=` query param. Set GOOGLE_RTDN_SECRET
-    in Railway and append `?token=<secret>` to the Pub/Sub push endpoint URL.
+    Security: shared secret, preferred in the `X-RTDN-Secret` header (kept out of
+    URLs/logs); the `?token=` query param is still accepted for the current
+    Pub/Sub push config. Set GOOGLE_RTDN_SECRET in Railway. Compared in constant
+    time.
 
     Always returns 200 so Pub/Sub doesn't retry on our bookkeeping hiccups.
     """
     secret = os.getenv("GOOGLE_RTDN_SECRET", "")
-    if not secret or token != secret:
+    provided = x_rtdn_secret or token
+    if not secret or not hmac.compare_digest(provided, secret):
         raise HTTPException(status_code=403, detail="forbidden")
 
     try:
@@ -255,11 +354,15 @@ async def google_rtdn(
 
     voided = notif.get("voidedPurchaseNotification")
     if voided:
-        # Refund / chargeback. Log now; entitlement revoke is a later phase.
+        # Refund / chargeback → strip PRO (money was returned).
+        token = str(voided.get("purchaseToken", ""))
         logger.info(
             "RTDN voided/refund: orderId=%s token=%s",
             voided.get("orderId"),
-            str(voided.get("purchaseToken", ""))[:16],
+            token[:16],
+        )
+        _revoke_pro_for_token(
+            db_session, users, subscription_service, token, "refund/void"
         )
         return {"ok": True}
 
@@ -278,6 +381,17 @@ async def google_rtdn(
         product_id,
         purchase_token[:16],
     )
+
+    if ntype in _RTDN_REVOKE and purchase_token:
+        # REVOKED (refund) / EXPIRED → take PRO away now.
+        _revoke_pro_for_token(
+            db_session,
+            users,
+            subscription_service,
+            purchase_token,
+            _RTDN_TYPES.get(ntype, str(ntype)),
+        )
+        return {"ok": True}
 
     if ntype in _RTDN_MONEY_IN and purchase_token:
         # Map back to our user via the original purchase row (the purchase token
@@ -315,7 +429,10 @@ async def google_rtdn(
             if result.is_valid and result.is_active_subscription:
                 user = users.get(UserQueryDTO(id=UUID(str(original.user_id))))
                 await subscription_service.activate_subscription(
-                    user, PlanType.PRO, months=1
+                    user,
+                    PlanType.PRO,
+                    months=1,
+                    expires_at=result.expires_at,
                 )
                 logger.info(
                     "RTDN: extended PRO for user %s (type=%s)", original.user_id, ntype

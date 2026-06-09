@@ -201,6 +201,24 @@ class SubscriptionService:
                 return user
         return user
 
+    def revoke_subscription(self, user: UserDTO) -> UserDTO:
+        """Immediately strip PRO → FREE (refund / chargeback / Google REVOKED).
+
+        Unlike `cancel_subscription` (soft — keeps access until the paid period
+        ends because the user already paid for it), a revoke means the money was
+        returned, so access ends now. Idempotent: no-op if already FREE.
+        """
+        if user.plan == PlanType.FREE:
+            return user
+        update_data = UserUpdateDTO(plan=PlanType.FREE, subscription_end=None)
+        try:
+            updated_user = self.auth_service.update_user_profile(user, update_data)
+            logger.warning("User %s PRO revoked (refund/revoke) → FREE", user.id)
+            return updated_user
+        except Exception as e:
+            logger.exception("Failed to revoke user %s: %s", user.id, e)
+            return user
+
     async def check_subscription_status(self, user: UserDTO) -> dict:
         """Проверяет статус подписки пользователя"""
         updated_user = self.refresh_subscription_status(user)

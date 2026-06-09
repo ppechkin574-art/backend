@@ -105,6 +105,35 @@ def _insert_google_payment(
         logger.exception("Failed to record Google Play payment for user %s", user_id)
 
 
+def _token_order_id(purchase_token: str) -> str:
+    """Stable order_id derived from the Google purchase token.
+
+    The same token maps to the same row across the initial verify and every
+    RTDN renewal (Play keeps the token stable for a subscription), so this also
+    binds the token to one account. Single source of truth for the derivation.
+    """
+    return "gplay-" + hashlib.sha256(purchase_token.encode()).hexdigest()[:40]
+
+
+def _token_owner(session: Session, purchase_token: str) -> str | None:
+    """Return the user_id that first verified this token, or None if unseen.
+
+    Used to reject replay of one purchase token across multiple accounts: the
+    initial verify records a Payment whose order_id is derived from the token,
+    binding the purchase to that first account.
+    """
+    try:
+        row = (
+            session.query(Payment)
+            .filter(Payment.order_id == _token_order_id(purchase_token))
+            .first()
+        )
+        return str(row.user_id) if row and row.user_id else None
+    except Exception:  # noqa: BLE001 — a lookup hiccup must not block a real buyer
+        logger.exception("token-owner lookup failed")
+        return None
+
+
 def _record_google_payment(
     session: Session,
     plan_service: SubscriptionPlanService,
@@ -113,9 +142,13 @@ def _record_google_payment(
     purchase_token: str,
 ) -> None:
     """Record the INITIAL verified purchase (order_id derived from the token)."""
-    order_id = "gplay-" + hashlib.sha256(purchase_token.encode()).hexdigest()[:40]
     _insert_google_payment(
-        session, plan_service, order_id, user_id, product_id, f"Google Play IAP: {product_id}"
+        session,
+        plan_service,
+        _token_order_id(purchase_token),
+        user_id,
+        product_id,
+        f"Google Play IAP: {product_id}",
     )
 
 
@@ -154,6 +187,20 @@ async def verify_android_purchase(
             result.error,
         )
         raise HTTPException(status_code=400, detail="Purchase verification failed")
+
+    # Bind the purchase to the first account that verified it. A single Google
+    # purchase token must not unlock PRO on many accounts (token sharing/replay).
+    existing_owner = _token_owner(db_session, body.purchase_token)
+    if existing_owner is not None and existing_owner != str(current_user.id):
+        logger.warning(
+            "Google Play token replay: already linked to %s, rejected for %s",
+            existing_owner,
+            current_user.id,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="This purchase is already linked to another account",
+        )
 
     if not result.is_active_subscription:
         # Token is authentic but subscription has already expired or

@@ -80,6 +80,44 @@ class AndroidVerifyResult:
     error: str | None = None
 
 
+def parse_subscriptionsv2(
+    payload: dict, fallback_product_id: str
+) -> AndroidVerifyResult:
+    """Interpret a Google Play `purchases.subscriptionsv2` 200 response.
+
+    Pure (apart from `now`) so it is unit-testable without calling Google.
+    - environment: Sandbox when `testPurchase` is present.
+    - is_active: entitled subscriptionState AND latest lineItem expiry in future.
+    - expires_at / product_id: taken from lineItems.
+    """
+    environment = (
+        "Sandbox" if payload.get("testPurchase") is not None else "Production"
+    )
+    state = payload.get("subscriptionState", "")
+
+    expires_at: datetime | None = None
+    product_from_payload: str | None = None
+    for item in payload.get("lineItems", []):
+        if item.get("productId"):
+            product_from_payload = item["productId"]
+        exp = _parse_rfc3339(item.get("expiryTime"))
+        if exp and (expires_at is None or exp > expires_at):
+            expires_at = exp
+
+    is_active = bool(
+        state in _V2_ACTIVE_STATES
+        and expires_at
+        and expires_at > datetime.now(timezone.utc)
+    )
+    return AndroidVerifyResult(
+        is_valid=True,
+        is_active_subscription=is_active,
+        product_id=product_from_payload or fallback_product_id,
+        expires_at=expires_at,
+        environment=environment,
+    )
+
+
 class AndroidIAPVerifier:
     """Pure-stateless verifier — instantiate once per process, call verify() many times."""
 
@@ -228,45 +266,12 @@ class AndroidIAPVerifier:
                 error=f"http {response.status_code}",
             )
 
-        payload = response.json()
-
-        # --- subscriptionsv2 response shape ---
-        # `testPurchase` present → Sandbox (Google review / licence testers).
-        environment = (
-            "Sandbox" if payload.get("testPurchase") is not None else "Production"
-        )
-
-        state = payload.get("subscriptionState", "")
-
-        # Expiry = latest lineItem.expiryTime (RFC3339); capture its productId.
-        expires_at: "datetime | None" = None
-        product_from_payload: str | None = None
-        for item in payload.get("lineItems", []):
-            if item.get("productId"):
-                product_from_payload = item["productId"]
-            exp = _parse_rfc3339(item.get("expiryTime"))
-            if exp and (expires_at is None or exp > expires_at):
-                expires_at = exp
-
-        is_active = bool(
-            state in _V2_ACTIVE_STATES
-            and expires_at
-            and expires_at > datetime.now(timezone.utc)
-        )
-
+        result = parse_subscriptionsv2(response.json(), product_id)
         logger.info(
-            "Google Play verify v2: product=%s state=%s expires=%s active=%s env=%s",
-            product_from_payload or product_id,
-            state,
-            expires_at,
-            is_active,
-            environment,
+            "Google Play verify v2: product=%s expires=%s active=%s env=%s",
+            result.product_id,
+            result.expires_at,
+            result.is_active_subscription,
+            result.environment,
         )
-
-        return AndroidVerifyResult(
-            is_valid=True,
-            is_active_subscription=is_active,
-            product_id=product_from_payload or product_id,
-            expires_at=expires_at,
-            environment=environment,
-        )
+        return result

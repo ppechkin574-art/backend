@@ -152,6 +152,32 @@ def _record_google_payment(
     )
 
 
+def _revoke_pro_for_token(
+    db_session: Session,
+    users: "UserRepositoryInterface",
+    subscription_service: "SubscriptionService",
+    purchase_token: str,
+    reason: str,
+) -> None:
+    """Map a purchase token to its owner and immediately strip PRO.
+
+    Used for refund/chargeback (voided) and Google REVOKED/EXPIRED RTDN events,
+    so a user who got their money back no longer keeps PRO. Best-effort.
+    """
+    if not purchase_token:
+        return
+    try:
+        owner_id = _token_owner(db_session, purchase_token)
+        if not owner_id:
+            logger.warning("RTDN revoke: no user mapped for token (%s)", reason)
+            return
+        user = users.get(UserQueryDTO(id=UUID(str(owner_id))))
+        subscription_service.revoke_subscription(user)
+        logger.info("RTDN revoke: PRO stripped for user %s (%s)", owner_id, reason)
+    except Exception:  # noqa: BLE001 — must not 500 the Pub/Sub push
+        logger.exception("RTDN revoke failed (%s)", reason)
+
+
 class AndroidVerifyIn(BaseModel):
     purchase_token: str
     product_id: str
@@ -262,6 +288,8 @@ _RTDN_TYPES = {
     13: "EXPIRED",
 }
 _RTDN_MONEY_IN = {1, 2, 4, 7}  # RECOVERED, RENEWED, PURCHASED, RESTARTED
+_RTDN_REVOKE = {12, 13}  # REVOKED, EXPIRED → strip PRO now (CANCELED=3 keeps
+#                          access until period end, so it is NOT revoked here)
 
 
 @router.post("/rtdn")
@@ -302,11 +330,15 @@ async def google_rtdn(
 
     voided = notif.get("voidedPurchaseNotification")
     if voided:
-        # Refund / chargeback. Log now; entitlement revoke is a later phase.
+        # Refund / chargeback → strip PRO (money was returned).
+        token = str(voided.get("purchaseToken", ""))
         logger.info(
             "RTDN voided/refund: orderId=%s token=%s",
             voided.get("orderId"),
-            str(voided.get("purchaseToken", ""))[:16],
+            token[:16],
+        )
+        _revoke_pro_for_token(
+            db_session, users, subscription_service, token, "refund/void"
         )
         return {"ok": True}
 
@@ -325,6 +357,17 @@ async def google_rtdn(
         product_id,
         purchase_token[:16],
     )
+
+    if ntype in _RTDN_REVOKE and purchase_token:
+        # REVOKED (refund) / EXPIRED → take PRO away now.
+        _revoke_pro_for_token(
+            db_session,
+            users,
+            subscription_service,
+            purchase_token,
+            _RTDN_TYPES.get(ntype, str(ntype)),
+        )
+        return {"ok": True}
 
     if ntype in _RTDN_MONEY_IN and purchase_token:
         # Map back to our user via the original purchase row (the purchase token

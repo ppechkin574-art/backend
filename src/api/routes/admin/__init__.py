@@ -1,4 +1,5 @@
 from .app_settings import router as app_settings_router
+from .app_update_config import router as app_update_config_router
 from .bank import router as bank_router
 from .leaderboard_prizes import router as leaderboard_prizes_router
 from .streak_push_template import router as streak_push_template_router
@@ -44,4 +45,5 @@ routers = [
     leaderboard_prizes_router,
     streak_reward_tiers_router,
     streak_push_template_router,
+    app_update_config_router,
 ]

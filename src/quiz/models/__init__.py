@@ -1,4 +1,5 @@
 from . import (
+    app_update_config,
     attendance_streak,
     cashback,
     daily_tests,
@@ -14,6 +15,7 @@ from . import (
 )
 
 __all__ = [
+    "app_update_config",
     "attendance_streak",
     "cashback",
     "daily_tests",

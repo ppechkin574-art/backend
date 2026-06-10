@@ -857,6 +857,19 @@ def get_question_draft_service(
     )
 
 
+def get_app_update_config_service(
+    db: Session = Depends(get_db_session),
+):
+    """Singleton force-update config (per-platform min_build + store_url)
+    read by the public `/app/update-config` endpoint and edited by the
+    admin panel. Plain Session, get-or-create on id=1. Imported lazily to
+    keep the api.dependencies import graph flat."""
+    from quiz.repositories.app_update_config import AppUpdateConfigRepository
+    from quiz.services.app_update_config import AppUpdateConfigService
+
+    return AppUpdateConfigService(AppUpdateConfigRepository(db))
+
+
 def get_referral_service(
     db: Session = Depends(get_db_session),
     app_settings=Depends(get_app_settings_service),

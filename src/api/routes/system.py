@@ -12,7 +12,6 @@ The contract:
     reply at all — that's enough to prove the worker is alive.
 """
 
-import os
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Request
@@ -138,35 +137,62 @@ async def kk_pilot_status(request: Request):
     }
 
 
+def _empty_update_config() -> dict:
+    """Fail-soft default — min_build=0 means the app never force-updates."""
+    return {
+        "ios": {"min_build": 0, "store_url": ""},
+        "android": {"min_build": 0, "store_url": ""},
+    }
+
+
 @router.get("/app/update-config")
-async def app_update_config():
+async def app_update_config(request: Request):
     """Force-update config for the mobile app (public, no auth).
 
-    The operator controls the values via Railway env vars — NO deploy needed
-    to force an update on release:
-      FORCE_UPDATE_IOS_MIN_BUILD / FORCE_UPDATE_ANDROID_MIN_BUILD (int)
-      FORCE_UPDATE_IOS_URL / FORCE_UPDATE_ANDROID_URL (store link)
+    Reads the singleton `app_update_config` DB row, editable by admins via
+    the admin panel — NO deploy needed to force an update on release.
     Default min_build=0 → the app never force-updates (its build is always
     >= 0). The app compares its own build number against `min_build` for its
     platform and shows a blocking update modal when its build is lower.
+
+    FAIL-SOFT: any DB / DI error returns zeros/empty (min_build=0) so a
+    transient DB hiccup can never force-update — or 500 — the whole app.
     """
+    try:
+        container = request.app.state.container
+        db = container.database()
+    except Exception:  # noqa: BLE001 — fail-soft, never 500
+        return _empty_update_config()
 
-    def _int(name: str) -> int:
+    session = db.session
+    try:
+        from quiz.repositories.app_update_config import (
+            AppUpdateConfigRepository,
+        )
+
+        config = AppUpdateConfigRepository(session).get_or_create()
+        # Read attributes before closing the session.
+        result = {
+            "ios": {
+                "min_build": config.ios_min_build or 0,
+                "store_url": config.ios_store_url or "",
+            },
+            "android": {
+                "min_build": config.android_min_build or 0,
+                "store_url": config.android_store_url or "",
+            },
+        }
+        # get_or_create may have inserted the seed row on first boot.
+        session.commit()
+        return result
+    except Exception:  # noqa: BLE001 — fail-soft, never 500
         try:
-            return int(os.environ.get(name, "0"))
-        except (TypeError, ValueError):
-            return 0
-
-    return {
-        "ios": {
-            "min_build": _int("FORCE_UPDATE_IOS_MIN_BUILD"),
-            "store_url": os.environ.get("FORCE_UPDATE_IOS_URL", ""),
-        },
-        "android": {
-            "min_build": _int("FORCE_UPDATE_ANDROID_MIN_BUILD"),
-            "store_url": os.environ.get("FORCE_UPDATE_ANDROID_URL", ""),
-        },
-    }
+            session.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        return _empty_update_config()
+    finally:
+        session.close()
 
 
 routers = [router]

@@ -1,5 +1,6 @@
 import contextlib
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from uuid import UUID
@@ -62,7 +63,11 @@ async def result_notify(
 
         return Response(content=tostring(root), media_type="application/xml", status_code=400)
 
-    order_id = data.get("pg_order_id")
+    order_id = data.get("pg_order_id", "")
+    if not re.match(r'^[a-zA-Z0-9_\-]{1,64}$', order_id):
+        logger.warning("Invalid pg_order_id format in webhook: %r", order_id)
+        return Response(content=tostring(root), media_type="application/xml", status_code=400)
+
     payment = session.query(Payment).filter(Payment.order_id == order_id).with_for_update().first()
 
     if payment:
@@ -310,37 +315,3 @@ def _create_success_response(data: dict, method_name: str, secret_key: str) -> R
     logger.info("Webhook processed successfully")
 
     return Response(content=tostring(root), media_type="application/xml")
-
-
-async def handle_subscription_activation(payment_id: int, db: Session):
-    """Активирует подписку после успешной оплаты"""
-    try:
-        from config import settings
-
-        from auth.services import AuthService
-        from payments.services import PaymentService
-
-        # Получаем платеж
-        payment = db.query(Payment).filter(Payment.id == payment_id).first()
-        if not payment:
-            logger.exception("Payment %s not found", payment_id)
-            return
-
-        # Создаем сервисы для активации подписки
-        # Нужно получить пользователя и настроить зависимости
-        # Это упрощенный пример - в реальности нужно правильно настроить DI
-
-        # Для активации в нашей базе данных
-        payment_service = PaymentService(
-            payment_settings=settings.freedom_pay,
-            db_session=db,
-            user=None,  # Будет получен из платежа
-            auth_service=AuthService(),
-        )
-
-        # Активируем подписку в нашей базе
-        subscription = await payment_service.activate_subscription(payment.id)
-        logger.info("Subscription activated: %s", subscription.id)
-
-    except Exception as e:
-        logger.exception("Failed to activate subscription: %s", str(e))

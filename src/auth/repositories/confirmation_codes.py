@@ -60,6 +60,9 @@ class ConfirmationCodeRepositoryInterface(Protocol):
         raise NotImplementedError
 
 
+MAX_INCORRECT_ATTEMPTS = 5
+
+
 class ConfirmationCodeRepositoryRedis:
     def __init__(self, redis: Redis):
         self._redis = redis
@@ -210,6 +213,14 @@ class ConfirmationCodeRepositoryRedis:
             correct = False
 
             if query.code is not None:
+                # Burn the code after MAX_INCORRECT_ATTEMPTS wrong guesses to prevent
+                # brute-force even if the rate limiter is bypassed via proxies.
+                if incorrect_count >= MAX_INCORRECT_ATTEMPTS:
+                    self._redis.delete(confirmation_code_data["id"])
+                    raise ConfirmationCodeNotFoundError(
+                        "Confirmation code invalidated after too many incorrect attempts"
+                    )
+
                 correct = code == query.code
 
                 if not correct:

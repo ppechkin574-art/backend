@@ -558,7 +558,7 @@ async def allow_only_admins(
         logger.exception("Authentication system error in allow_only_admins: %s", e)
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail=f"Authentication system error: {type(e).__name__}: {e}",
+            detail="Authentication error",
         ) from e
 
 

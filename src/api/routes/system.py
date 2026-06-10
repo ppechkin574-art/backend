@@ -12,6 +12,7 @@ The contract:
     reply at all — that's enough to prove the worker is alive.
 """
 
+import os
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Request
@@ -134,6 +135,37 @@ async def kk_pilot_status(request: Request):
             for row in coverage_rows
         ],
         "math_missing_kk_ids_sample": [row[0] for row in missing_math_ids],
+    }
+
+
+@router.get("/app/update-config")
+async def app_update_config():
+    """Force-update config for the mobile app (public, no auth).
+
+    The operator controls the values via Railway env vars — NO deploy needed
+    to force an update on release:
+      FORCE_UPDATE_IOS_MIN_BUILD / FORCE_UPDATE_ANDROID_MIN_BUILD (int)
+      FORCE_UPDATE_IOS_URL / FORCE_UPDATE_ANDROID_URL (store link)
+    Default min_build=0 → the app never force-updates (its build is always
+    >= 0). The app compares its own build number against `min_build` for its
+    platform and shows a blocking update modal when its build is lower.
+    """
+
+    def _int(name: str) -> int:
+        try:
+            return int(os.environ.get(name, "0"))
+        except (TypeError, ValueError):
+            return 0
+
+    return {
+        "ios": {
+            "min_build": _int("FORCE_UPDATE_IOS_MIN_BUILD"),
+            "store_url": os.environ.get("FORCE_UPDATE_IOS_URL", ""),
+        },
+        "android": {
+            "min_build": _int("FORCE_UPDATE_ANDROID_MIN_BUILD"),
+            "store_url": os.environ.get("FORCE_UPDATE_ANDROID_URL", ""),
+        },
     }
 
 

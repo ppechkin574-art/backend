@@ -82,7 +82,9 @@ class ExceptionLoggingMiddleware(BaseHTTPMiddleware):
                     str(e),
                 )
 
-            if str(e):
+            if status_code == 500:
+                detail = "Internal server error"
+            elif str(e):
                 detail = str(e)
             else:
                 detail = next(

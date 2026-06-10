@@ -39,6 +39,7 @@ async def poll_pending_payments(freedom_settings: FreedomPaySettings, db_setting
                         Payment.attempts_count < max_attempts_cutoff,
                         Payment.last_polled_at < cutoff_time,
                     )
+                    .with_for_update(skip_locked=True)
                     .limit(100)
                     .all()
                 )

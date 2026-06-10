@@ -576,7 +576,7 @@ class AuthService:
         if is_reviewer_test_contact:
             code = int(os.getenv("REVIEWER_TEST_CODE", "123456"))
         else:
-            code = secrets.choice(range(100000, 999999))
+            code = secrets.choice(range(100000, 1000000))
 
         confirmation_code_dto = ConfirmationCodeCreateDTO(
             registration_id=verification_id,

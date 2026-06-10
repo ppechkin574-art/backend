@@ -162,7 +162,7 @@ async def send_admin_broadcast(
         logger.exception("Admin broadcast push failed")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to send broadcast: {exc}",
+            detail="Failed to send broadcast",
         ) from exc
 
     logger.info(

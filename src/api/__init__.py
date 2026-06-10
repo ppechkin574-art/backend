@@ -37,6 +37,31 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
         return response
 
+
+# 10 MB for file upload endpoints; 1 MB for everything else.
+_UPLOAD_PATH_PREFIXES = ("/user/profile/avatar", "/admin/subjects")
+_MAX_BODY_UPLOAD = 10 * 1024 * 1024
+_MAX_BODY_DEFAULT = 1 * 1024 * 1024
+
+
+class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next) -> Response:
+        content_length = request.headers.get("content-length")
+        if content_length:
+            limit = (
+                _MAX_BODY_UPLOAD
+                if any(request.url.path.startswith(p) for p in _UPLOAD_PATH_PREFIXES)
+                else _MAX_BODY_DEFAULT
+            )
+            if int(content_length) > limit:
+                return Response(
+                    content='{"detail":"Request body too large"}',
+                    status_code=413,
+                    media_type="application/json",
+                )
+        return await call_next(request)
+
+
 from .routes import routers
 
 
@@ -134,6 +159,7 @@ def create_app() -> FastAPI:
     )
 
     app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(RequestSizeLimitMiddleware)
     app.add_middleware(LoggingContextMiddleware)
     # LocaleMiddleware parses Accept-Language and exposes
     # request.state.locale ("ru" or "kk") so DTO converters can choose

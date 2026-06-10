@@ -224,12 +224,21 @@ class MetricsMiddleware(BaseHTTPMiddleware):
 
 
 def setup_metrics(app: FastAPI) -> FastAPI:
+    import os
+
+    _metrics_token = os.getenv("METRICS_TOKEN", "")
+
     @app.get(
         "/metrics",
-        description="Получить метрики для логирования",
+        description="Prometheus metrics (requires X-Metrics-Token header)",
         tags=["System"],
+        include_in_schema=False,
     )
-    async def metrics():
+    async def metrics(request: Request):
+        if _metrics_token:
+            provided = request.headers.get("X-Metrics-Token", "")
+            if not provided or provided != _metrics_token:
+                return Response(status_code=401)
         return Response(generate_latest(), media_type="text/plain")
 
     return app

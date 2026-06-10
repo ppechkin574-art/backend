@@ -37,6 +37,13 @@ class InviteeStatusDTO(BaseModel):
 
     invitee_id: UUID
     invitee_display_name: str  # username or masked phone fallback
+    invitee_avatar_url: str | None = Field(
+        default=None,
+        description=(
+            "Presigned URL аватара приглашённого. None/«» если у юзера нет "
+            "аватара или presign не удался — клиент показывает букву-инициал."
+        ),
+    )
     redeemed_at: datetime
     has_paid_subscription: bool = Field(
         ...,

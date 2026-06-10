@@ -45,6 +45,7 @@ def _make_service(
     policy: ReferralPolicyDTO | None = None,
     admin_user_service=None,
     user_points_repo=None,
+    file_service=None,
 ):
     """Wire a ReferralService against fully-mocked collaborators."""
     if db_mock is None:
@@ -66,6 +67,7 @@ def _make_service(
         app_settings=app_settings,
         admin_user_service=admin_user_service or MagicMock(),
         user_points_repo=user_points_repo or MagicMock(),
+        file_service=file_service or MagicMock(),
     )
 
 

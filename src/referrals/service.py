@@ -37,6 +37,7 @@ from referrals.dtos import (
     RedemptionResultDTO,
 )
 from referrals.models import ReferralCode, ReferralRedemption
+from utils.file_service import FileService
 
 logger = logging.getLogger(__name__)
 
@@ -62,11 +63,13 @@ class ReferralService:
         app_settings: AppSettingsService,
         admin_user_service: AdminUserService,
         user_points_repo: UserPointsRepository,
+        file_service: FileService,
     ):
         self.db = db
         self.app_settings = app_settings
         self.admin_user_service = admin_user_service
         self.user_points_repo = user_points_repo
+        self.file_service = file_service
 
     # ─── public reads ─────────────────────────────────────────────────
 
@@ -95,10 +98,25 @@ class ReferralService:
         )
         out: list[InviteeStatusDTO] = []
         for r in rows:
+            avatar_url: str | None = None
             try:
                 user = self.admin_user_service.get_user(r.invitee_id)
                 display = user.username or self._mask_phone(user.phone)
                 has_paid = bool(user.subscription_end) and user.plan and user.plan.upper() == "PRO"
+                # Avatar is a flattened Keycloak attribute (bare filename) on
+                # UserDTO. Presign it for the client. Fail-soft: any hiccup
+                # leaves avatar_url None and the client falls back to the
+                # letter-initial — never break the row over a missing photo.
+                if user.avatar:
+                    try:
+                        avatar_url = self.file_service.get_avatar_url(user.avatar) or None
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to presign avatar for invitee %s: %s",
+                            r.invitee_id,
+                            e,
+                        )
+                        avatar_url = None
             except Exception as e:
                 # Don't fail the whole list just because Keycloak hiccupped
                 # on one invitee — show a placeholder and move on.
@@ -109,6 +127,7 @@ class ReferralService:
                 InviteeStatusDTO(
                     invitee_id=r.invitee_id,
                     invitee_display_name=display,
+                    invitee_avatar_url=avatar_url,
                     redeemed_at=r.redeemed_at,
                     has_paid_subscription=has_paid,
                 )

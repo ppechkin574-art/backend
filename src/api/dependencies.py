@@ -874,11 +874,13 @@ def get_referral_service(
     db: Session = Depends(get_db_session),
     app_settings=Depends(get_app_settings_service),
     admin_user_service: AdminUserService = Depends(get_admin_user_service),
+    file_service: FileService = Depends(get_file_service),
 ):
     """Referral-code service. Star grants go via UserPointsRepository,
     Pro-day grants go via AdminUserService.grant_pro_subscription —
     both already exist for the admin promo flow, we reuse them so the
-    behaviour stays consistent across entry points."""
+    behaviour stays consistent across entry points. FileService presigns
+    invitee avatar URLs for the «Кого я пригласил» list."""
     from referrals.service import ReferralService
 
     return ReferralService(
@@ -886,4 +888,5 @@ def get_referral_service(
         app_settings=app_settings,
         admin_user_service=admin_user_service,
         user_points_repo=UserPointsRepository(db),
+        file_service=file_service,
     )

@@ -14,7 +14,7 @@ from api.dependencies import (
     get_ws_token_manager,
 )
 from auth.dtos.users import UserDTO
-from common.enums import PlanType
+
 from payments.dtos import (
     CreatePaymentResponse,
     CreateSubscriptionPaymentIn,
@@ -63,11 +63,6 @@ class SubscriptionPlanResponse(BaseModel):
     trial_days: int | None = Field(None, description="Пробный период в днях")
     display_order: int | None = Field(None, description="Порядок отображения")
     benefit_items: list[dict[str, Any]] = Field(default_factory=list, description="Список преимуществ подписки")
-
-
-class ActivateSubscriptionRequest(BaseModel):
-    plan: str
-    months: int = 1
 
 
 @router.get(
@@ -280,28 +275,6 @@ async def cancel_subscription(
     явное возобновление через UI настроек).
     """
     updated_user = await subscription_service.cancel_subscription(user)
-    status_data = await subscription_service.check_subscription_status(updated_user)
-    return SubscriptionStatusResponse(**status_data)
-
-
-@router.post(
-    "/activate",
-    response_model=SubscriptionStatusResponse,
-    summary="Активировать подписку (без оплаты, для тестов)",
-    deprecated=True,
-)
-async def activate_subscription(
-    request: ActivateSubscriptionRequest,
-    user: UserDTO = Depends(get_user),
-    subscription_service: SubscriptionService = Depends(get_subscription_service),
-):
-    """Активировать платную подписку (для тестов)"""
-    try:
-        plan = PlanType(request.plan)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid plan type")
-
-    updated_user = await subscription_service.activate_subscription(user, plan, request.months)
     status_data = await subscription_service.check_subscription_status(updated_user)
     return SubscriptionStatusResponse(**status_data)
 

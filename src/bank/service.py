@@ -229,7 +229,10 @@ class BankService:
 
     def create_withdrawal_request(self, student_guid: UUID, data: WithdrawalRequestCreateDTO) -> WithdrawalRequestDTO:
         with self._uow:
-            account = self._uow.bank.get_account_by_student(student_guid)
+            # SELECT FOR UPDATE prevents two concurrent withdrawal requests from
+            # both reading the same balance, both passing the check, and both
+            # being committed — which would result in a double-spend.
+            account = self._uow.bank.get_account_by_student_for_update(student_guid)
             if not account:
                 raise BankAccountNotFound("Account not found")
 
@@ -244,7 +247,7 @@ class BankService:
 
             if data.amount > available:
                 raise InsufficientBalance(
-                    f"Requested amount {data.amount} exceeds available balance after pending requests. Balance: {account.balance}, pending sum: {pending_sum}, available: {available}"
+                    f"Insufficient available balance: requested {data.amount}, available {available}"
                 )
 
             request = self._uow.bank.create_withdrawal_request(

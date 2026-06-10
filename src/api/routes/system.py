@@ -34,7 +34,6 @@ async def health(request: Request):
     redis_ok = _ping_redis(request)
     return {
         "status": "healthy" if redis_ok else "degraded",
-        "redis": "up" if redis_ok else "down",
         "timestamp": datetime.now(UTC).isoformat(),
     }
 

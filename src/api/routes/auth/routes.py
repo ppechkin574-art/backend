@@ -252,12 +252,14 @@ async def request_code(
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Error requesting code: {str(e)}",
+            detail="Не удалось отправить код. Попробуйте позже.",
         )
 
 
 @public_router.post("/code/check", response_model=CodeCheckResponse)
+@limiter.limit("10/minute")
 async def check_code(
+    request: Request,
     request_data: CodeCheckDTO,
     service: AuthService = Depends(get_auth_service),
 ):
@@ -346,7 +348,9 @@ async def registration_complete(
 
 
 @public_router.post("/password-reset/complete", response_model=TokensDTO)
+@limiter.limit("5/minute")
 async def password_reset_complete(
+    request: Request,
     request_data: PasswordResetCompleteDTO,
     service: AuthService = Depends(get_auth_service),
 ):
@@ -511,7 +515,6 @@ async def oauth_callback(
                 action="oauth_callback",
                 auth_method="oauth",
                 provider=provider,
-                code=code,
                 state=state,
             )
 
@@ -547,7 +550,7 @@ async def oauth_callback(
                 auth_method="oauth",
                 provider=provider,
                 state=state,
-                stored_keys=redis.keys("oauth:state:*"),
+
                 error_type="InvalidState",
             )
             raise HTTPException(status_code=400, detail="Invalid or expired state")
@@ -892,7 +895,9 @@ async def contact_change_request(
     summary="Confirm contact change with verification code",
     responses=contact_change_confirm_responses,
 )
+@limiter.limit("5/minute")
 async def contact_change_confirm(
+    request: Request,
     data: ContactChangeConfirmRequest,
     _user: UserDTO = Depends(get_user),
     auth_service: AuthServiceInterface = Depends(get_auth_service),

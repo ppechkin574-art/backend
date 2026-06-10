@@ -42,20 +42,20 @@ class AuthConfirmRegistrationParamsDTO(BaseModel):
 class LoginParamsDTO(BaseModel):
     """Login credentials"""
 
-    login: str = Field(..., description="Email or phone number")
-    password: str = Field(..., description="Password")
+    login: str = Field(..., max_length=200, description="Email or phone number")
+    password: str = Field(..., max_length=200, description="Password")
 
 
 class LogoutParamsDTO(BaseModel):
     """Logout request"""
 
-    refresh_token: str = Field(..., description="Refresh token to invalidate")
+    refresh_token: str = Field(..., max_length=4096, description="Refresh token to invalidate")
 
 
 class RefreshTokenParamsDTO(BaseModel):
     """Refresh token request"""
 
-    refresh_token: str = Field(..., description="Refresh token")
+    refresh_token: str = Field(..., max_length=4096, description="Refresh token")
 
 
 class TokensDTO(BaseModel):
@@ -116,7 +116,7 @@ class UpdateProfileDTO(BaseModel):
 class CodeRequestDTO(BaseModel):
     """Request confirmation code for various actions"""
 
-    contact: str = Field(..., description="Email or phone number")
+    contact: str = Field(..., max_length=200, description="Email or phone number")
     platform: CodePlatform = Field(..., description="Platform to send code")
     action: ConfirmationCodeAction = Field(..., description="Action type")
 
@@ -142,7 +142,7 @@ class CodeCheckDTO(BaseModel):
     """Check confirmation code"""
 
     verification_id: UUID = Field(..., description="Verification ID from code request")
-    code: int = Field(..., description="Confirmation code to check")
+    code: int = Field(..., ge=100000, le=999999, description="Confirmation code to check")
     action: ConfirmationCodeAction = Field(..., description="Action type")
 
 
@@ -192,7 +192,7 @@ class ContactChangeConfirmRequest(BaseModel):
     """Confirm contact change with verification code"""
 
     verification_id: UUID = Field(..., description="Verification ID from change request")
-    code: int = Field(..., description="Verification code")
+    code: int = Field(..., ge=100000, le=999999, description="Verification code")
 
 
 class ConfirmationDTO(BaseModel):

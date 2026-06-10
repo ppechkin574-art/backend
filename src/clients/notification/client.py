@@ -136,6 +136,18 @@ class ResendEmailClient:
             logger.exception("Resend HTTP error sending alert to %s: %s", to, e)
 
 
+def _mask_contact(contact: str) -> str:
+    """Маскирует телефон/email для логов: +77012345678 → +770*****678"""
+    if not contact:
+        return "***"
+    if "@" in contact:
+        local, domain = contact.split("@", 1)
+        return f"{local[:2]}***@{domain}"
+    if len(contact) > 6:
+        return contact[:4] + "*" * (len(contact) - 6) + contact[-3:]
+    return "***"
+
+
 def _strip_html(html: str) -> str:
     """Very small HTML→text fallback for the email `text` part. We don't
     pull in beautifulsoup4 just for this — alerts use simple <p>/<ul>
@@ -295,16 +307,15 @@ class NotificationClientWhatsApp:
             self._fallback_to_telegram(message, str(e))
 
     def _fallback_to_telegram(self, message: NotificationMessageDTO, error_msg: str) -> None:
-        """Fallback: отправляем код в Telegram"""
+        """Fallback: уведомляем ops о недоставленном коде (без самого кода)."""
         try:
-            code = message.message.split(":")[-1].strip() if ":" in message.message else message.message
-
+            masked = _mask_contact(message.to)
             telegram_message = (
-                f"<b> 🔧 Wazzup недоступен</b>\n"
-                f"<b>Пользователь не получил код подтверждения</b>\n\n"
-                f"<b>Контакт:</b> {message.to}\n"
-                f"<b>Код:</b> <code>{code}</code>\n\n"
-                f"<b> ⚠️  Ошибка:</b> <code>{error_msg[:150]}</code>"
+                f"<b>⚠️ Wazzup недоступен</b>\n"
+                f"Пользователь не получил код подтверждения.\n\n"
+                f"<b>Контакт:</b> {masked}\n"
+                f"<b>Ошибка:</b> <code>{error_msg[:150]}</code>\n\n"
+                f"Отправьте код вручную или попросите пользователя повторить запрос."
             )
 
             if self.telegram_client:
@@ -314,10 +325,9 @@ class NotificationClientWhatsApp:
                     platform=CodePlatform.TELEGRAM,
                 )
                 self.telegram_client.notify(telegram_notification)
-                logger.info("Fallback message sent to Telegram for %s", message.to)
+                logger.warning("WhatsApp delivery failed for %s, ops notified via Telegram", masked)
             else:
-                logger.warning("WHATSAPP FALLBACK: %s", telegram_message)
-                logger.info("Code for dev: %s (for %s)", code, message.to)
+                logger.warning("WhatsApp delivery failed for %s, no fallback channel configured", masked)
 
         except Exception as e:
-            logger.exception("Failed to send fallback to Telegram: %s", e)
+            logger.exception("Failed to send fallback notification: %s", e)

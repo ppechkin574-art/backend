@@ -3,8 +3,9 @@ from typing import Protocol
 from uuid import UUID
 
 from sqlalchemy import case, cast, desc, exists, func, not_, select, text
+from sqlalchemy.dialects.postgresql import UUID as UUIDType
 from sqlalchemy.orm import Session, aliased
-from sqlalchemy.types import TIMESTAMP, Integer, String
+from sqlalchemy.types import TIMESTAMP, Integer, Numeric, String
 
 from analytics.dtos.activity import (
     AUDTO,
@@ -44,6 +45,7 @@ from analytics.dtos.screen_time import (
 )
 from analytics.models import UserActivity
 from payments.dtos import PaymentStatus
+from payments.models import Payment
 from quiz.models.edu_content import Subject, Topic
 from quiz.models.ent import EntOption
 from quiz.models.trainer import Trainer
@@ -102,22 +104,26 @@ class AnalyticRepository:
         self._session.flush()
 
     def get_activity(self) -> ActivityDTO:
-        avg_dau_query = select(
-            func.avg(
-                select(func.count(func.distinct(UserActivity.user_id)))
-                .group_by(func.date(UserActivity.event_time))
-                .scalar_subquery()
-            )
+        # DAU averaged over days: count distinct users per calendar day in a
+        # FROM-clause subquery, then avg the per-day counts. (Using the grouped
+        # count as a scalar subquery raises CardinalityViolation, because the
+        # GROUP BY makes it return one row per day instead of a single value.)
+        dau_per_day = (
+            select(func.count(func.distinct(UserActivity.user_id)).label("cnt"))
+            .group_by(func.date(UserActivity.event_time))
+            .subquery()
         )
+        avg_dau_query = select(func.avg(dau_per_day.c.cnt))
 
         avg_dau = self._session.execute(avg_dau_query).scalar()
-        avg_mau_query = select(
-            func.avg(
-                select(func.count(func.distinct(UserActivity.user_id)))
-                .group_by(func.date_trunc("month", UserActivity.event_time))
-                .scalar_subquery()
-            )
+
+        # MAU averaged over months: same pattern, grouped by month.
+        mau_per_month = (
+            select(func.count(func.distinct(UserActivity.user_id)).label("cnt"))
+            .group_by(func.date_trunc("month", UserActivity.event_time))
+            .subquery()
         )
+        avg_mau_query = select(func.avg(mau_per_month.c.cnt))
 
         avg_mau = self._session.execute(avg_mau_query).scalar()
         total_users = self._session.execute(select(func.count(func.distinct(UserActivity.user_id)))).scalar() or 0
@@ -148,22 +154,25 @@ class AnalyticRepository:
             )
             .subquery()
         )
-        query = select(
-            func.round(func.avg(sessions.c.session_length_sec), 0).label("avg_session_time_sec"),
-            func.round(
-                func.avg(
-                    select(func.count(sessions.c.session_id))
-                    .where(sessions.c.user_id == sessions.c.user_id)
-                    .group_by(sessions.c.user_id, sessions.c.day)
-                    .scalar_subquery()
-                ),
-                2,
-            ).label("avg_sessions_per_day"),
-        )
+        # Average session length over all (user, session, day) rows.
+        # session_length_sec is double precision (extract(epoch ...)); cast the
+        # average to numeric so round(value, n) resolves (Postgres has no
+        # round(double precision, int)).
+        avg_session_time = self._session.execute(
+            select(func.round(cast(func.avg(sessions.c.session_length_sec), Numeric), 0))
+        ).scalar()
 
-        result = self._session.execute(query).first()
-        avg_session_time = result.avg_session_time_sec
-        avg_sessions_per_day = result.avg_sessions_per_day
+        # Average number of sessions a user opens per active day: count
+        # sessions per (user, day) in a FROM-clause subquery, then avg those
+        # counts. (Previously a grouped scalar subquery -> CardinalityViolation.)
+        sessions_per_user_day = (
+            select(func.count(sessions.c.session_id).label("sessions_count"))
+            .group_by(sessions.c.user_id, sessions.c.day)
+            .subquery()
+        )
+        avg_sessions_per_day = self._session.execute(
+            select(func.round(func.avg(sessions_per_user_day.c.sessions_count), 2))
+        ).scalar()
 
         activity_dto = ActivityDTO(
             avg_session_per_day=avg_sessions_per_day if avg_sessions_per_day else 0,
@@ -256,6 +265,7 @@ class AnalyticRepository:
             retention_by_month.append(
                 RetentionMonthDTO(
                     month_start=r["install_month"].strftime("%Y-%m"),
+                    registrations=total,
                     d1=round(r["d1"] / total * 100, 1) if total else 0,
                     w1=round(r["w1"] / total * 100, 1) if total else 0,
                     m1=round(r["m1"] / total * 100, 1) if total else 0,
@@ -281,6 +291,41 @@ class AnalyticRepository:
         locations = self._get_payment_locations(status, period, date_from, date_to)
         return PaymentStatisticDTO(info=info, methods=methods, locations=locations)
 
+    def _get_payments_table_filters(
+        self,
+        status: PaymentStatus | None,
+        period: PeriodEnum | None,
+        date_from: date | None,
+        date_to: date | None,
+    ):
+        """Filters for the real `payments` table.
+
+        Revenue analytics read from `payments` (the FreedomPay / IAP write
+        path), not from `user_activity` events — the app never emits
+        `purchase_*` events, so the old event-stream queries always returned 0.
+        Defaults to status='paid' (real revenue), matching the previous
+        "purchase_success" default.
+        """
+        filters = [Payment.status == (status.value if status else PaymentStatus.PAID.value)]
+        if date_from:
+            filters.append(Payment.created_at >= date_from)
+        if date_to:
+            filters.append(Payment.created_at <= date_to)
+        if period and not date_from and not date_to:
+            match period:
+                case PeriodEnum.today:
+                    condition = datetime.combine(date.today(), datetime.min.time())
+                case PeriodEnum.week:
+                    condition = date.today() - timedelta(days=7)
+                case PeriodEnum.month:
+                    condition = date.today() - timedelta(days=30)
+                case PeriodEnum.quarter:
+                    condition = date.today() - timedelta(days=90)
+                case PeriodEnum.year:
+                    condition = date.today() - timedelta(days=365)
+            filters.append(Payment.created_at >= condition)
+        return filters
+
     def _get_payments_info(
         self,
         status: PaymentStatus | None,
@@ -288,27 +333,31 @@ class AnalyticRepository:
         date_from: date | None,
         date_to: date | None,
     ) -> PaymentStatisticDTO:
-        UserActivityOuter = aliased(UserActivity)
-        filters = self._get_payment_filters(UserActivityOuter, status, period, date_from, date_to)
+        filters = self._get_payments_table_filters(status, period, date_from, date_to)
         q = select(
             func.coalesce(func.count(), 0).label("total_payments"),
-            func.coalesce(func.sum(UserActivityOuter.meta["amount"].as_float()), 0.0).label("total_amount"),
-            func.coalesce(func.avg(UserActivityOuter.meta["amount"].as_float()), 0.0).label("avg_amount"),
-            func.coalesce(func.count(func.distinct(UserActivityOuter.user_id)), 0).label("unique_users"),
+            func.coalesce(func.sum(Payment.amount), 0.0).label("total_amount"),
+            func.coalesce(func.avg(Payment.amount), 0.0).label("avg_amount"),
+            func.coalesce(func.count(func.distinct(Payment.user_id)), 0).label("unique_users"),
         ).where(*filters)
         result = self._session.execute(q).first()
         return PaymentInfoDTO.model_validate(result._mapping)
 
     def get_payments_top_clients(self, show_all: bool) -> list[TopClientRepositoryDTO]:
+        # Top spenders from the real `payments` table (status='paid'), not the
+        # event stream. user_id is a Keycloak sub (UUID string); skip NULLs.
         q = (
             select(
-                UserActivity.user_id,
-                func.coalesce(func.sum(UserActivity.meta["amount"].as_float()), 0.0).label("total_amount"),
+                cast(Payment.user_id, UUIDType).label("user_id"),
+                func.coalesce(func.sum(Payment.amount), 0.0).label("total_amount"),
                 func.count().label("total_payments"),
-                func.max(UserActivity.event_time).label("last_payment_date"),
+                func.max(Payment.created_at).label("last_payment_date"),
             )
-            .where(UserActivity.event_name == UserActivityEnum.purchase_success.value)
-            .group_by(UserActivity.user_id)
+            .where(
+                Payment.status == PaymentStatus.PAID.value,
+                Payment.user_id.isnot(None),
+            )
+            .group_by(Payment.user_id)
             .order_by(desc("total_amount"))
         )
         if not show_all:
@@ -442,16 +491,18 @@ class AnalyticRepository:
         date_from: date | None,
         date_to: date | None,
     ) -> PaymentMethodDTO:
-        UserActivityOuter = aliased(UserActivity)
-        filters = self._get_payment_filters(UserActivityOuter, status, period, date_from, date_to)
+        # Payment-method breakdown from the real `payments` table
+        # (pg_payment_method, e.g. google_play / card / freedompay).
+        filters = self._get_payments_table_filters(status, period, date_from, date_to)
+        method_name = func.coalesce(Payment.pg_payment_method, "freedompay")
         total_q = select(func.count()).where(*filters).scalar_subquery()
         q = (
             select(
-                func.coalesce(func.count() / total_q * 100, 0.0).label("percent"),
-                UserActivityOuter.meta["method"].label("name"),
+                func.coalesce(func.count() * 100.0 / total_q, 0.0).label("percent"),
+                method_name.label("name"),
             )
             .where(*filters)
-            .group_by(UserActivityOuter.meta["method"])
+            .group_by(method_name)
         )
         result = self._session.execute(q).all()
         return [PaymentMethodDTO.model_validate(r._mapping) for r in result]
@@ -579,7 +630,7 @@ class AnalyticRepository:
         return TrainerEfficientyDTO(
             **result._mapping,
             popular_topics=[PopularEntityDTO.model_validate(r._mapping) for r in popular_subjects],
-            hard_topics=[HardTopicDTO(r._mapping) for r in hard_topics],
+            hard_topics=[HardTopicDTO.model_validate(r._mapping) for r in hard_topics],
         )
 
     def _get_progress(self):

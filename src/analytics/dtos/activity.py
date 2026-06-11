@@ -32,8 +32,8 @@ class AUDTO(BaseModel):
 class ActivityDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    avg_time_per_session: int = 0
-    avg_session_per_day: int = 0
+    avg_time_per_session: float = 0
+    avg_session_per_day: float = 0
 
     dau_mau_ratio: float = 0.0
     mau_dau_ratio: float = 0.0

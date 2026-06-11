@@ -57,6 +57,15 @@ class BankRepository:
             select(UserBankAccount).where(UserBankAccount.student_guid == student_guid)
         ).scalar_one_or_none()
 
+    def get_account_by_student_for_update(self, student_guid: UUID) -> UserBankAccount | None:
+        """Same as get_account_by_student but acquires a row-level lock.
+        Use inside withdrawal/debit operations to prevent concurrent double-spend."""
+        return self._session.execute(
+            select(UserBankAccount)
+            .where(UserBankAccount.student_guid == student_guid)
+            .with_for_update()
+        ).scalar_one_or_none()
+
     def get_account_by_guid(self, account_guid: UUID) -> UserBankAccount | None:
         return self._session.get(UserBankAccount, account_guid)
 

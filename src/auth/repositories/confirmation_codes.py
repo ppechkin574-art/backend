@@ -60,6 +60,9 @@ class ConfirmationCodeRepositoryInterface(Protocol):
         raise NotImplementedError
 
 
+MAX_INCORRECT_ATTEMPTS = 5
+
+
 class ConfirmationCodeRepositoryRedis:
     def __init__(self, redis: Redis):
         self._redis = redis
@@ -156,23 +159,13 @@ class ConfirmationCodeRepositoryRedis:
         if code_data.user_id:
             redis_dict["real_user_id"] = str(code_data.user_id)
 
-        logger.info(
-            "Saving to Redis - Key: %s, Data: %s, TTL: %s",
-            key,
-            redis_dict,
-            code_data.expiration,
-        )
-
-        logger.debug("Saving confirmation code to Redis: %s", redis_dict)
+        logger.debug("Saving confirmation code to Redis: key=%s ttl=%s", key, code_data.expiration)
         self._redis.hset(key, mapping=redis_dict)
-        logger.info("Redis HSET result: %s", redis_dict)
         self._redis.expire(key, code_data.expiration)
 
         index_type = "temp_reg" if code_data.is_temporary else "user"
         index_key = f"index:{index_type}_id:{identifier}"
-        logger.info("Adding to index: %s", index_key)
-        index_result = self._redis.sadd(index_key, key)
-        logger.info("Redis SADD result: %s", index_result)
+        self._redis.sadd(index_key, key)
 
         return redis_confirmation_code.id
 
@@ -183,20 +176,13 @@ class ConfirmationCodeRepositoryRedis:
         if identifier is None:
             raise ConfirmationCodeNotFoundError("Identifier cannot be None")
 
-        logger.info(
-            "Looking for confirmation code - Identifier: %s, Action: %s, Temporary: %s, Code: %s",
-            identifier,
-            query.action,
-            query.is_temporary,
-            query.code,
-        )
+        logger.debug("Looking for confirmation code: action=%s temporary=%s", query.action, query.is_temporary)
 
         index_type = "temp_reg" if query.is_temporary else "user"
         index_key = f"index:{index_type}_id:{identifier}"
-        logger.info("Searching in index: %s", index_key)
 
         keys = self.decode_redis_set(self._redis.smembers(index_key))
-        logger.info("Found keys in index: %s", keys)
+        logger.debug("Found %d keys in index", len(keys))
 
         confirmation_code_data = self._find_confirmation_code_by_action(
             identifier, query.action.value if query.action else "", query.is_temporary
@@ -204,8 +190,6 @@ class ConfirmationCodeRepositoryRedis:
 
         if not confirmation_code_data:
             raise ConfirmationCodeNotFoundError(f"Confirmation code not found for identifier: {identifier}")
-
-        logger.info("Found confirmation code: %s", confirmation_code_data)
 
         try:
             confirmation_code_id = UUID(confirmation_code_data["id"])
@@ -229,6 +213,14 @@ class ConfirmationCodeRepositoryRedis:
             correct = False
 
             if query.code is not None:
+                # Burn the code after MAX_INCORRECT_ATTEMPTS wrong guesses to prevent
+                # brute-force even if the rate limiter is bypassed via proxies.
+                if incorrect_count >= MAX_INCORRECT_ATTEMPTS:
+                    self._redis.delete(confirmation_code_data["id"])
+                    raise ConfirmationCodeNotFoundError(
+                        "Confirmation code invalidated after too many incorrect attempts"
+                    )
+
                 correct = code == query.code
 
                 if not correct:

@@ -134,9 +134,8 @@ async def websocket_endpoint(
                         else:
                             await websocket.send_json(
                                 {
-                                    "type": "echo",
-                                    "message": f"Received: {data[:100]}",
-                                    "timestamp": datetime.now(UTC).isoformat() + "Z",
+                                    "type": "error",
+                                    "message": "unknown_command",
                                 }
                             )
 

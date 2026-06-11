@@ -1,10 +1,12 @@
 import logging
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from slowapi.errors import RateLimitExceeded
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
+from starlette.responses import Response
 
 from api.containers import Container
 from api.exceptions.handlers import setup_exception_handlers
@@ -23,6 +25,42 @@ from utils.monitoring import (
     setup_logging,
     setup_metrics,
 )
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next) -> Response:
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+        return response
+
+
+# 10 MB for file upload endpoints; 1 MB for everything else.
+_UPLOAD_PATH_PREFIXES = ("/user/profile/avatar", "/admin/subjects")
+_MAX_BODY_UPLOAD = 10 * 1024 * 1024
+_MAX_BODY_DEFAULT = 1 * 1024 * 1024
+
+
+class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next) -> Response:
+        content_length = request.headers.get("content-length")
+        if content_length:
+            limit = (
+                _MAX_BODY_UPLOAD
+                if any(request.url.path.startswith(p) for p in _UPLOAD_PATH_PREFIXES)
+                else _MAX_BODY_DEFAULT
+            )
+            if int(content_length) > limit:
+                return Response(
+                    content='{"detail":"Request body too large"}',
+                    status_code=413,
+                    media_type="application/json",
+                )
+        return await call_next(request)
+
 
 from .routes import routers
 
@@ -89,12 +127,14 @@ def create_app() -> FastAPI:
         logger.propagate = False
         logger.setLevel(logging.CRITICAL)
 
+    enable_docs = os.getenv("ENABLE_DOCS", "false").lower() == "true"
+
     app = FastAPI(
         title="AIMA API",
         version="0.1.3",
-        docs_url="/docs",
-        redoc_url="/redoc",
-        openapi_url="/openapi.json",
+        docs_url="/docs" if enable_docs else None,
+        redoc_url="/redoc" if enable_docs else None,
+        openapi_url="/openapi.json" if enable_docs else None,
         swagger_ui_parameters={
             "defaultModelsExpandDepth": -1,
             "deepLinking": True,
@@ -118,6 +158,8 @@ def create_app() -> FastAPI:
         [(r.path, r.methods) for r in app.routes if hasattr(r, "path") and "code/request" in r.path or (hasattr(r, "path") and "/auth/login" in r.path)] or "no-routes-yet (registered after include_router)",
     )
 
+    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_middleware(RequestSizeLimitMiddleware)
     app.add_middleware(LoggingContextMiddleware)
     # LocaleMiddleware parses Accept-Language and exposes
     # request.state.locale ("ru" or "kk") so DTO converters can choose

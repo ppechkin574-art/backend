@@ -14,7 +14,9 @@ The contract:
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
+
+from api.dependencies import allow_only_admins
 
 router = APIRouter(tags=["System"])
 
@@ -22,7 +24,6 @@ router = APIRouter(tags=["System"])
 @router.get("/")
 async def root():
     return {
-        "version": "0.1.3",
         "status": "running",
         "timestamp": datetime.now(UTC).isoformat(),
     }
@@ -33,7 +34,6 @@ async def health(request: Request):
     redis_ok = _ping_redis(request)
     return {
         "status": "healthy" if redis_ok else "degraded",
-        "redis": "up" if redis_ok else "down",
         "timestamp": datetime.now(UTC).isoformat(),
     }
 
@@ -49,7 +49,7 @@ def _ping_redis(request: Request) -> bool:
         return False
 
 
-@router.get("/system/kk-pilot-status")
+@router.get("/system/kk-pilot-status", dependencies=[Depends(allow_only_admins)], include_in_schema=False)
 async def kk_pilot_status(request: Request):
     """Phase 7b pilot diagnostic — does NOT require auth because it
     only exposes aggregate counts and a non-PII sample question id.

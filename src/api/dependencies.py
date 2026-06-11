@@ -558,7 +558,7 @@ async def allow_only_admins(
         logger.exception("Authentication system error in allow_only_admins: %s", e)
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
-            detail=f"Authentication system error: {type(e).__name__}: {e}",
+            detail="Authentication error",
         ) from e
 
 
@@ -834,8 +834,9 @@ def get_admin_user_service(
     identity_provider: IdentityProviderClientKeycloak = Depends(
         get_identity_provider_client_keycloak
     ),
+    session: Session = Depends(get_db_session),
 ) -> AdminUserService:
-    return AdminUserService(identity_provider)
+    return AdminUserService(identity_provider, session=session)
 
 
 def get_family_service(

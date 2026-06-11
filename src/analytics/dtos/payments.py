@@ -89,3 +89,4 @@ class LastPaymentRepositoryDTO(BaseModel):
     method: str
     date: datetime
     month: int
+    contact: str | None = None

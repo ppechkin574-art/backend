@@ -25,7 +25,6 @@ from analytics.dtos.retention import RetentionDTO
 from analytics.dtos.screen_time import ScreenTimeByActivityDTO, UserScreenTimeDTO
 from analytics.exceptions import WrongEventMetaData
 from analytics.uow import UnitOfWorkAnalytics
-from auth.dtos.users import UserQueryDTO
 from auth.repositories.users import UserRepositoryInterface
 from common.enums import PlanType
 from payments.dtos import PaymentStatus
@@ -213,11 +212,9 @@ class AnalyticService:
     ) -> list[LastPaymentServiceDTO]:
         with self._uow:
             last_payments_repo = self._uow.anlytic_repo.get_payments_last(page, status, search)
-            last_payments_service = []
-            for payment in last_payments_repo:
-                user = self._users.get(UserQueryDTO(id=payment.user_id))
-                last_payments_service.append(to_last_payment_service(payment, user))
-            return last_payments_service
+            # Contact is resolved from the `payments` table in the SQL query
+            # itself — no per-row Keycloak HTTP call needed.
+            return [to_last_payment_service(payment) for payment in last_payments_repo]
 
     def get_user_screen_time(self, user_id: UUID, start_date: date, end_date: date) -> UserScreenTimeDTO:
         with self._uow:

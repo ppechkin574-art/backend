@@ -500,6 +500,7 @@ class AnalyticRepository:
         self, page: int, status: PaymentStatus | None, search: str | None
     ) -> list[LastPaymentRepositoryDTO]:
         page_size = 10
+        pay = aliased(Payment)
         q = select(
             UserActivity.meta["payment_id"].as_integer().label("payment_id"),
             UserActivity.user_id,
@@ -522,6 +523,11 @@ class AnalyticRepository:
             UserActivity.event_time.label("date"),
             func.extract("month", UserActivity.event_time).label("month"),
             UserActivity.meta["promo"].as_string().label("promo"),
+            # Contact from payments table — avoids per-row Keycloak HTTP calls.
+            func.coalesce(pay.pg_user_contact_email, pay.pg_user_phone).label("contact"),
+        ).outerjoin(
+            pay,
+            pay.id == UserActivity.meta["payment_id"].as_integer(),
         ).where(
             UserActivity.event_name.in_(
                 [

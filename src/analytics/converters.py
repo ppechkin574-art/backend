@@ -21,8 +21,6 @@ from analytics.dtos.payments import (
     TopClientRepositoryDTO,
     TopClientServiceDTO,
 )
-from auth.dtos.users import UserDTO
-
 
 def to_event_create_repository(event_dto: EventCreateServiceDTO):
     def is_valid_meta(meta: dict, dto_class: BaseModel):
@@ -62,7 +60,8 @@ def to_event_create_repository(event_dto: EventCreateServiceDTO):
     return EventCreateRepositoryDTO.model_validate(event_dto), valid_meta
 
 
-def to_last_payment_service(repo_dto: LastPaymentRepositoryDTO, user: UserDTO) -> LastPaymentServiceDTO:
+def to_last_payment_service(repo_dto: LastPaymentRepositoryDTO) -> LastPaymentServiceDTO:
+    contact = repo_dto.contact or "—"
     return LastPaymentServiceDTO(
         payment_id=repo_dto.payment_id,
         user_id=repo_dto.user_id,
@@ -71,8 +70,8 @@ def to_last_payment_service(repo_dto: LastPaymentRepositoryDTO, user: UserDTO) -
         method=repo_dto.method,
         date=repo_dto.date,
         month=repo_dto.month,
-        user_fio=user.name,
-        email=user.email,
+        user_fio=contact,
+        email=repo_dto.contact,
     )
 
 

@@ -31,17 +31,19 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "leaderboard_hidden_users",
-        sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column(
-            "created_at",
-            sa.DateTime(timezone=True),
-            server_default=sa.func.now(),
-            nullable=False,
-        ),
-        sa.PrimaryKeyConstraint("user_id"),
-    )
+    bind = op.get_bind()
+    if not sa.inspect(bind).has_table("leaderboard_hidden_users"):
+        op.create_table(
+            "leaderboard_hidden_users",
+            sa.Column("user_id", postgresql.UUID(as_uuid=True), nullable=False),
+            sa.Column(
+                "created_at",
+                sa.DateTime(timezone=True),
+                server_default=sa.func.now(),
+                nullable=False,
+            ),
+            sa.PrimaryKeyConstraint("user_id"),
+        )
 
 
 def downgrade() -> None:

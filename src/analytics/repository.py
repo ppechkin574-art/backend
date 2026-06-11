@@ -1033,15 +1033,17 @@ class AnalyticRepository:
     def get_payments_by_gateway(self, hours: int) -> list[PaymentByGatewayRowDTO]:
         """Paid-payment totals split by gateway over the window.
 
-        Buckets google_play (recorded by the IAP verify + RTDN flows) vs
-        freedompay (everything else). Only status='paid' counts as revenue —
-        same definition the subscription activation uses.
+        Buckets: google_play, apple, freedompay (everything else including
+        bankcard). Only status='paid' counts as revenue.
         """
         sql = text(
             """
             SELECT
-                CASE WHEN pg_payment_method = 'google_play'
-                     THEN 'google_play' ELSE 'freedompay' END AS gateway,
+                CASE
+                    WHEN pg_payment_method = 'google_play' THEN 'google_play'
+                    WHEN pg_payment_method = 'apple'       THEN 'apple'
+                    ELSE 'freedompay'
+                END AS gateway,
                 count(*) AS count,
                 COALESCE(sum(amount), 0) AS total_amount
             FROM payments

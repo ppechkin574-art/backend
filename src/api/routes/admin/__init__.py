@@ -1,4 +1,5 @@
 from .app_settings import router as app_settings_router
+from .payments import router as admin_payments_router
 from .app_update_config import router as app_update_config_router
 from .bank import router as bank_router
 from .leaderboard_hidden import router as leaderboard_hidden_router
@@ -50,4 +51,5 @@ routers = [
     streak_push_template_router,
     daily_notification_template_router,
     app_update_config_router,
+    admin_payments_router,
 ]

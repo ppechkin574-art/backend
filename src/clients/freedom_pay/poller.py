@@ -5,6 +5,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 import defusedxml.ElementTree as ET
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from clients.freedom_pay.client import get_payment_info
@@ -36,8 +37,14 @@ async def poll_pending_payments(freedom_settings: FreedomPaySettings, db_setting
                     session.query(Payment)
                     .filter(
                         Payment.status == "pending",
-                        Payment.attempts_count < max_attempts_cutoff,
-                        Payment.last_polled_at < cutoff_time,
+                        or_(
+                            Payment.attempts_count.is_(None),
+                            Payment.attempts_count < max_attempts_cutoff,
+                        ),
+                        or_(
+                            Payment.last_polled_at.is_(None),
+                            Payment.last_polled_at < cutoff_time,
+                        ),
                     )
                     .with_for_update(skip_locked=True)
                     .limit(100)

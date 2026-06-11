@@ -600,6 +600,25 @@ class ModuleLessonRepository(ModuleLessonRepositoryInterface):
         results = self._session.execute(query).scalars().all()
         return [ModuleLessonRepositoryDTO.model_validate(r) for r in results]
 
+    def get_all_by_module_ids(
+        self, module_ids: builtins.list[int]
+    ) -> builtins.list[ModuleLessonRepositoryDTO]:
+        """Fetch all lessons for a set of modules in a single query.
+
+        Returns lessons ordered by (module_id, order_index) so callers can
+        group them cheaply. Used by get_subject_modules_response to replace
+        the per-module loop that caused O(M) queries.
+        """
+        if not module_ids:
+            return []
+        query = (
+            select(ModuleLesson)
+            .where(ModuleLesson.module_id.in_(module_ids))
+            .order_by(ModuleLesson.module_id, ModuleLesson.order_index)
+        )
+        results = self._session.execute(query).scalars().all()
+        return [ModuleLessonRepositoryDTO.model_validate(r) for r in results]
+
     def update_order(self, module_id: int, lesson_orders: builtins.list[dict[str, int]]) -> None:
         """Обновить порядок уроков в модуле"""
         # Проверяем, что все уроки принадлежат модулю

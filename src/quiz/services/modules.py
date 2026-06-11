@@ -601,39 +601,102 @@ class SubjectModuleService(SubjectModuleServiceInterface):
     #         )
 
     def get_subject_modules_response(self, subject_id: int, user_id: UUID) -> SubjectModulesResponseDTO:
-        """Получить модули предмета в нужном формате"""
+        """Получить модули предмета в нужном формате.
+
+        Previously made O(modules × lessons × 2) DB queries (one per lesson for
+        progress + one per lesson for trainer). Now uses 3 queries total:
+          1. lessons for all modules (IN clause on module_ids)
+          2. lesson progress for this user (IN clause on lesson_ids)
+          3. first trainer_id per topic (IN clause on topic_ids)
+        """
         with self._uow:
             try:
                 subject = self._uow.subjects.get_by_id(subject_id)
             except Exception:
                 raise SubjectNotFoundService(f"Subject with id {subject_id} not found")
 
-            modules, total_modules = self.get_by_subject(subject_id)
+            # Fetch modules directly from repository inside the same session.
+            modules_repo, total_modules = self._uow.subject_modules.get_by_subject(subject_id)
+            modules = [to_subject_module_service(m) for m in modules_repo]
 
+            if not modules:
+                return SubjectModulesResponseDTO(
+                    id=subject.id,
+                    name=subject.name,
+                    modules=[],
+                    total_modules=0,
+                    completed_modules=0,
+                    overall_progress=0.0,
+                )
+
+            # Query 1: all lessons for all modules at once.
+            module_ids = [m.id for m in modules]
+            all_lessons = self._uow.module_lessons.get_all_by_module_ids(module_ids)
+
+            lessons_by_module: dict[int, builtins.list] = {mid: [] for mid in module_ids}
+            for lesson in all_lessons:
+                lessons_by_module[lesson.module_id].append(lesson)
+
+            # Query 2: all lesson-progress rows for this user at once.
+            lesson_ids = [l.id for l in all_lessons]
+            progress_map = self._uow.user_lesson_progress.get_by_lesson_ids_and_user(
+                lesson_ids, user_id
+            )
+
+            # Query 3: first trainer per topic at once.
+            topic_ids = list({l.topic_id for l in all_lessons if l.topic_id})
+            trainer_map = self._uow.trainers.get_first_trainer_id_by_topic_ids(topic_ids)
+
+            # Build result entirely in memory — no more per-lesson queries.
             modules_with_lessons = []
             completed_modules = 0
 
-            lesson_service = ModuleLessonService(self._uow, self._cache_service)
-
             for module in modules:
-                short_lessons = lesson_service.get_module_lessons_short(module.id, user_id)
+                lessons = lessons_by_module.get(module.id, [])
+                short_lessons = []
 
-                completed_lessons = sum(1 for lesson in short_lessons if lesson.is_completed)
+                for lesson in lessons:
+                    progress = progress_map.get(lesson.id)
+                    is_completed = progress.is_completed if progress else False
+                    completed_test = progress.completed_test if progress else False
+                    test_score = progress.test_score if progress else 0
+                    test_max_score = progress.test_max_score if progress else 0
+
+                    trainer_id = trainer_map.get(lesson.topic_id) if lesson.topic_id else None
+
+                    test_result = None
+                    if completed_test and test_max_score > 0:
+                        test_result = test_score / test_max_score
+
+                    with_materials = bool(
+                        lesson.description or lesson.video_url or lesson.presentation_url
+                    )
+
+                    short_lessons.append(
+                        ModuleLessonShortDTO(
+                            id=lesson.id,
+                            name=lesson.title,
+                            topic_id=lesson.topic_id,
+                            trainer_id=trainer_id,
+                            is_completed=is_completed,
+                            test_result=test_result,
+                            start_score=0,
+                            with_materials=with_materials,
+                        )
+                    )
+
+                completed_lessons = sum(1 for l in short_lessons if l.is_completed)
                 total_lessons = len(short_lessons)
-
-                progress_percentage = 0.0
-                is_module_completed = False
-
-                if total_lessons > 0:
-                    progress_percentage = (completed_lessons / total_lessons) * 100
-                    is_module_completed = completed_lessons == total_lessons
-
+                progress_percentage = (
+                    (completed_lessons / total_lessons) * 100 if total_lessons > 0 else 0.0
+                )
+                is_module_completed = total_lessons > 0 and completed_lessons == total_lessons
                 if is_module_completed:
                     completed_modules += 1
 
                 modules_with_lessons.append(
                     ModuleInSubjectResponseDTO(
-                        **module.dict(),
+                        **module.model_dump(),
                         total_lessons=total_lessons,
                         lessons=short_lessons,
                         completed_lessons=completed_lessons,
@@ -642,9 +705,9 @@ class SubjectModuleService(SubjectModuleServiceInterface):
                     )
                 )
 
-            overall_progress = 0.0
-            if total_modules > 0:
-                overall_progress = (completed_modules / total_modules) * 100
+            overall_progress = (
+                (completed_modules / total_modules) * 100 if total_modules > 0 else 0.0
+            )
 
             return SubjectModulesResponseDTO(
                 id=subject.id,

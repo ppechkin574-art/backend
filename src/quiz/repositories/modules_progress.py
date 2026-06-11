@@ -26,6 +26,27 @@ class UserLessonProgressRepository:
             return UserLessonProgressDTO.model_validate(progress)
         return None
 
+    def get_by_lesson_ids_and_user(
+        self, lesson_ids: list[int], user_id: UUID
+    ) -> dict[int, UserLessonProgressDTO]:
+        """Batch-fetch progress for multiple lessons in a single query.
+
+        Returns a dict keyed by lesson_id. Missing lessons (no progress yet)
+        are simply absent from the dict — callers should use .get() and fall
+        back to a zero-progress sentinel.
+        """
+        if not lesson_ids:
+            return {}
+        rows = (
+            self._session.query(UserLessonProgress)
+            .filter(
+                UserLessonProgress.lesson_id.in_(lesson_ids),
+                UserLessonProgress.student_guid == user_id,
+            )
+            .all()
+        )
+        return {r.lesson_id: UserLessonProgressDTO.model_validate(r) for r in rows}
+
     def update_or_create(self, progress_dto: UserLessonProgressDTO) -> UserLessonProgressDTO:
         """Обновить или создать запись прогресса урока"""
         progress = (

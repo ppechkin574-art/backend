@@ -85,6 +85,26 @@ class TrainerRepository:
             for trainer in trainers
         ]
 
+    def get_first_trainer_id_by_topic_ids(self, topic_ids: list[int]) -> dict[int, int]:
+        """Batch-fetch the first trainer_id for each topic in a single query.
+
+        Returns {topic_id: trainer_id}. Topics with no trainer are absent.
+        Used by get_subject_modules_response to avoid O(lessons) queries.
+        """
+        if not topic_ids:
+            return {}
+        rows = (
+            self._session.query(Trainer.topic_id, Trainer.id)
+            .filter(Trainer.topic_id.in_(topic_ids))
+            .order_by(Trainer.topic_id, Trainer.id)
+            .all()
+        )
+        result: dict[int, int] = {}
+        for topic_id, trainer_id in rows:
+            if topic_id not in result:
+                result[topic_id] = trainer_id
+        return result
+
     def get_by_id(self, trainer_id: int) -> TrainerRepositoryDTO | None:
         """Получить тренажёр по ID"""
         trainer = self._session.query(Trainer).filter(Trainer.id == trainer_id).first()

@@ -133,7 +133,7 @@ class DailyTestService:
 
             return SubjectPreferencesResponseDTO(subjects=subject_dtos, can_add_more=can_add_more)
 
-    def get_today_test(self, student_guid: UUID, subject_id: int | None = None) -> DailyTestAttemptDTO:
+    def get_today_test(self, student_guid: UUID, subject_id: int | None = None, locale: str = "ru") -> DailyTestAttemptDTO:
         """Получить тест на сегодня (создать если не существует)"""
         today = self._get_astana_today()
 
@@ -152,7 +152,7 @@ class DailyTestService:
                     "Found existing daily test attempt %s for today",
                     existing_attempt.id,
                 )
-                return self._build_attempt_dto(existing_attempt)
+                return self._build_attempt_dto(existing_attempt, locale=locale)
 
             logger.info("Creating new daily test for student %s on %s", student_guid, today)
 
@@ -190,7 +190,7 @@ class DailyTestService:
             # Получаем полную попытку
             full_attempt = self._uow.daily_tests.get_attempt_by_id(attempt.id, student_guid)
 
-            return self._build_attempt_dto(full_attempt)
+            return self._build_attempt_dto(full_attempt, locale=locale)
 
     def submit_answers(self, student_guid: UUID, data: DailyTestAnswerRequestDTO) -> DailyTestResultDTO:
         """Отправить ответы на ежедневный тест"""
@@ -523,7 +523,61 @@ class DailyTestService:
 
         return selected_questions
 
-    def _build_attempt_dto(self, attempt) -> DailyTestAttemptDTO:
+    def _splice_kk_translations(self, questions: list) -> None:
+        """Replace question/variant blocks with KK text where question_text_kk is set.
+
+        No-op for non-Math subjects (their blocks are already in KK).
+        Opens its own UoW so it can be called from any context.
+        Two batched SELECTs — same pattern as EntAttemptService._localize_questions_kk.
+        """
+        from sqlalchemy import bindparam, text
+
+        from quiz.dtos.hint import localize_hint_blocks_with_kk_text
+        from quiz.dtos.questions import localize_blocks_with_kk_text
+
+        if not questions:
+            return
+
+        question_ids = [q.id for q in questions if q.id is not None]
+        if not question_ids:
+            return
+
+        with self._uow:
+            q_stmt = text(
+                "SELECT id, question_text_kk, hint_text_kk FROM questions WHERE id IN :ids"
+            ).bindparams(bindparam("ids", expanding=True))
+            q_kk: dict[int, tuple] = {
+                row[0]: (row[1], row[2])
+                for row in self._uow.session.execute(q_stmt, {"ids": question_ids}).fetchall()
+            }
+
+            variant_ids = [v.id for q in questions for v in (q.variants or []) if v.id is not None]
+            v_kk: dict[int, str] = {}
+            if variant_ids:
+                v_stmt = text(
+                    "SELECT id, variant_text_kk FROM variants WHERE id IN :ids AND variant_text_kk IS NOT NULL"
+                ).bindparams(bindparam("ids", expanding=True))
+                for row in self._uow.session.execute(v_stmt, {"ids": variant_ids}).fetchall():
+                    v_kk[row[0]] = row[1]
+
+        for q in questions:
+            if q.id is None:
+                continue
+            kk = q_kk.get(q.id)
+            if not kk:
+                continue
+            q_text_kk, hint_text_kk = kk
+            if q_text_kk:
+                q.blocks = localize_blocks_with_kk_text(q.blocks, q_text_kk)
+            if hint_text_kk and q.hint is not None and getattr(q.hint, "blocks", None):
+                q.hint.blocks = localize_hint_blocks_with_kk_text(q.hint.blocks, hint_text_kk)
+            for v in q.variants or []:
+                if v.id is not None:
+                    kk_str = v_kk.get(v.id)
+                    if kk_str:
+                        v.blocks = localize_blocks_with_kk_text(v.blocks, kk_str)
+
+    def _build_attempt_dto(self, attempt, locale: str = "ru") -> DailyTestAttemptDTO:
         """Построить DTO попытки с вопросами"""
         from quiz.dtos.questions import QuestionRepositoryDTO
 
@@ -531,6 +585,9 @@ class DailyTestService:
         # Конвертируем SQLAlchemy объекты в DTOs через существующий конвертер
         questions_repo = [QuestionRepositoryDTO.custom(q) for q in questions_db]
         questions_service = [to_service_question(q) for q in questions_repo]
+
+        if locale == "kk":
+            self._splice_kk_translations(questions_service)
 
         return DailyTestAttemptDTO(
             id=attempt.id,

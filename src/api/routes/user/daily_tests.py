@@ -7,6 +7,7 @@ from api.dependencies import (
     get_user,
     require_active_subscription,
 )
+from api.middlewares.locale import get_locale
 from api.exceptions.documentation import get_common_responses, get_daily_test_responses
 from quiz.dtos.daily_tests import (
     DailyTestAnswerRequestDTO,
@@ -161,6 +162,7 @@ async def get_today_test(
     payload: DailyTestTodayRequestDTO | None = Body(None, description="Опциональный JSON с ID предмета"),
     student: StudentDTO = Depends(get_student),
     service: DailyTestService = Depends(get_daily_test_service),
+    locale: str = Depends(get_locale),
     _=Depends(require_active_subscription()),
 ):
     resolved_subject_id = subject_id or (payload.subject_id if payload else None)
@@ -171,10 +173,11 @@ async def get_today_test(
         action="get_today_daily_test",
         resource="daily_test",
         subject_id=resolved_subject_id,
+        locale=locale,
     )
 
     try:
-        result = service.get_today_test(student.id, resolved_subject_id)
+        result = service.get_today_test(student.id, resolved_subject_id, locale=locale)
     except ValueError as e:
         log_warning(
             "Failed to get today's daily test",

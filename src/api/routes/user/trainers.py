@@ -8,6 +8,7 @@ from api.dependencies import (
     get_user,
     require_active_subscription,
 )
+from api.middlewares.locale import get_locale
 from api.exceptions.documentation import get_common_responses, get_error_responses
 from api.routes.quiz.converters import to_test_answer_dto, to_test_create_dto
 from api.routes.quiz.dtos import (
@@ -178,6 +179,7 @@ async def create_trainer_attempt(
     quiz_data: QuizCreateRequestDTO,
     student: StudentDTO = Depends(get_student),
     service: TrainerAttemptServiceInterface = Depends(get_trainer_attempt_service),
+    locale: str = Depends(get_locale),
     _=Depends(require_active_subscription()),
 ):
     log_info(
@@ -186,11 +188,11 @@ async def create_trainer_attempt(
         action="create_trainer_attempt",
         resource="trainer_attempt",
         topic_id=quiz_data.topic_id,
-        # question_count=quiz_data.question_count,
+        locale=locale,
     )
 
     test_create = to_test_create_dto(student, quiz_data)
-    result = service.create(test_create)
+    result = service.create(test_create, locale=locale)
 
     log_info(
         "Trainer attempt created successfully",

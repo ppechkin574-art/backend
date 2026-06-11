@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 
 
 class TrainerAttemptServiceInterface(Protocol):
-    def create(self, test_attempt: TestCreateRepositoryDTO) -> TrainerAttemptServiceDTO:
+    def create(self, test_attempt: TestCreateRepositoryDTO, locale: str = "ru") -> TrainerAttemptServiceDTO:
         raise NotImplementedError
 
     def answer(self, answer: TestAnswerServiceDTO) -> TrainerAttemptAnswerResponseDTO:
@@ -95,14 +95,17 @@ class TrainerAttemptService:
         self._cashback_service = cashback_service
         self.max_time_per_question = 30 * 60
 
-    def create(self, test: TrainerAttemptCreateServiceDTO) -> TrainerAttemptServiceDTO:
+    def create(self, test: TrainerAttemptCreateServiceDTO, locale: str = "ru") -> TrainerAttemptServiceDTO:
         with self._uow:
             existing = self._uow.trainer_attempts.get_active_for_student(
                 student_guid=test.student_guid, topic_id=test.topic_id
             )
 
             if existing:
-                return self._convert_to_service_dto(self._uow.trainer_attempts.get_with_questions(existing.id))
+                result = self._convert_to_service_dto(self._uow.trainer_attempts.get_with_questions(existing.id))
+                if locale == "kk":
+                    self._splice_kk_translations(result)
+                return result
 
             test_attempt_repo = self._uow.trainer_attempts.create(
                 to_test_attempt_create(test, self._uow.trainer_attempts.get_trainer_by_topic(test.topic_id))
@@ -128,7 +131,10 @@ class TrainerAttemptService:
                 len(test_attempt_with_questions.questions),
             )
 
-            return self._convert_to_service_dto(test_attempt_with_questions)
+            result = self._convert_to_service_dto(test_attempt_with_questions)
+            if locale == "kk":
+                self._splice_kk_translations(result)
+            return result
 
     def answer(self, answer: TestAnswerServiceDTO) -> TrainerAttemptAnswerResponseDTO:
         with self._uow:
@@ -455,6 +461,63 @@ class TrainerAttemptService:
                 subject_name=subject.name if subject else None,
                 questions=questions_with_answers,
             )
+
+    def _splice_kk_translations(self, result: TrainerAttemptServiceDTO) -> None:
+        """Replace question/variant blocks with KK text for Math questions.
+
+        No-op when question_text_kk is NULL (non-Math subjects already store
+        KK text in the original blocks — this only matters for Math where the
+        source content is Russian).  Two batched SELECTs in a fresh UoW so
+        this is safe to call after _select_questions (which closes its own
+        nested session).  Same pattern as EntAttemptService._localize_questions_kk.
+        """
+        from sqlalchemy import bindparam, text
+
+        from quiz.dtos.hint import localize_hint_blocks_with_kk_text
+        from quiz.dtos.questions import localize_blocks_with_kk_text
+
+        questions = result.questions or []
+        if not questions:
+            return
+
+        question_ids = [q.id for q in questions if q.id is not None]
+        if not question_ids:
+            return
+
+        with self._uow:
+            q_stmt = text(
+                "SELECT id, question_text_kk, hint_text_kk FROM questions WHERE id IN :ids"
+            ).bindparams(bindparam("ids", expanding=True))
+            q_kk: dict[int, tuple[str | None, str | None]] = {
+                row[0]: (row[1], row[2])
+                for row in self._uow.session.execute(q_stmt, {"ids": question_ids}).fetchall()
+            }
+
+            variant_ids = [v.id for q in questions for v in (q.variants or []) if v.id is not None]
+            v_kk: dict[int, str] = {}
+            if variant_ids:
+                v_stmt = text(
+                    "SELECT id, variant_text_kk FROM variants WHERE id IN :ids AND variant_text_kk IS NOT NULL"
+                ).bindparams(bindparam("ids", expanding=True))
+                for row in self._uow.session.execute(v_stmt, {"ids": variant_ids}).fetchall():
+                    v_kk[row[0]] = row[1]
+
+        for q in questions:
+            if q.id is None:
+                continue
+            kk = q_kk.get(q.id)
+            if not kk:
+                continue
+            q_text_kk, hint_text_kk = kk
+            if q_text_kk:
+                q.blocks = localize_blocks_with_kk_text(q.blocks, q_text_kk)
+            if hint_text_kk and q.hint is not None and getattr(q.hint, "blocks", None):
+                q.hint.blocks = localize_hint_blocks_with_kk_text(q.hint.blocks, hint_text_kk)
+            for v in q.variants or []:
+                if v.id is not None:
+                    kk_str = v_kk.get(v.id)
+                    if kk_str:
+                        v.blocks = localize_blocks_with_kk_text(v.blocks, kk_str)
 
     def _convert_to_service_dto(self, repo_dto: TrainerAttemptRepositoryDTO) -> TrainerAttemptServiceDTO:
         service_questions = []

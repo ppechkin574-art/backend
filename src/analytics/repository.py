@@ -50,6 +50,29 @@ from quiz.models.edu_content import Subject, Topic
 from quiz.models.ent import EntOption
 from quiz.models.trainer import Trainer
 
+# The "Доходы" (revenue) dashboard counts ONLY store-gateway revenue, NET of the
+# store's commission. FreedomPay/bankcard/NULL rows are excluded entirely.
+STORE_PAYMENT_METHODS = ("apple", "google_play")
+APPLE_NET_MULTIPLIER = 0.70  # 30% Apple commission
+GOOGLE_NET_MULTIPLIER = 0.85  # 15% Google Play commission
+
+
+def _net_amount_expr():
+    """Per-channel net revenue: amount minus the store commission.
+
+    SUM/aggregate over this CASE to get net revenue; rows that aren't store
+    rows contribute 0 (they're also filtered out upstream, this is belt-and-
+    suspenders so a stray method can never inflate the total).
+    """
+    return case(
+        (Payment.pg_payment_method == "apple", Payment.amount * APPLE_NET_MULTIPLIER),
+        (
+            Payment.pg_payment_method == "google_play",
+            Payment.amount * GOOGLE_NET_MULTIPLIER,
+        ),
+        else_=0,
+    )
+
 
 class AnalyticRepositoryInterface(Protocol):
     def save_event(self, event_dto: EventCreateRepositoryDTO) -> None:
@@ -347,8 +370,14 @@ class AnalyticRepository:
         `purchase_*` events, so the old event-stream queries always returned 0.
         Defaults to status='paid' (real revenue), matching the previous
         "purchase_success" default.
+
+        STORE-ONLY: revenue analytics count only store-gateway rows
+        (apple / google_play); FreedomPay/bankcard/NULL are excluded.
         """
-        filters = [Payment.status == (status.value if status else PaymentStatus.PAID.value)]
+        filters = [
+            Payment.status == (status.value if status else PaymentStatus.PAID.value),
+            Payment.pg_payment_method.in_(STORE_PAYMENT_METHODS),
+        ]
         if date_from:
             filters.append(Payment.created_at >= date_from)
         if date_to:
@@ -376,21 +405,26 @@ class AnalyticRepository:
         date_to: date | None,
     ) -> PaymentStatisticDTO:
         filters = self._get_payments_table_filters(status, period, date_from, date_to)
+        # total_amount is the NET sum (amount minus the per-channel store
+        # commission). avg_amount = net_sum / count of store rows, guarded
+        # against divide-by-zero via NULLIF (coalesced back to 0.0).
+        net_sum = func.coalesce(func.sum(_net_amount_expr()), 0.0)
         q = select(
             func.coalesce(func.count(), 0).label("total_payments"),
-            func.coalesce(func.sum(Payment.amount), 0.0).label("total_amount"),
-            func.coalesce(func.avg(Payment.amount), 0.0).label("avg_amount"),
+            net_sum.label("total_amount"),
+            func.coalesce(net_sum / func.nullif(func.count(), 0), 0.0).label("avg_amount"),
             func.coalesce(func.count(func.distinct(Payment.user_id)), 0).label("unique_users"),
         ).where(*filters)
         result = self._session.execute(q).first()
         return PaymentInfoDTO.model_validate(result._mapping)
 
     def get_payments_top_clients(self, show_all: bool) -> list[TopClientRepositoryDTO]:
-        # Top spenders from the real `payments` table (status='paid'), not the
-        # event stream. user_id is a Keycloak sub (UUID string); skip NULLs.
-        # The contact (email, fallback phone) is taken from one of this user's
-        # paid payment rows — most recent with a non-null contact — instead of
-        # resolving the (now-deleted) Keycloak user.
+        # Top spenders from the real `payments` table (status='paid'), STORE
+        # rows only (apple / google_play). user_id is a Keycloak sub (UUID
+        # string); skip NULLs. The contact (email, fallback phone) is taken
+        # from one of this user's paid store rows — most recent with a non-null
+        # contact — instead of resolving the (now-deleted) Keycloak user.
+        # total_amount is the NET sum (per-channel store commission removed).
         contact_inner = aliased(Payment)
         contact_subq = (
             select(
@@ -402,6 +436,7 @@ class AnalyticRepository:
             .where(
                 contact_inner.user_id == Payment.user_id,
                 contact_inner.status == PaymentStatus.PAID.value,
+                contact_inner.pg_payment_method.in_(STORE_PAYMENT_METHODS),
                 func.coalesce(
                     contact_inner.pg_user_contact_email,
                     contact_inner.pg_user_phone,
@@ -414,13 +449,14 @@ class AnalyticRepository:
         q = (
             select(
                 cast(Payment.user_id, UUIDType).label("user_id"),
-                func.coalesce(func.sum(Payment.amount), 0.0).label("total_amount"),
+                func.coalesce(func.sum(_net_amount_expr()), 0.0).label("total_amount"),
                 func.count().label("total_payments"),
                 func.max(Payment.created_at).label("last_payment_date"),
                 contact_subq.label("contact"),
             )
             .where(
                 Payment.status == PaymentStatus.PAID.value,
+                Payment.pg_payment_method.in_(STORE_PAYMENT_METHODS),
                 Payment.user_id.isnot(None),
             )
             .group_by(Payment.user_id)
@@ -557,10 +593,11 @@ class AnalyticRepository:
         date_from: date | None,
         date_to: date | None,
     ) -> PaymentMethodDTO:
-        # Payment-method breakdown from the real `payments` table
-        # (pg_payment_method, e.g. google_play / card / freedompay).
+        # Payment-method breakdown over STORE rows only — the shared filter
+        # already restricts to pg_payment_method IN ('apple','google_play'), so
+        # the split is apple vs google_play (no NULL/freedompay coalesce needed).
         filters = self._get_payments_table_filters(status, period, date_from, date_to)
-        method_name = func.coalesce(Payment.pg_payment_method, "freedompay")
+        method_name = Payment.pg_payment_method
         total_q = select(func.count()).where(*filters).scalar_subquery()
         q = (
             select(

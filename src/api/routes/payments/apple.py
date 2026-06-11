@@ -11,16 +11,25 @@ Android keeps the FreedomPay flow because Apple's IAP is mandatory only
 inside iOS apps (App Store guideline 3.1.1).
 """
 
+import hashlib
 import logging
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
-from api.dependencies import get_subscription_service
+from api.dependencies import (
+    get_db_session,
+    get_subscription_plan_service,
+    get_subscription_service,
+)
 from api.routes.auth.routes import get_current_user
 from auth.dtos.users import UserDTO
 from common.enums import PlanType
 from payments.apple_iap import AppleIAPVerifier
+from payments.models import Payment
 from pydantic import BaseModel
+from subscription.plan_service import SubscriptionPlanService
 from subscription.service import SubscriptionService
 
 logger = logging.getLogger(__name__)
@@ -30,6 +39,82 @@ router = APIRouter(prefix="/payments/apple", tags=["User - Payments"])
 # One verifier instance per process — it's stateless (just holds the
 # shared secret + timeout).
 _verifier = AppleIAPVerifier()
+
+# Fallback price if the PRO plan can't be read from the DB (KZT, gross — before
+# Apple's cut). Mirrors the Google flow's _PRO_FALLBACK_PRICE so both stores
+# record the same gross plan price; the net cut is applied later in analytics.
+_PRO_FALLBACK_PRICE = Decimal("4990")
+
+
+def _pro_price(plan_service: SubscriptionPlanService) -> Decimal:
+    """PRO plan price from the DB, or the fallback. Best-effort.
+
+    Replicated from the Google flow (`payments/android.py`) so the Apple route
+    stays independent of the Android module — both record the same gross price.
+    """
+    try:
+        pro = next(
+            (
+                p
+                for p in plan_service.get_available_plans()
+                if str(p.plan_type).upper().endswith("PRO")
+            ),
+            None,
+        )
+        if pro is not None and pro.price:
+            return Decimal(str(pro.price))
+    except Exception:  # noqa: BLE001 — price lookup is best-effort
+        logger.warning("Could not read PRO price; using fallback %s", _PRO_FALLBACK_PRICE)
+    return _PRO_FALLBACK_PRICE
+
+
+def _apple_order_id(transaction_id: str) -> str:
+    """Stable order_id derived from the Apple transaction id.
+
+    Prefer the original_transaction_id (kept stable across auto-renewals), so a
+    renewal or a repeat verify of the same subscription maps to the SAME row —
+    making the insert idempotent. Mirrors the Google flow's token-derived id.
+    """
+    return "apple-" + hashlib.sha256(transaction_id.encode()).hexdigest()[:40]
+
+
+def _record_apple_payment(
+    session: Session,
+    plan_service: SubscriptionPlanService,
+    user_id: str,
+    transaction_id: str,
+    product_id: str | None,
+) -> None:
+    """Idempotently insert a paid Apple IAP Payment row.
+
+    Best-effort: any failure is swallowed (never breaks receipt verification or
+    subscription activation, which already happened by the time this runs).
+    Idempotent on order_id (derived from the stable transaction id), so repeated
+    verify/restore calls and renewals don't create duplicates. Amount is gross
+    (pre-Apple-fee); the store commission is netted out in analytics.
+    """
+    try:
+        order_id = _apple_order_id(transaction_id)
+        if session.query(Payment).filter(Payment.order_id == order_id).first():
+            return  # already recorded
+        session.add(
+            Payment(
+                order_id=order_id,
+                amount=_pro_price(plan_service),
+                currency="KZT",
+                status="paid",
+                pg_payment_method="apple",
+                is_subscription_payment=True,
+                subscription_plan="PRO",
+                user_id=str(user_id),
+                pg_status_desc=f"Apple IAP: {product_id or 'PRO'}",
+            )
+        )
+        session.commit()
+        logger.info("Recorded Apple payment %s for user %s", order_id, user_id)
+    except Exception:  # noqa: BLE001 — bookkeeping must never break the caller
+        session.rollback()
+        logger.exception("Failed to record Apple payment for user %s", user_id)
 
 
 class AppleVerifyIn(BaseModel):
@@ -49,6 +134,8 @@ async def verify_apple_receipt(
     body: AppleVerifyIn,
     current_user: UserDTO = Depends(get_current_user),
     subscription_service: SubscriptionService = Depends(get_subscription_service),
+    db_session: Session = Depends(get_db_session),
+    plan_service: SubscriptionPlanService = Depends(get_subscription_plan_service),
 ):
     """Validate the StoreKit receipt and, on success, activate PRO.
 
@@ -96,6 +183,28 @@ async def verify_apple_receipt(
     updated_user = await subscription_service.activate_subscription(
         current_user, PlanType.PRO, expires_at=result.expires_at
     )
+
+    # Record the purchase so Apple revenue shows up in the admin panel next to
+    # Google Play / FreedomPay. Apple's verifier returns no separate
+    # `transaction_id` field on AppleVerifyResult — `original_transaction_id`
+    # is the stable id across renewals (and is the JWS `originalTransactionId` /
+    # legacy `original_transaction_id`), so it's both the preferred and the only
+    # available transaction id here. Best-effort — never blocks activation (PRO
+    # is already granted above).
+    if result.original_transaction_id:
+        _record_apple_payment(
+            db_session,
+            plan_service,
+            str(current_user.id),
+            result.original_transaction_id,
+            result.product_id,
+        )
+    else:
+        logger.warning(
+            "Apple IAP: no transaction id on verified receipt for user %s; "
+            "skipping payment recording",
+            current_user.id,
+        )
 
     logger.info(
         "Apple IAP activated PRO for user %s: product=%s tx=%s expires=%s env=%s",

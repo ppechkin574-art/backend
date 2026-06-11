@@ -788,8 +788,9 @@ def get_admin_user_service(
     identity_provider: IdentityProviderClientKeycloak = Depends(
         get_identity_provider_client_keycloak
     ),
+    session: Session = Depends(get_db_session),
 ) -> AdminUserService:
-    return AdminUserService(identity_provider)
+    return AdminUserService(identity_provider, session=session)
 
 
 def get_family_service(

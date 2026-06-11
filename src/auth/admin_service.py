@@ -3,6 +3,9 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from sqlalchemy import text
+from sqlalchemy.orm import Session
+
 from auth.converters import to_keycloak_create_user_dto, to_user_dto
 from auth.dtos.admin import (
     AdminUserCreateDTO,
@@ -22,8 +25,13 @@ logger = logging.getLogger(__name__)
 
 
 class AdminUserService:
-    def __init__(self, identity_provider: IdentityProviderClientKeycloak):
+    def __init__(
+        self,
+        identity_provider: IdentityProviderClientKeycloak,
+        session: Session | None = None,
+    ):
         self.identity_provider = identity_provider
+        self._session = session
 
     def get_users(self, role: str | None = None, search: str | None = None) -> list[UserDTO]:
         raw_users = self.identity_provider.get_users()
@@ -35,7 +43,43 @@ class AdminUserService:
             users = [
                 u for u in users if search_lower in u.name.lower() or (u.email and search_lower in u.email.lower())
             ]
+        if self._session and users:
+            self._enrich_with_pg_stats(users)
         return users
+
+    def _enrich_with_pg_stats(self, users: list[UserDTO]) -> None:
+        """Batch-fetch streak and points from PostgreSQL and merge into DTOs.
+
+        Two queries for all users at once — no N+1. Users without a row in
+        attendance_streaks or students default to 0 (same as the DTO default).
+        """
+        ids = [str(u.id) for u in users]
+        id_list = ", ".join(f"'{uid}'" for uid in ids)
+
+        try:
+            streak_rows = self._session.execute(
+                text(
+                    f"SELECT student_guid, current_streak_days, total_points "
+                    f"FROM attendance_streaks WHERE student_guid IN ({id_list})"
+                )
+            ).fetchall()
+            streak_map = {str(r[0]): (r[1], r[2]) for r in streak_rows}
+
+            points_rows = self._session.execute(
+                text(f"SELECT id, rating FROM students WHERE id IN ({id_list})")
+            ).fetchall()
+            points_map = {str(r[0]): r[1] for r in points_rows}
+        except Exception:
+            logger.exception("Failed to enrich user list with PG stats — returning defaults")
+            return
+
+        for u in users:
+            uid = str(u.id)
+            if uid in streak_map:
+                u.attendance_streak_days = streak_map[uid][0] or 0
+                u.attendance_total_points = streak_map[uid][1] or 0
+            if uid in points_map:
+                u.points = points_map[uid] or 0
 
     def create_user(self, data: AdminUserCreateDTO) -> AdminUserCreateResponseDTO:
         password = data.password

@@ -81,6 +81,16 @@ class StatisticService:
             all_dates = ent_subject_dates | ent_full_dates | trainer_dates | daily_dates
 
             current_streak = StreakCalculator.calculate_streak_on_date(all_dates, end_date, include_target_date=True)
+            # Grace for "today not trained yet": a training streak shouldn't drop
+            # to 0 the moment midnight passes — the user has until the KZ day ends
+            # to keep it. If today (end_date, Asia/Almaty) has no completed attempt
+            # yet, fall back to the run ending YESTERDAY (still alive, "at risk").
+            # Genuinely broken (no attempt yesterday either) still returns 0.
+            # Duolingo-style. all_dates/end_date are already KZ-local.
+            if current_streak == 0:
+                current_streak = StreakCalculator.calculate_streak_on_date(
+                    all_dates, end_date - timedelta(days=1), include_target_date=True
+                )
 
             max_streak_in_period = StreakCalculator.calculate_max_streak_in_period(all_dates, start_date, end_date)
             ent_subject_max_streak = StreakCalculator.calculate_max_streak_in_period(

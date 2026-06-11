@@ -17,8 +17,8 @@ class OSversionDTO(BaseModel):
 class UserLocationDTO(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    country: str
-    city: str
+    country: str | None = None
+    city: str | None = None
     percent: float
 
 

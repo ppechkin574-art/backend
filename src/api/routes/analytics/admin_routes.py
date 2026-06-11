@@ -6,15 +6,20 @@ from fastapi.exceptions import HTTPException
 
 from analytics.dtos.api_filters import PeriodEnum
 from analytics.service import AnalyticServiceInterface
-from api.dependencies import allow_only_admins, get_analytics_service
+from api.dependencies import allow_admin_or_marketing, get_analytics_service
 from payments.dtos import PaymentStatus
 
 logger = logging.getLogger(__name__)
 
+# Marketing surface: the «Маркетинг» dashboard reads its activity /
+# retention / efficiency / revenue / top-clients data from this router,
+# so it is gated by `allow_admin_or_marketing` (admins keep access;
+# users with the `marketing` realm role also get in). All endpoints
+# here are read-only analytics.
 router = APIRouter(
     prefix="/admin/analytics",
     tags=["Admin - Analytics"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_admin_or_marketing)],
 )
 
 

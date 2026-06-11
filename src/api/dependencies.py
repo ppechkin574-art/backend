@@ -562,6 +562,52 @@ async def allow_only_admins(
         ) from e
 
 
+async def allow_admin_or_marketing(
+    access_token: str = Depends(oauth2_scheme),
+    auth_service: AuthServiceInterface = Depends(get_auth_service),
+):
+    """Доступ для администраторов ИЛИ роли marketing.
+
+    Mirrors ``allow_only_admins`` (same role-loading + error handling),
+    but grants access when the JWT realm roles contain ``admin`` OR
+    ``marketing``. Used ONLY on the marketing admin surface (analytics
+    dashboard + push broadcast). Every other admin endpoint stays on
+    ``allow_only_admins`` so a marketing-only token is 403'd elsewhere.
+    """
+    try:
+        user = auth_service.get_user_from_token(access_token)
+
+        if not user.roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User roles not loaded",
+            )
+
+        if "admin" not in user.roles and "marketing" not in user.roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: only allowed for admins or marketing",
+            )
+
+        return user
+
+    except AuthAccessInvalidTokenError as e:
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+        ) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(
+            "Authentication system error in allow_admin_or_marketing: %s", e
+        )
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail=f"Authentication system error: {type(e).__name__}: {e}",
+        ) from e
+
+
 def get_ent_options_service(
     uow: UnitOfWorkTests = Depends(get_unit_of_work_questions),
     cache_service: CacheService = Depends(get_cache_service),

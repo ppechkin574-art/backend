@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 
 from api.containers import Container
 from api.dependencies import (
-    allow_only_admins,
+    allow_admin_or_marketing,
     get_database,
     get_identity_provider_client_keycloak,
     get_settings,
@@ -37,10 +37,14 @@ from quiz.services.admin_broadcast_notifications import (
 )
 from settings import Settings
 
+# Marketing surface: the Push-уведомления page (POST /admin/notifications/send)
+# is part of the marketing toolset, so it is gated by
+# `allow_admin_or_marketing` (admins keep access; `marketing`-role users
+# also get in). This router only exposes the broadcast /send endpoint.
 router = APIRouter(
     prefix="/admin/notifications",
     tags=["Admin - Notifications"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_admin_or_marketing)],
 )
 
 logger = logging.getLogger(__name__)

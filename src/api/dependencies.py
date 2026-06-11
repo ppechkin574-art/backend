@@ -871,6 +871,18 @@ def get_streak_reminder_service(request: Request):
     return request.app.state.container.streak_reminder_service()
 
 
+def get_daily_test_notification_service(request: Request):
+    """Pulls the DailyTestNotificationService singleton from the DI container."""
+    return request.app.state.container.daily_test_notification_service()
+
+
+def get_daily_notification_template_service(
+    db: Session = Depends(get_db_session),
+):
+    from quiz.services.daily_notification_template import DailyNotificationTemplateService
+    return DailyNotificationTemplateService(db)
+
+
 def get_leaderboard_prize_service(
     db: Session = Depends(get_db_session),
 ):

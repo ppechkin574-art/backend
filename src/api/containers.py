@@ -188,6 +188,7 @@ class Container(containers.DeclarativeContainer):
         DailyTestNotificationScheduler,
         notification_service=daily_test_notification_service,
         firebase_settings=config.provided.firebase,
+        database=database,
     )
 
     streak_reminder_service = providers.Singleton(

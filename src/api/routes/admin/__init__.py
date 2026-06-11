@@ -2,6 +2,7 @@ from .app_settings import router as app_settings_router
 from .app_update_config import router as app_update_config_router
 from .bank import router as bank_router
 from .leaderboard_prizes import router as leaderboard_prizes_router
+from .daily_notification_template import router as daily_notification_template_router
 from .streak_push_template import router as streak_push_template_router
 from .streak_reward_tiers import router as streak_reward_tiers_router
 from .cache import router as cache_router
@@ -45,5 +46,6 @@ routers = [
     leaderboard_prizes_router,
     streak_reward_tiers_router,
     streak_push_template_router,
+    daily_notification_template_router,
     app_update_config_router,
 ]

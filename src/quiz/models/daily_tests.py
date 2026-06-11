@@ -3,6 +3,7 @@ import uuid
 from sqlalchemy import (
     UUID,
     Boolean,
+    CheckConstraint,
     Column,
     Date,
     DateTime,
@@ -129,3 +130,34 @@ class DailyTestDeviceToken(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
     __table_args__ = (Index("idx_daily_test_device_tokens_student", "student_guid"),)
+
+
+class DailyNotificationTemplate(Base):
+    """Singleton settings row for the daily push notification scheduler.
+
+    One row (id=1, CHECK enforced). Admin edits title/body/hour/minute/timezone
+    from the push notifications page; the scheduler re-reads this row on every
+    tick so changes propagate within a day without a redeploy.
+    """
+
+    __tablename__ = "daily_notification_template"
+
+    id = Column(Integer, primary_key=True)
+    enabled = Column(Boolean, nullable=False, server_default="true")
+    title = Column(String(200), nullable=False)
+    body = Column(String(500), nullable=False)
+    hour = Column(Integer, nullable=False, server_default="9")
+    minute = Column(Integer, nullable=False, server_default="0")
+    timezone = Column(String(64), nullable=False, server_default="Asia/Almaty")
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_daily_notification_template_singleton"),
+        CheckConstraint("hour BETWEEN 0 AND 23", name="ck_daily_notification_template_hour"),
+        CheckConstraint("minute BETWEEN 0 AND 59", name="ck_daily_notification_template_minute"),
+    )

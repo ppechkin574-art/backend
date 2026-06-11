@@ -1,14 +1,12 @@
 """Admin endpoints for payment management."""
 
 import logging
-from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from api.dependencies import allow_only_admins, get_db_session
+from api.dependencies import allow_only_admins, get_db_session, get_payment_settings
 from clients.freedom_pay.settings import FreedomPaySettings
 from clients.freedom_pay.poller import _check_payment_status
 from payments.models import Payment
@@ -32,6 +30,7 @@ class PollResultDTO(BaseModel):
 @router.post("/poll-pending", response_model=PollResultDTO)
 async def poll_pending_now(
     session: Session = Depends(get_db_session),
+    freedom_settings: FreedomPaySettings = Depends(get_payment_settings),
 ):
     """Force-check all pending FreedomPay payments right now.
 
@@ -40,9 +39,6 @@ async def poll_pending_now(
     Ignores attempts_count and last_polled_at limits — checks everything
     with status='pending'.
     """
-    from api.containers import container
-
-    freedom_settings: FreedomPaySettings = container.freedom_pay_settings()
 
     pending = (
         session.query(Payment)

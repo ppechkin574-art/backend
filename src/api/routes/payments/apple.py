@@ -184,27 +184,22 @@ async def verify_apple_receipt(
         current_user, PlanType.PRO, expires_at=result.expires_at
     )
 
-    # Record the purchase so Apple revenue shows up in the admin panel next to
-    # Google Play / FreedomPay. Apple's verifier returns no separate
-    # `transaction_id` field on AppleVerifyResult — `original_transaction_id`
-    # is the stable id across renewals (and is the JWS `originalTransactionId` /
-    # legacy `original_transaction_id`), so it's both the preferred and the only
-    # available transaction id here. Best-effort — never blocks activation (PRO
-    # is already granted above).
-    if result.original_transaction_id:
-        _record_apple_payment(
-            db_session,
-            plan_service,
-            str(current_user.id),
-            result.original_transaction_id,
-            result.product_id,
-        )
-    else:
-        logger.warning(
-            "Apple IAP: no transaction id on verified receipt for user %s; "
-            "skipping payment recording",
-            current_user.id,
-        )
+    # Record the purchase so Apple revenue shows up in the admin panel.
+    # Prefer original_transaction_id (stable across renewals); fall back to a
+    # SHA-256 of the receipt so we always get a row even when Apple omits the
+    # transaction id (rare with legacy SK1 receipts). Idempotent — same input
+    # always produces the same order_id, so repeated /verify calls don't
+    # create duplicates.
+    tx_id = result.original_transaction_id or hashlib.sha256(
+        body.receipt_data.encode()
+    ).hexdigest()[:40]
+    _record_apple_payment(
+        db_session,
+        plan_service,
+        str(current_user.id),
+        tx_id,
+        result.product_id,
+    )
 
     logger.info(
         "Apple IAP activated PRO for user %s: product=%s tx=%s expires=%s env=%s",

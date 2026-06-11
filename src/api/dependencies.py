@@ -655,8 +655,9 @@ def get_import_service(
 def get_analytics_service(
     uow: UnitOfWorkAnalytics = Depends(get_unit_of_work_analytics),
     users: UserRepositoryInterface = Depends(get_user_repository_keycloak),
+    cache_service: CacheService = Depends(get_cache_service),
 ) -> AnalyticServiceInterface:
-    return AnalyticService(uow, users)
+    return AnalyticService(uow, users, cache_service)
 
 
 def get_admin_service(

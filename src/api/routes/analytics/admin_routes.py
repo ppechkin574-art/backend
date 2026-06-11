@@ -42,6 +42,19 @@ def get_retention(
     return service.get_retention()
 
 
+@router.get("/audience")
+def get_audience(
+    service: AnalyticServiceInterface = Depends(get_analytics_service),
+):
+    """Marketing-safe audience breakdown (COUNTS ONLY, no PII).
+
+    Aggregate over ALL Keycloak users by role / plan / grade. Reachable
+    by the `marketing` role too (this router is `allow_admin_or_marketing`).
+    Backed by a 600s Redis cache — the underlying full Keycloak fetch is
+    heavy (~1200 users)."""
+    return service.get_audience()
+
+
 @router.get("/payments/info")
 def get_payment_statistic(
     date_from: date | None = Query(None, description="Начало периода"),

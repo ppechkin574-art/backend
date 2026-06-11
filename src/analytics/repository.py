@@ -127,6 +127,31 @@ class AnalyticRepository:
 
         avg_mau = self._session.execute(avg_mau_query).scalar()
         total_users = self._session.execute(select(func.count(func.distinct(UserActivity.user_id)))).scalar() or 0
+        # New-in-last-7-days: cohort each user on their FIRST `app_opened`
+        # (MIN(event_time) per user — the same first-use / registration
+        # proxy get_retention uses, since the app never emits
+        # `user_registered`), then count those whose first launch falls
+        # inside the trailing 7-day window.
+        first_seen_7d = (
+            select(
+                UserActivity.user_id,
+                func.min(UserActivity.event_time).label("first_event_time"),
+            )
+            .where(
+                UserActivity.event_name == UserActivityEnum.app_opened.value,
+                UserActivity.user_id.isnot(None),
+            )
+            .group_by(UserActivity.user_id)
+            .subquery()
+        )
+        new_users_7d = (
+            self._session.execute(
+                select(func.count()).where(
+                    first_seen_7d.c.first_event_time >= func.now() - text("interval '7 days'")
+                )
+            ).scalar()
+            or 0
+        )
         active_users = (
             self._session.execute(
                 select(func.count(func.distinct(UserActivity.user_id))).where(
@@ -179,6 +204,7 @@ class AnalyticRepository:
             avg_time_per_session=avg_session_time if avg_session_time else 0,
             total_users=total_users,
             activity_users=active_users,
+            new_users_7d=new_users_7d,
             dau_mau_ratio=avg_dau / avg_mau if avg_mau else 0,
             mau_dau_ratio=avg_mau / avg_dau if avg_dau else 0,
         )

@@ -85,6 +85,14 @@ class IdentityProviderClientInterface(Protocol):
         """
         raise NotImplementedError
 
+    def get_all_users(self, page_size: int = 100) -> list[KeycloakUserDTO]:
+        """Enumerate every Keycloak user via first/max pagination.
+
+        Returns:
+            list[KeycloakUserDTO]: All users (with attributes populated).
+        """
+        raise NotImplementedError
+
     def delete(self, user_id: UUID) -> None:
         """
         Delete user.
@@ -622,6 +630,39 @@ class IdentityProviderClientKeycloak:
         return [
             self._format_keycloak_user(u) for u in self._keycloak_admin.get_users({})
         ]
+
+    def get_all_users(self, page_size: int = 100) -> list[KeycloakUserDTO]:
+        """Enumerate EVERY Keycloak user via explicit first/max pagination.
+
+        `get_users({})` only returns Keycloak's server-side default page
+        (≈100 users), which is why the admin/marketing dashboard saw a
+        truncated audience. This walks the `first`/`max` window until a
+        short (or empty) page comes back, so all ~1200 users are counted.
+
+        `briefRepresentation=False` is required so the `attributes` map
+        (plan / grade / role) is included on each row — the brief
+        representation omits attributes and the aggregate would be blank.
+
+        Heavy call (multiple admin REST round-trips); callers should
+        cache the aggregate, never invoke this per-request.
+        """
+        all_users: list[KeycloakUserDTO] = []
+        first = 0
+        while True:
+            page = self._keycloak_admin.get_users(
+                {
+                    "first": first,
+                    "max": page_size,
+                    "briefRepresentation": False,
+                }
+            )
+            if not page:
+                break
+            all_users.extend(self._format_keycloak_user(u) for u in page)
+            if len(page) < page_size:
+                break
+            first += page_size
+        return all_users
 
     def get_user(self, user_id: str) -> KeycloakUserDTO:
         """Get user by ID (convenience method)."""

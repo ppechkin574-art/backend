@@ -40,6 +40,12 @@ class ActivityDTO(BaseModel):
 
     total_users: int = 0
     activity_users: int = 0
+    # Distinct users whose FIRST `app_opened` event (MIN(event_time) per
+    # user) landed within the last 7 days — a "new in the last week"
+    # acquisition KPI computed on the event stream (the app never emits
+    # `user_registered`, so first launch is the registration proxy; same
+    # cohorting rule as get_retention()).
+    new_users_7d: int = 0
 
     dau: list[AUDTO | None] = []
     mau: list[AUDTO | None] = []

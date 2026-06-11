@@ -76,12 +76,16 @@ def to_last_payment_service(repo_dto: LastPaymentRepositoryDTO, user: UserDTO) -
     )
 
 
-def to_top_client_service(repo_dto: TopClientRepositoryDTO, user: UserDTO) -> TopClientServiceDTO:
+def to_top_client_service(repo_dto: TopClientRepositoryDTO) -> TopClientServiceDTO:
+    # The top-paying users are deleted from Keycloak, so we no longer resolve a
+    # UserDTO. Display name + email come straight from the payment contact
+    # (pg_user_contact_email, fallback pg_user_phone) carried on the repo DTO.
+    contact = repo_dto.contact
     return TopClientServiceDTO(
         user_id=repo_dto.user_id,
         total_amount=repo_dto.total_amount,
         total_payments=repo_dto.total_payments,
         last_payment_date=repo_dto.last_payment_date,
-        user_fio=user.name,
-        email=user.email,
+        user_fio=contact or "—",
+        email=contact,
     )

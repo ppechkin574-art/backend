@@ -117,16 +117,11 @@ class AnalyticService:
     def get_payments_top_clients(self, show_all: bool) -> list[TopClientServiceDTO]:
         with self._uow:
             top_clients_repo = self._uow.anlytic_repo.get_payments_top_clients(show_all)
-            top_clietns_service = []
-            for client in top_clients_repo:
-                try:
-                    user = self._users.get(UserQueryDTO(id=client.user_id))
-                except Exception:
-                    # A top-paying user may have been deleted from Keycloak —
-                    # skip them instead of 404-ing the whole list.
-                    continue
-                top_clietns_service.append(to_top_client_service(client, user))
-            return top_clietns_service
+            # Build the display rows from the `payments` table itself (contact =
+            # email/phone carried on the repo DTO). We no longer resolve the
+            # Keycloak user — the top payers are deleted there, which made the
+            # list come back empty.
+            return [to_top_client_service(client) for client in top_clients_repo]
 
     def get_payments_by_year(self) -> list[PaymentsByYearDTO]:
         with self._uow:

@@ -52,6 +52,10 @@ class TopClientRepositoryDTO(BaseModel):
     total_amount: float
     total_payments: int
     last_payment_date: datetime | None
+    # Contact resolved from the `payments` table itself (pg_user_contact_email,
+    # fallback pg_user_phone) — the paying users are deleted from Keycloak, so
+    # we no longer resolve the user there.
+    contact: str | None = None
 
 
 class PaymentByMonthDTO(BaseModel):

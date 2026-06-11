@@ -197,56 +197,72 @@ class AnalyticRepository:
         return EfficientyDTO(ent=ent_stat, trainer=trainer_stat, progress=progress_stat)
 
     def get_retention(self) -> RetentionDTO:
+        # The app never emits `user_registered`, so cohort on each user's FIRST
+        # `app_opened` (it fires on every launch) as a first-use / registration
+        # proxy. first_seen has exactly one row per user_id (MIN over their
+        # app_opened events); the return-window LEFT JOIN tests whether the user
+        # opened the app again in the day+1 / week+1 / month+1 window after that
+        # first launch. Ratios are emitted on a 0..1 scale (the dashboard
+        # multiplies by 100 itself).
         first_seen = (
             select(
                 UserActivity.user_id,
-                func.date_trunc("month", UserActivity.event_time).label("install_month"),
-                UserActivity.event_time.label("first_event_date"),
+                func.date_trunc("month", func.min(UserActivity.event_time)).label("install_month"),
+                func.min(UserActivity.event_time).label("first_event_date"),
             )
-            .where(UserActivity.event_name == UserActivityEnum.user_registered.value)
+            .where(
+                UserActivity.event_name == UserActivityEnum.app_opened.value,
+                UserActivity.user_id.isnot(None),
+            )
+            .group_by(UserActivity.user_id)
             .subquery()
         )
         retention_q = (
             select(
                 first_seen.c.install_month,
                 func.count(func.distinct(first_seen.c.user_id)).label("new_users"),
-                # D1
+                # D1 — returned on/after the day following first launch
                 func.count(
                     func.distinct(
                         case(
                             (
                                 UserActivity.event_time >= first_seen.c.first_event_date + text("interval '1 day'"),
-                                UserActivity.user_id,
+                                first_seen.c.user_id,
                             ),
                         )
                     )
                 ).label("d1"),
-                # W1
+                # W1 — returned within a week after first launch
                 func.count(
                     func.distinct(
                         case(
                             (
                                 (UserActivity.event_time <= first_seen.c.first_event_date + text("interval '7 day'"))
                                 & (UserActivity.event_time > first_seen.c.first_event_date),
-                                UserActivity.user_id,
+                                first_seen.c.user_id,
                             ),
                         )
                     )
                 ).label("w1"),
-                # M1
+                # M1 — returned within a month after first launch
                 func.count(
                     func.distinct(
                         case(
                             (
                                 (UserActivity.event_time <= first_seen.c.first_event_date + text("interval '30 day'"))
                                 & (UserActivity.event_time > first_seen.c.first_event_date),
-                                UserActivity.user_id,
+                                first_seen.c.user_id,
                             ),
                         )
                     )
                 ).label("m1"),
             )
-            .join(UserActivity, UserActivity.user_id == first_seen.c.user_id)
+            .join(
+                UserActivity,
+                (UserActivity.user_id == first_seen.c.user_id)
+                & (UserActivity.event_name == UserActivityEnum.app_opened.value),
+                isouter=True,
+            )
             .group_by(first_seen.c.install_month)
             .order_by(first_seen.c.install_month)
         )
@@ -266,15 +282,15 @@ class AnalyticRepository:
                 RetentionMonthDTO(
                     month_start=r["install_month"].strftime("%Y-%m"),
                     registrations=total,
-                    d1=round(r["d1"] / total * 100, 1) if total else 0,
-                    w1=round(r["w1"] / total * 100, 1) if total else 0,
-                    m1=round(r["m1"] / total * 100, 1) if total else 0,
+                    d1=round(r["d1"] / total, 4) if total else 0,
+                    w1=round(r["w1"] / total, 4) if total else 0,
+                    m1=round(r["m1"] / total, 4) if total else 0,
                 )
             )
         return RetentionDTO(
-            d1=round(total_d1_count / total_regs * 100, 1) if total_regs else 0,
-            w1=round(total_w1_count / total_regs * 100, 1) if total_regs else 0,
-            m1=round(total_m1_count / total_regs * 100, 1) if total_regs else 0,
+            d1=round(total_d1_count / total_regs, 4) if total_regs else 0,
+            w1=round(total_w1_count / total_regs, 4) if total_regs else 0,
+            m1=round(total_m1_count / total_regs, 4) if total_regs else 0,
             registrations=total_regs,
             retention_rate_by_month=retention_by_month,
         )
@@ -346,12 +362,36 @@ class AnalyticRepository:
     def get_payments_top_clients(self, show_all: bool) -> list[TopClientRepositoryDTO]:
         # Top spenders from the real `payments` table (status='paid'), not the
         # event stream. user_id is a Keycloak sub (UUID string); skip NULLs.
+        # The contact (email, fallback phone) is taken from one of this user's
+        # paid payment rows — most recent with a non-null contact — instead of
+        # resolving the (now-deleted) Keycloak user.
+        contact_inner = aliased(Payment)
+        contact_subq = (
+            select(
+                func.coalesce(
+                    contact_inner.pg_user_contact_email,
+                    contact_inner.pg_user_phone,
+                )
+            )
+            .where(
+                contact_inner.user_id == Payment.user_id,
+                contact_inner.status == PaymentStatus.PAID.value,
+                func.coalesce(
+                    contact_inner.pg_user_contact_email,
+                    contact_inner.pg_user_phone,
+                ).isnot(None),
+            )
+            .order_by(desc(contact_inner.created_at))
+            .limit(1)
+            .scalar_subquery()
+        )
         q = (
             select(
                 cast(Payment.user_id, UUIDType).label("user_id"),
                 func.coalesce(func.sum(Payment.amount), 0.0).label("total_amount"),
                 func.count().label("total_payments"),
                 func.max(Payment.created_at).label("last_payment_date"),
+                contact_subq.label("contact"),
             )
             .where(
                 Payment.status == PaymentStatus.PAID.value,

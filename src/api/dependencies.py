@@ -930,6 +930,18 @@ def get_app_update_config_service(
     return AppUpdateConfigService(AppUpdateConfigRepository(db))
 
 
+def get_leaderboard_hidden_service(
+    db: Session = Depends(get_db_session),
+):
+    """Admin hide-list for the in-app leaderboard. Hidden users are
+    excluded from the ranking by `UserPointsRepository`. Plain Session,
+    imported lazily to keep the api.dependencies import graph flat."""
+    from quiz.repositories.leaderboard_hidden import LeaderboardHiddenRepository
+    from quiz.services.leaderboard_hidden import LeaderboardHiddenService
+
+    return LeaderboardHiddenService(LeaderboardHiddenRepository(db))
+
+
 def get_referral_service(
     db: Session = Depends(get_db_session),
     app_settings=Depends(get_app_settings_service),

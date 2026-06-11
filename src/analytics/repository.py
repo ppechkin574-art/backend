@@ -179,8 +179,8 @@ class AnalyticRepository:
             avg_time_per_session=avg_session_time if avg_session_time else 0,
             total_users=total_users,
             activity_users=active_users,
-            dau_mau_ratio=avg_dau / avg_mau * 100 if avg_mau else 0,
-            mau_dau_ratio=avg_mau / avg_dau * 100 if avg_dau else 0,
+            dau_mau_ratio=avg_dau / avg_mau if avg_mau else 0,
+            mau_dau_ratio=avg_mau / avg_dau if avg_dau else 0,
         )
         activity_dto.dau = self._get_dau()
         activity_dto.mau = self._get_mau()

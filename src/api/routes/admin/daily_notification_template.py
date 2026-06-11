@@ -27,6 +27,14 @@ router = APIRouter(
 )
 
 
+@router.get("/firebase-status")
+def get_firebase_status(
+    notification_service: DailyTestNotificationService = Depends(get_daily_test_notification_service),
+):
+    """Returns whether Firebase Cloud Messaging is enabled on this instance."""
+    return {"enabled": notification_service.enabled}
+
+
 @router.get("", response_model=DailyNotificationTemplateDTO)
 def get_template(
     service: DailyNotificationTemplateService = Depends(get_daily_notification_template_service),

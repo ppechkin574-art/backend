@@ -33,7 +33,7 @@ class FraudEventRepository:
             endpoint=endpoint,
             method=method,
             user_agent=user_agent,
-            metadata=metadata or {},
+            event_metadata=metadata or {},
         )
         self._session.add(event)
         self._session.flush()

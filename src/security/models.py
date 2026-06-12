@@ -19,7 +19,7 @@ class FraudEvent(Base):
     event_type = Column(String(100), nullable=False, index=True)
     reason = Column(String(1000), nullable=True)
     risk_score = Column(Integer, default=0)
-    metadata = Column(JSONB, default={})
+    event_metadata = Column("metadata", JSONB, default={})
     status = Column(String(20), default="open", index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     reviewed_at = Column(DateTime(timezone=True), nullable=True)

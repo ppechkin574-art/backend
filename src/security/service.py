@@ -285,7 +285,7 @@ class SecurityService:
             "event_type": event.event_type,
             "reason": event.reason,
             "risk_score": event.risk_score,
-            "metadata": event.metadata,
+            "metadata": event.event_metadata,
             "status": event.status,
             "created_at": event.created_at.isoformat() if event.created_at else None,
             "reviewed_at": event.reviewed_at.isoformat() if event.reviewed_at else None,

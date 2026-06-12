@@ -43,7 +43,7 @@ def to_user_create_dto(params: AuthRegisterDTO, is_active: bool) -> UserCreateDT
         role="student",
         is_active=is_active,
         plan=PlanType.PRO,
-        subscription_end=datetime.now(UTC) + timedelta(days=3),
+        subscription_end=datetime.now(UTC) + timedelta(days=1),
         used_trial=True,
     )
 
@@ -122,7 +122,7 @@ def to_keycloak_create_user_dto(user: UserCreateDTO) -> "KeycloakCreateUserDTO":
     )
     username = f"{username_base}_{random_suffix}"
 
-    subscription_end = user.subscription_end or datetime.now(UTC) + timedelta(days=3)
+    subscription_end = user.subscription_end or datetime.now(UTC) + timedelta(days=1)
 
     # Phone-only users get a synthetic email so Keycloak User Profile validation passes
     email = user.email

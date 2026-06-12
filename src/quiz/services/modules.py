@@ -638,13 +638,13 @@ class SubjectModuleService(SubjectModuleServiceInterface):
                 lessons_by_module[lesson.module_id].append(lesson)
 
             # Query 2: all lesson-progress rows for this user at once.
-            lesson_ids = [l.id for l in all_lessons]
+            lesson_ids = [les.id for les in all_lessons]
             progress_map = self._uow.user_lesson_progress.get_by_lesson_ids_and_user(
                 lesson_ids, user_id
             )
 
             # Query 3: first trainer per topic at once.
-            topic_ids = list({l.topic_id for l in all_lessons if l.topic_id})
+            topic_ids = list({les.topic_id for les in all_lessons if les.topic_id})
             trainer_map = self._uow.trainers.get_first_trainer_id_by_topic_ids(topic_ids)
 
             # Build result entirely in memory — no more per-lesson queries.
@@ -685,7 +685,7 @@ class SubjectModuleService(SubjectModuleServiceInterface):
                         )
                     )
 
-                completed_lessons = sum(1 for l in short_lessons if l.is_completed)
+                completed_lessons = sum(1 for les in short_lessons if les.is_completed)
                 total_lessons = len(short_lessons)
                 progress_percentage = (
                     (completed_lessons / total_lessons) * 100 if total_lessons > 0 else 0.0

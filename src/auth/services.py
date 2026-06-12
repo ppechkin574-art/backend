@@ -1124,7 +1124,7 @@ class AuthService:
             return False
         if not settings.template_id or settings.template_id.strip().lower() == "changeme":
             return False
-        if settings.debug:
+        if settings.debug:  # noqa: SIM103
             # Debug mode simulates success without sending. Treat as not
             # configured for production-flow purposes.
             return False
@@ -1319,7 +1319,7 @@ class AuthService:
                 self._send_code_to_dev_channel(
                     contact, code, "WhatsApp", "wazzup send failed"
                 )
-            return (True if ok else False, "whatsapp" if ok else None)
+            return (bool(ok), "whatsapp" if ok else None)
 
         # Explicit Telegram (legacy ops-channel path — not user OTP).
         if platform == CodePlatform.TELEGRAM:

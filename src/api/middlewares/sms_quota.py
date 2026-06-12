@@ -26,7 +26,7 @@ ops will look for them.
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import HTTPException, status
 from redis import Redis, RedisError
@@ -46,7 +46,7 @@ _COUNTER_TTL_SECONDS = 25 * 3600
 
 
 def _today_utc() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return datetime.now(UTC).strftime("%Y-%m-%d")
 
 
 def _is_reviewer_test_contact(contact: str) -> bool:

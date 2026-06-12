@@ -55,7 +55,6 @@ def _extract_benefit_items(features: dict | None) -> list[dict]:
 
 @router.get("/plans", response_model=list[SubscriptionPlanAdminResponse])
 def list_plans(db: Session = Depends(get_db_session)):
-    repo = SubscriptionPlanRepository(db)
     plans = db.query(SubscriptionPlan).order_by(SubscriptionPlan.display_order).all()
     result = []
     for plan in plans:

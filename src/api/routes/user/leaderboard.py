@@ -49,9 +49,7 @@ def _is_pii_leak(name: str) -> bool:
         return True
     if _PHONE_OR_EMAIL_REGEX.search(name):
         return True
-    if _AUTO_USERNAME_REGEX.match(name):
-        return True
-    return False
+    return bool(_AUTO_USERNAME_REGEX.match(name))
 
 
 def _safe_display_name(name: str, user_id: str) -> str:

@@ -2,6 +2,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
+from sqlalchemy import update
 from sqlalchemy.orm import Session
 
 from auth.dtos.users import UserDTO
@@ -92,6 +93,117 @@ class PromocodeService:
             plan=plan.value,
             duration_days=promocode.duration_days,
             expires_at=expires_at.isoformat(),
+            is_trial=promocode.is_trial if promocode.is_trial is not None else False,
+            promocode_id=promocode.id,
+            usage_id=None,
+        )
+
+    async def activate_promocode(self, user: UserDTO, code: str) -> PromocodeActivationResultDTO:
+        """Полная активация: атомарный инкремент счётчика + создание PromocodeUsage +
+        вызов SubscriptionService для выдачи подписки через Keycloak."""
+        if user is None or not getattr(user, "id", None):
+            raise HTTPException(status_code=400, detail="User is required")
+
+        # --- 1. Атомарный CHECK + INCREMENT (защита от race condition) ---
+        # UPDATE ... SET activations_count = activations_count + 1
+        # WHERE id = :id
+        #   AND activations_count < max_activations
+        #   AND (expires_at IS NULL OR expires_at > NOW())
+        # Возвращает количество затронутых строк. 0 — код не прошёл.
+        now = datetime.now(UTC)
+        result = self.db_session.execute(
+            update(Promocode)
+            .where(
+                Promocode.code == code.upper().strip(),
+                Promocode.activations_count < Promocode.max_activations,
+                (Promocode.expires_at.is_(None)) | (Promocode.expires_at > now),
+            )
+            .values(activations_count=Promocode.activations_count + 1)
+            .execution_options(synchronize_session="fetch")
+        )
+        if result.rowcount == 0:
+            # Код не найден, истёк или исчерпан — разобраться точнее для правильной ошибки.
+            promocode = (
+                self.db_session.query(Promocode)
+                .filter(Promocode.code == code.upper().strip())
+                .first()
+            )
+            if not promocode:
+                raise HTTPException(status_code=404, detail="Промокод не найден")
+            if promocode.expires_at and promocode.expires_at < now:
+                raise HTTPException(status_code=400, detail="Промокод истёк")
+            raise HTTPException(
+                status_code=400,
+                detail="Промокод уже использован максимальное количество раз",
+            )
+
+        # Достать свежую строку (activations_count уже инкрементирован).
+        promocode = (
+            self.db_session.query(Promocode)
+            .filter(Promocode.code == code.upper().strip())
+            .first()
+        )
+
+        # --- 2. Проверить one-per-user для не-reusable кодов ---
+        if not promocode.is_reusable:
+            already = (
+                self.db_session.query(PromocodeUsage)
+                .filter(
+                    PromocodeUsage.student_guid == str(user.id),
+                    PromocodeUsage.promocode_id == promocode.id,
+                )
+                .first()
+            )
+            if already:
+                # Откатить инкремент — юзер уже использовал.
+                self.db_session.execute(
+                    update(Promocode)
+                    .where(Promocode.id == promocode.id)
+                    .values(activations_count=Promocode.activations_count - 1)
+                    .execution_options(synchronize_session="fetch")
+                )
+                self.db_session.commit()
+                raise HTTPException(status_code=400, detail="Вы уже использовали этот промокод")
+
+        # --- 3. Создать PromocodeUsage ---
+        access_expires_at = now + timedelta(days=promocode.duration_days)
+        try:
+            plan = PlanType(promocode.plan_type)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Неверный тип плана в промокоде")
+
+        usage = PromocodeUsage(
+            promocode_id=promocode.id,
+            student_guid=str(user.id),
+            activated_plan=plan,
+            access_expires_at=access_expires_at,
+        )
+        self.db_session.add(usage)
+
+        # --- 4. Выдать подписку через SubscriptionService (Keycloak) ---
+        try:
+            await self.subscription_service.activate_subscription(
+                user,
+                plan,
+                expires_at=access_expires_at,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to activate subscription for user %s via promocode %s",
+                user.id,
+                promocode.code,
+            )
+            # Не роллбэчить usage/count — запись нужна для аудита.
+            # Оператор может вручную выдать подписку через /admin/users.
+
+        self.db_session.commit()
+
+        return PromocodeActivationResultDTO(
+            success=True,
+            message=f"Промокод активирован! Подписка {plan.value} выдана на {promocode.duration_days} дней",
+            plan=plan.value,
+            duration_days=promocode.duration_days,
+            expires_at=access_expires_at.isoformat(),
             is_trial=promocode.is_trial if promocode.is_trial is not None else False,
             promocode_id=promocode.id,
             usage_id=None,

@@ -50,7 +50,7 @@ async def activate_promocode(
             promocode=request.promocode,
         )
 
-        result = await promocode_service.get_promocode_activation_info(user, request.promocode)
+        result = await promocode_service.activate_promocode(user, request.promocode)
 
         user_id_str = str(user.id) if user and hasattr(user, "id") and user.id else "unknown"
         log_info(
@@ -68,25 +68,6 @@ async def activate_promocode(
         raise
     except Exception as e:
         logger.exception("Error activating promocode: %s", str(e))
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-
-@router.get(
-    "/available",
-    response_model=list[PromocodeDTO],
-    summary="Доступные промокоды",
-)
-async def get_available_promocodes(
-    promocode_service: PromocodeService = Depends(get_promocode_service),
-):
-    """
-    Получить список доступных промокодов
-    """
-    try:
-        promocodes = await promocode_service.get_available_promocodes()
-        return promocodes
-    except Exception as e:
-        logger.exception("Error getting available promocodes: %s", str(e))
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 

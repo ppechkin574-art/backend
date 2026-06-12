@@ -24,6 +24,7 @@ from .subscription import router as subscription_router
 from .topics import router as topics_router
 from .trainers import router as trainers_router
 from .users import router as users_router
+from .security import router as security_router
 
 routers = [
     dashboard_router,
@@ -52,4 +53,5 @@ routers = [
     daily_notification_template_router,
     app_update_config_router,
     admin_payments_router,
+    security_router,
 ]

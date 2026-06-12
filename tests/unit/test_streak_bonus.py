@@ -257,14 +257,15 @@ class TestPushTemplateDTO:
 
 class TestPushTemplateService:
     def _make_template(self, **overrides):
-        return SimpleNamespace(
+        base = dict(
             enabled=True,
             title="Не теряй стрик!",
             body="У тебя {streak} дн.",
             hours_before_reset=8,
             timezone="Asia/Almaty",
-            **overrides,
         )
+        base.update(overrides)
+        return SimpleNamespace(**base)
 
     def test_get_template_missing_raises_404(self):
         svc, repo, _ = _make_service()

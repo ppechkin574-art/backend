@@ -72,7 +72,7 @@ class KeycloakAttributesUpdateDTO(BaseModel):
 
 class KeycloakUserUpdateDTO(BaseModel):
     email: EmailStr | None = None
-    attributes: KeycloakAttributesUpdateDTO
+    attributes: KeycloakAttributesUpdateDTO | None = None
     username: str | None = None
 
 

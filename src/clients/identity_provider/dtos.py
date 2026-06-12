@@ -15,6 +15,7 @@ class KeycloakAttributesDTO(BaseModel):
     plan: list[str] = Field(default_factory=lambda: [PlanType.FREE.value])
     subscription_end: list[str] = Field(default_factory=list)
     subscription_cancelled: list[str] = Field(default_factory=list)
+    used_trial: list[str] = Field(default_factory=list)
     grade: list[str] = Field(default_factory=list)
     avatar: list[str] | None = Field(default_factory=list)
 
@@ -66,6 +67,7 @@ class KeycloakAttributesUpdateDTO(BaseModel):
     plan: list[str] | None = None
     subscription_end: list[str] | None = None
     subscription_cancelled: list[str] | None = None
+    used_trial: list[str] | None = None
 
 
 class KeycloakUserUpdateDTO(BaseModel):

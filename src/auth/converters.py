@@ -44,7 +44,7 @@ def to_user_create_dto(params: AuthRegisterDTO, is_active: bool) -> UserCreateDT
         is_active=is_active,
         plan=PlanType.PRO,
         subscription_end=datetime.now(UTC) + timedelta(days=3),
-        used_trial=False,
+        used_trial=True,
     )
 
 
@@ -144,6 +144,7 @@ def to_keycloak_create_user_dto(user: UserCreateDTO) -> "KeycloakCreateUserDTO":
             allowed_subject_ids=[str(sid) for sid in (user.allowed_subject_ids)],
             plan=[user.plan.value],
             subscription_end=[subscription_end.isoformat()],
+            used_trial=["true" if user.used_trial else "false"],
         ),
         credentials=(
             [KeycloakCredentialDTO(value=user.password)] if user.password else []
@@ -213,6 +214,14 @@ def to_keycloak_user_update_dto(
         ]
     elif user.subscription_cancelled:
         attributes_dict["subscription_cancelled"] = ["true"]
+
+    # used_trial: same pattern — only write when explicitly set.
+    if "used_trial" in update_data and update_data["used_trial"] is not None:
+        attributes_dict["used_trial"] = [
+            "true" if update_data["used_trial"] else "false"
+        ]
+    elif user.used_trial:
+        attributes_dict["used_trial"] = ["true"]
 
     email = update_data.get("email", user.email)
 
@@ -284,6 +293,12 @@ def to_user_dto(keycloak_user: "KeycloakUserDTO", roles: list[str]) -> UserDTO:
         if cancelled_list and len(cancelled_list) > 0:
             subscription_cancelled = cancelled_list[0].strip().lower() == "true"
 
+    used_trial = False
+    if keycloak_user.attributes and keycloak_user.attributes.used_trial:
+        used_trial_list = keycloak_user.attributes.used_trial
+        if used_trial_list and len(used_trial_list) > 0:
+            used_trial = used_trial_list[0].strip().lower() == "true"
+
     # Школьный класс. Поле введено 09.05.2026, у legacy-пользователей в
     # Keycloak атрибута нет — оставляем None, тогда админка покажет «—».
     # Аккуратно парсим: невалидное/пустое значение = None, не падаем.
@@ -310,6 +325,7 @@ def to_user_dto(keycloak_user: "KeycloakUserDTO", roles: list[str]) -> UserDTO:
         allowed_subject_ids=allowed_subject_ids,
         grade=grade,
         plan=plan,
+        used_trial=used_trial,
         subscription_end=subscription_end,
         subscription_cancelled=subscription_cancelled,
         created_at=keycloak_user.createdTimestamp,

@@ -97,7 +97,7 @@ class AdminUserService:
             role=data.role,
             is_active=True,
             allowed_subject_ids=data.allowed_subject_ids or [],
-            plan=PlanType.FREE,
+            plan=PlanType.PRO,
             subscription_end=datetime.now(UTC) + timedelta(days=365),
             used_trial=False,
         )

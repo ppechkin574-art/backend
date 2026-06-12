@@ -519,9 +519,14 @@ class EntAttemptService:
             # field on the attempt itself untouched (it still gets
             # displayed on the test-result screen for both modes), only
             # the user_points / leaderboard table is gated.
+            #
+            # award_points_once() does an atomic UPDATE WHERE points_awarded=FALSE
+            # and returns True only for the first (winning) call — prevents double
+            # award both from repeated submissions and from concurrent race conditions.
             if (
                 attempt_stat.score > 0
                 and ent_attempt.exam_type == ExamType.full_exam
+                and self._uow.ent_attempts.award_points_once(ent_attempt.id)
             ):
                 self._uow.user_points.add_points(student_guid, attempt_stat.score)
             self._uow.commit()

@@ -97,6 +97,7 @@ class EntAttemptRepositoryDTO(BaseModel):
     subject_combination_id: int | None = None
     current_question_index: int = 0
     full_exam_question_ids: str | None = None
+    points_awarded: bool = False
 
 
 class SubjectQuestionsDTO(BaseModel):

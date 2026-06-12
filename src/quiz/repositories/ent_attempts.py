@@ -3,7 +3,7 @@ from datetime import UTC, date, datetime
 from typing import Any, Protocol
 from uuid import UUID
 
-from sqlalchemy import and_
+from sqlalchemy import and_, text
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy.sql import case, func, literal_column, select
 
@@ -232,6 +232,25 @@ class EntAttemptRepository:
             db_attempt.completed_at = attempt.completed_at
             db_attempt.current_question_index = attempt.current_question_index
             self._session.flush()
+
+    def award_points_once(self, attempt_id: int) -> bool:
+        """Атомарно помечает попытку как «баллы уже начислены».
+
+        Возвращает True ровно один раз — у победителя гонки.
+        Все последующие вызовы (конкурентные или повторные) получают False.
+        Использует PostgreSQL-атомарный UPDATE WHERE points_awarded = FALSE,
+        что исключает двойное начисление без явной блокировки строки.
+        """
+        result = self._session.execute(
+            text(
+                "UPDATE ent_attempts "
+                "SET points_awarded = TRUE "
+                "WHERE id = :attempt_id AND points_awarded = FALSE "
+                "RETURNING id"
+            ),
+            {"attempt_id": attempt_id},
+        )
+        return result.fetchone() is not None
 
     def update_full_exam_question_ids(self, attempt_id: int, questions_csv: str) -> None:
         attempt = self._session.get(EntAttempt, attempt_id)

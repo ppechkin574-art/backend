@@ -74,6 +74,12 @@ class EntAttempt(Base):
     # Поле для сохранения текущей позиции в экзамене
     current_question_index = Column(Integer, default=0, nullable=False, server_default="0")
 
+    # Идемпотентная защита начисления баллов в лидерборд: True означает,
+    # что баллы уже записаны в user_points для этой попытки.
+    # Устанавливается атомарным UPDATE WHERE points_awarded = FALSE,
+    # предотвращает двойное начисление при гонке конкурентных запросов.
+    points_awarded = Column(Boolean, default=False, nullable=False, server_default="false")
+
     options = relationship(EntOption, back_populates="attempts", passive_deletes=True)
     subject_combination = relationship(
         "EntSubjectCombination",

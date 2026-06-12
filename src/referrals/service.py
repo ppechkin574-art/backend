@@ -1,21 +1,32 @@
 """Referral-code service: own code, redeem someone else's, list invitees.
 
-Reward grant flow (operator decision 27.05.2026 — instant, no
-conversion gating):
+Reward grant flow (operator decision 27.05.2026 — instant on redeem,
+no conversion gating):
 1. Validate code + invitee eligibility (one redemption per account, ever).
 2. Persist a `ReferralRedemption` row WITH the policy snapshot — the
-   actual stars/days that were granted, not the live policy values.
-   This way an admin tweak later doesn't rewrite history.
-3. Apply grants on both sides (atomic-ish: DB row first, then stars,
-   then days). A grant failure mid-flow leaves the redemption row but
-   the user can still re-trigger the grant via a reconciliation job
-   (not built yet — log loudly when this happens).
+   actual stars/days granted, not the live policy values, so a later
+   admin tweak doesn't rewrite history.
+3. Commit the redemption + in-DB star grants as ONE transaction. The
+   unique constraint on invitee_id is the atomic guard against a
+   concurrent double-redeem — the loser's commit fails → 409 and its
+   star writes roll back with it.
+4. Grant Pro days (Keycloak — OUTSIDE the DB transaction) only AFTER
+   the commit succeeds, so the race-loser never grants and a failed
+   commit can't leave Pro days dangling without a redemption row. A
+   grant failure is logged for a reconciliation job (not built yet).
+
+Anti-farm: the inviter earns a reward for at most
+`referral_inviter_max_rewards` invitees (default 25). Past that the
+invitee still gets their bonus but the inviter earns nothing more —
+neutralises the "spin up N throwaway accounts to farm my own code"
+abuse.
 
 Policy values live in `app_settings`:
-  - referral_inviter_stars   (default 100)
-  - referral_inviter_days    (default 7)
-  - referral_invitee_stars   (default 30)
-  - referral_invitee_days    (default 7)
+  - referral_inviter_stars        (default 100)
+  - referral_inviter_days         (default 7)
+  - referral_invitee_stars        (default 30)
+  - referral_invitee_days         (default 7)
+  - referral_inviter_max_rewards  (default 25)
 """
 
 import logging
@@ -25,6 +36,7 @@ import string
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app_config.service import AppSettingsService
@@ -52,6 +64,11 @@ _POLICY_KEYS = {
     "invitee_stars": ("referral_invitee_stars", 30),
     "invitee_days": ("referral_invitee_days", 7),
 }
+
+# Anti-farm cap: max invitees an inviter earns a reward for. Tunable
+# from the admin panel; 0 disables the inviter reward entirely. The
+# invitee always gets their own bonus regardless of this cap.
+_INVITER_CAP_KEY = ("referral_inviter_max_rewards", 25)
 
 _CODE_FORMAT_RE = re.compile(r"^[A-Z]{3}\d{3}[A-Z]{2}$")
 
@@ -137,96 +154,149 @@ class ReferralService:
     # ─── public writes ────────────────────────────────────────────────
 
     def redeem(self, invitee_id: UUID, code: str) -> RedemptionResultDTO:
-        """Apply a code on behalf of `invitee_id`. Raises HTTPException
-        with a user-friendly Russian detail on every business-rule fail
-        so the UI can show it verbatim."""
+        """Apply a code on behalf of `invitee_id`. On every business-rule
+        fail raises HTTPException with a Russian `detail` (printed verbatim
+        by the old app) AND an `X-Error-Code` header (the new app localizes
+        off it)."""
         code = code.strip().upper()
 
         if not _CODE_FORMAT_RE.match(code):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Неверный формат промокода",
+            raise self._redeem_error(
+                status.HTTP_400_BAD_REQUEST, "bad_format", "Неверный формат промокода"
             )
 
         owner = self.db.query(ReferralCode).filter(ReferralCode.code == code).first()
         if owner is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Такой промокод не существует",
+            raise self._redeem_error(
+                status.HTTP_404_NOT_FOUND, "unknown", "Такой промокод не существует"
             )
         if owner.user_id == invitee_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Нельзя вводить свой собственный код",
+            raise self._redeem_error(
+                status.HTTP_400_BAD_REQUEST,
+                "self_code",
+                "Нельзя вводить свой собственный код",
             )
 
+        # Fast, friendly pre-check for the common "already used" case. The
+        # DB unique constraint (caught at commit below) is the REAL guard
+        # against the concurrent double-tap race.
         already_redeemed = (
             self.db.query(ReferralRedemption)
             .filter(ReferralRedemption.invitee_id == invitee_id)
             .first()
         )
         if already_redeemed is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Ты уже использовал промокод. Один код на аккаунт.",
+            raise self._redeem_error(
+                status.HTTP_409_CONFLICT,
+                "already_redeemed",
+                "Ты уже использовал промокод. Один код на аккаунт.",
             )
 
         policy = self.get_policy()
 
-        # Persist redemption FIRST with the policy snapshot. If grants
-        # below fail partway we still have an audit trail of the intent
-        # and the user can't double-redeem.
+        # Anti-farm cap. Count only previously-REWARDED redemptions so the
+        # count is stable once the cap is hit (capped ones store 0 and
+        # don't inflate it). Past the cap the invitee still gets THEIR
+        # bonus; the inviter earns nothing.
+        cap = self.app_settings.get_int(*_INVITER_CAP_KEY)
+        rewarded_invitees = (
+            self.db.query(ReferralRedemption)
+            .filter(
+                ReferralRedemption.inviter_id == owner.user_id,
+                ReferralRedemption.inviter_stars_granted > 0,
+            )
+            .count()
+        )
+        reward_inviter = rewarded_invitees < cap
+        inviter_stars = policy.inviter_stars if reward_inviter else 0
+        inviter_days = policy.inviter_days if reward_inviter else 0
+
+        # Persist the redemption with a TRUTHFUL snapshot of what each side
+        # actually gets (inviter fields are 0 when the cap is hit).
         redemption = ReferralRedemption(
             code_id=owner.user_id,
             inviter_id=owner.user_id,
             invitee_id=invitee_id,
-            inviter_stars_granted=policy.inviter_stars,
-            inviter_days_granted=policy.inviter_days,
+            inviter_stars_granted=inviter_stars,
+            inviter_days_granted=inviter_days,
             invitee_stars_granted=policy.invitee_stars,
             invitee_days_granted=policy.invitee_days,
         )
         self.db.add(redemption)
         self.db.flush()
+        redemption_id = redemption.id
 
-        # Stars first — fastest, in-DB, can't fail unless DB is down.
+        # Stars are in-DB → part of THIS transaction. If the commit below
+        # loses the unique-constraint race they roll back together.
         self.user_points_repo.add_points(invitee_id, policy.invitee_stars)
-        self.user_points_repo.add_points(owner.user_id, policy.inviter_stars)
+        if reward_inviter:
+            self.user_points_repo.add_points(owner.user_id, inviter_stars)
 
-        # Pro days — touches Keycloak. Failure here is loud-logged; the
-        # invitee/inviter row already exists so they can be made whole
-        # by a one-off admin grant if it ever happens.
+        # Commit FIRST. The unique constraint on invitee_id is the atomic
+        # guard against a concurrent second redemption: the loser's commit
+        # raises IntegrityError, we surface the same friendly 409, its star
+        # writes roll back, and it never reaches the Pro-day grant below.
         try:
-            self.admin_user_service.grant_pro_subscription(
-                user_id=invitee_id, days=policy.invitee_days
-            )
-        except Exception as e:
-            logger.exception(
-                "Failed to grant invitee Pro days (redemption %s): %s",
-                redemption.id,
-                e,
-            )
-        try:
-            self.admin_user_service.grant_pro_subscription(
-                user_id=owner.user_id, days=policy.inviter_days
-            )
-        except Exception as e:
-            logger.exception(
-                "Failed to grant inviter Pro days (redemption %s): %s",
-                redemption.id,
-                e,
+            self.db.commit()
+        except IntegrityError:
+            self.db.rollback()
+            raise self._redeem_error(
+                status.HTTP_409_CONFLICT,
+                "already_redeemed",
+                "Ты уже использовал промокод. Один код на аккаунт.",
             )
 
-        self.db.commit()
+        # Pro days touch Keycloak (OUTSIDE the DB transaction). Grant them
+        # only AFTER a durable commit so the race-loser never grants and a
+        # failed commit can't leave Pro days dangling without a redemption
+        # row. A grant failure is logged for the reconciliation job — the
+        # committed row is the source of truth.
+        self._grant_pro_days_safe(
+            invitee_id, policy.invitee_days, redemption_id, "invitee"
+        )
+        if reward_inviter:
+            self._grant_pro_days_safe(
+                owner.user_id, inviter_days, redemption_id, "inviter"
+            )
 
         return RedemptionResultDTO(
             inviter_id=owner.user_id,
             invitee_stars_granted=policy.invitee_stars,
             invitee_days_granted=policy.invitee_days,
-            inviter_stars_granted=policy.inviter_stars,
-            inviter_days_granted=policy.inviter_days,
+            inviter_stars_granted=inviter_stars,
+            inviter_days_granted=inviter_days,
         )
 
     # ─── internals ────────────────────────────────────────────────────
+
+    @staticmethod
+    def _redeem_error(status_code: int, code: str, detail: str) -> HTTPException:
+        """Business-rule rejection. `detail` stays a plain Russian string
+        so the OLD app (which prints `detail` verbatim) keeps working; the
+        machine-readable `X-Error-Code` header lets the NEW app localize."""
+        return HTTPException(
+            status_code=status_code,
+            detail=detail,
+            headers={"X-Error-Code": code},
+        )
+
+    def _grant_pro_days_safe(
+        self, user_id: UUID, days: int, redemption_id: int, side: str
+    ) -> None:
+        """Best-effort Pro-day grant (Keycloak). Never raises — a failure
+        is loud-logged and left for the reconciliation job; the committed
+        redemption row is the source of truth for what was owed."""
+        if days <= 0:
+            return
+        try:
+            self.admin_user_service.grant_pro_subscription(user_id=user_id, days=days)
+        except Exception as e:
+            logger.exception(
+                "Failed to grant %s Pro days (redemption %s): %s",
+                side,
+                redemption_id,
+                e,
+            )
 
     def _mint_unique_code(self, user_id: UUID) -> ReferralCode:
         """Try up to 8 random codes — collision is astronomically

@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 
 # Import side-effect: register all ORM models with the SQLAlchemy
 # registry so `ReferralRedemption(...)` instantiation (inside the
@@ -78,6 +79,21 @@ def _query_returns(db_mock, *return_values):
     for chain, val in zip(chain_mocks, return_values):
         chain.filter.return_value.first.return_value = val
     db_mock.query.side_effect = chain_mocks
+
+
+def _setup_redeem_queries(db_mock, owner, prior=None, rewarded_count=0):
+    """Wire the THREE sequential queries a full redeem() issues:
+      1. ReferralCode lookup (.first)            → owner
+      2. already-redeemed pre-check (.first)     → prior
+      3. anti-farm cap COUNT (.count)            → rewarded_count
+    """
+    code_chain = MagicMock()
+    code_chain.filter.return_value.first.return_value = owner
+    prior_chain = MagicMock()
+    prior_chain.filter.return_value.first.return_value = prior
+    cap_chain = MagicMock()
+    cap_chain.filter.return_value.count.return_value = rewarded_count
+    db_mock.query.side_effect = [code_chain, prior_chain, cap_chain]
 
 
 # ─── _generate_code shape ─────────────────────────────────────────────
@@ -194,7 +210,8 @@ class TestRedeemRules:
         invitee_id = uuid4()
         owner = _fake_code(owner_id, "EJW123JX")
         db = MagicMock()
-        _query_returns(db, owner, None)  # owner exists, no prior redemption
+        # owner exists, no prior redemption, inviter well under the cap
+        _setup_redeem_queries(db, owner, prior=None, rewarded_count=0)
         admin = MagicMock()
         points = MagicMock()
         svc = _make_service(
@@ -229,15 +246,138 @@ class TestRedeemRules:
         owner_id = uuid4()
         owner = _fake_code(owner_id, "EJW123JX")
         db = MagicMock()
-        _query_returns(db, owner, None)
+        _setup_redeem_queries(db, owner, prior=None, rewarded_count=0)
         admin = MagicMock()
         admin.grant_pro_subscription.side_effect = RuntimeError("keycloak down")
         svc = _make_service(db_mock=db, admin_user_service=admin)
 
-        # Should NOT raise — the redemption should still commit.
+        # Should NOT raise — the redemption commits BEFORE the (failing)
+        # post-commit Pro-day grant, so the user can't re-redeem.
         result = svc.redeem(invitee_id=uuid4(), code="EJW123JX")
         assert result.inviter_id == owner_id
         db.commit.assert_called_once()
+
+
+# ─── anti-farm cap ────────────────────────────────────────────────────
+
+
+class TestInviterCap:
+    """Past `referral_inviter_max_rewards` (default 25) the invitee still
+    gets their bonus but the inviter earns nothing — kills self-code
+    farming via throwaway accounts."""
+
+    def test_under_cap_rewards_both_sides(self):
+        owner_id = uuid4()
+        owner = _fake_code(owner_id, "EJW123JX")
+        db = MagicMock()
+        _setup_redeem_queries(db, owner, prior=None, rewarded_count=24)  # 24 < 25
+        points = MagicMock()
+        svc = _make_service(db_mock=db, user_points_repo=points)
+
+        result = svc.redeem(invitee_id=uuid4(), code="EJW123JX")
+
+        assert points.add_points.call_count == 2  # invitee + inviter
+        assert result.inviter_stars_granted == 100
+        assert result.inviter_days_granted == 7
+
+    def test_at_cap_rewards_invitee_only(self):
+        owner_id = uuid4()
+        invitee_id = uuid4()
+        owner = _fake_code(owner_id, "EJW123JX")
+        db = MagicMock()
+        _setup_redeem_queries(db, owner, prior=None, rewarded_count=25)  # == cap
+        admin = MagicMock()
+        points = MagicMock()
+        svc = _make_service(
+            db_mock=db, admin_user_service=admin, user_points_repo=points
+        )
+
+        result = svc.redeem(invitee_id=invitee_id, code="EJW123JX")
+
+        # Invitee still rewarded; inviter gets NOTHING (stars or days).
+        points.add_points.assert_called_once_with(invitee_id, 30)
+        admin.grant_pro_subscription.assert_called_once_with(
+            user_id=invitee_id, days=7
+        )
+        assert result.invitee_stars_granted == 30
+        assert result.inviter_stars_granted == 0
+        assert result.inviter_days_granted == 0
+
+
+# ─── concurrent-redeem race ───────────────────────────────────────────
+
+
+class TestRedeemRace:
+    """A concurrent second redemption for the same invitee loses the
+    unique-constraint race at commit → friendly 409, nothing credited."""
+
+    def _race_service(self):
+        owner = _fake_code(uuid4(), "EJW123JX")
+        db = MagicMock()
+        _setup_redeem_queries(db, owner, prior=None, rewarded_count=0)
+        db.commit.side_effect = IntegrityError("INSERT", {}, Exception("dup"))
+        return db, owner
+
+    def test_race_loser_yields_409(self):
+        db, _ = self._race_service()
+        svc = _make_service(db_mock=db)
+        with pytest.raises(HTTPException) as e:
+            svc.redeem(invitee_id=uuid4(), code="EJW123JX")
+        assert e.value.status_code == 409
+        assert e.value.headers["X-Error-Code"] == "already_redeemed"
+        db.rollback.assert_called_once()
+
+    def test_race_loser_does_not_grant_pro(self):
+        # Pro days are a non-transactional Keycloak write — the loser must
+        # NEVER reach the grant, or it would leak Pro with no redemption.
+        db, _ = self._race_service()
+        admin = MagicMock()
+        svc = _make_service(db_mock=db, admin_user_service=admin)
+        with pytest.raises(HTTPException):
+            svc.redeem(invitee_id=uuid4(), code="EJW123JX")
+        admin.grant_pro_subscription.assert_not_called()
+
+
+# ─── machine-readable error codes (X-Error-Code header) ───────────────
+
+
+class TestErrorCodes:
+    """Every business-rule rejection carries an X-Error-Code header so the
+    KZ app can localize instead of printing the raw Russian `detail`."""
+
+    def test_bad_format_header(self):
+        svc = _make_service()
+        with pytest.raises(HTTPException) as e:
+            svc.redeem(invitee_id=uuid4(), code="ABC")
+        assert e.value.headers["X-Error-Code"] == "bad_format"
+
+    def test_unknown_code_header(self):
+        db = MagicMock()
+        _query_returns(db, None)
+        svc = _make_service(db_mock=db)
+        with pytest.raises(HTTPException) as e:
+            svc.redeem(invitee_id=uuid4(), code="EJW123JX")
+        assert e.value.headers["X-Error-Code"] == "unknown"
+
+    def test_self_code_header(self):
+        owner_id = uuid4()
+        owner = _fake_code(owner_id, "EJW123JX")
+        db = MagicMock()
+        _query_returns(db, owner)
+        svc = _make_service(db_mock=db)
+        with pytest.raises(HTTPException) as e:
+            svc.redeem(invitee_id=owner_id, code="EJW123JX")
+        assert e.value.headers["X-Error-Code"] == "self_code"
+
+    def test_already_redeemed_header(self):
+        owner = _fake_code(uuid4(), "EJW123JX")
+        existing = _fake_redemption()
+        db = MagicMock()
+        _query_returns(db, owner, existing)
+        svc = _make_service(db_mock=db)
+        with pytest.raises(HTTPException) as e:
+            svc.redeem(invitee_id=uuid4(), code="EJW123JX")
+        assert e.value.headers["X-Error-Code"] == "already_redeemed"
 
 
 # ─── policy read ──────────────────────────────────────────────────────

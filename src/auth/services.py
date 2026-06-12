@@ -1007,7 +1007,7 @@ class AuthService:
             raise
 
     def activate_free_trial(self, user: UserDTO) -> UserDTO:
-        updated_user = self.update_user_plan(user, PlanType.PRO, 3)
+        updated_user = self.update_user_plan(user, PlanType.PRO, 1)
         update_data = UserUpdateDTO(used_trial=True)
         return self.update_user_profile(updated_user, update_data)
 

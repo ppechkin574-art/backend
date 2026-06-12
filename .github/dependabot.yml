@@ -1,8 +1,9 @@
 version: 2
 updates:
-  # Pip deps in requirements.txt — security + minor bumps weekly
+  # Pip deps in requirements.txt — security + minor bumps weekly, targeting develop
   - package-ecosystem: "pip"
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
       day: "monday"
@@ -22,6 +23,7 @@ updates:
   # GitHub Actions versions monthly
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: "monthly"
     commit-message:

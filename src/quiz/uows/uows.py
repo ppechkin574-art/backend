@@ -1,4 +1,5 @@
 from quiz.repositories.user_points import UserPointsRepository
+from security.repository import FraudEventRepository
 from bank.repository import BankRepository
 from database.uows import UnitOfWorkSQLAlchemy
 from quiz.repositories.attendance import AttendanceRepository
@@ -68,6 +69,7 @@ class UnitOfWorkTests(UnitOfWorkSQLAlchemy):
         self.cashback = CashbackRepository(self.session)
         self.bank = BankRepository(self.session)
         self.user_points = UserPointsRepository(self.session)
+        self.fraud_events = FraudEventRepository(self.session)
         return self
 
 

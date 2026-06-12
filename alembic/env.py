@@ -38,6 +38,8 @@ from streak_bonus.models import *  # noqa: F401, F403
 from student import models
 from content import models  # noqa: F401 — discover SubscriptionBenefit table for autogen
 from app_config import models  # noqa: F401 — discover AppSetting table for autogen
+from security import models  # noqa: F401 — discover FraudEvent, UserRiskProfile, PointsAuditLog
+from security.models import *  # noqa: F401, F403
 
 target_metadata = Base.metadata
 settings = Settings()  # noqa

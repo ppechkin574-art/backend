@@ -523,12 +523,27 @@ class EntAttemptService:
             # award_points_once() does an atomic UPDATE WHERE points_awarded=FALSE
             # and returns True only for the first (winning) call — prevents double
             # award both from repeated submissions and from concurrent race conditions.
-            if (
-                attempt_stat.score > 0
-                and ent_attempt.exam_type == ExamType.full_exam
-                and self._uow.ent_attempts.award_points_once(ent_attempt.id)
-            ):
-                self._uow.user_points.add_points(student_guid, attempt_stat.score)
+            if attempt_stat.score > 0 and ent_attempt.exam_type == ExamType.full_exam:
+                if self._uow.ent_attempts.award_points_once(ent_attempt.id):
+                    self._uow.user_points.add_points(
+                        student_guid,
+                        attempt_stat.score,
+                        source_type="ent_attempt",
+                        source_id=str(ent_attempt.id),
+                    )
+                else:
+                    self._uow.fraud_events.log_event(
+                        event_type="repeated_attempt",
+                        risk_score=75,
+                        user_id=student_guid,
+                        reason=(
+                            f"Attempt {ent_attempt.id}: award_points_once() blocked "
+                            f"duplicate point award (score={attempt_stat.score})"
+                        ),
+                        endpoint="/user/ents/attempts/answer",
+                        method="POST",
+                        metadata={"attempt_id": ent_attempt.id, "score": attempt_stat.score},
+                    )
             self._uow.commit()
             self._cashback_service.check_and_update(student_guid)
 

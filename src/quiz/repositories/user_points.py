@@ -8,7 +8,18 @@ class UserPointsRepository:
     def __init__(self, session: Session):
         self._session = session
 
-    def add_points(self, user_id, points: int) -> None:
+    def add_points(
+        self,
+        user_id,
+        points: int,
+        source_type: str = "unknown",
+        source_id: str | None = None,
+        reason: str | None = None,
+    ) -> None:
+        from security.models import PointsAuditLog
+
+        points_before = self.get_total_points(user_id)
+
         stmt = text("""
             INSERT INTO user_points (user_id, total_points)
             VALUES (:user_id, :points)
@@ -16,6 +27,19 @@ class UserPointsRepository:
             SET total_points = user_points.total_points + :points
         """)
         self._session.execute(stmt, {"user_id": user_id, "points": points})
+
+        self._session.add(
+            PointsAuditLog(
+                user_id=user_id,
+                points_before=points_before,
+                points_after=points_before + points,
+                points_delta=points,
+                source_type=source_type,
+                source_id=source_id,
+                reason=reason,
+                is_suspicious=False,
+            )
+        )
 
     def get_total_points(self, user_id) -> int:
         """Вернуть сумму баллов пользователя."""

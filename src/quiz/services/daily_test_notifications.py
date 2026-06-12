@@ -82,6 +82,7 @@ class DailyTestNotificationService:
 
             if invalid_tokens:
                 removed = repo.delete_tokens(invalid_tokens)
+                session.commit()
         finally:
             session.close()
 
@@ -91,6 +92,59 @@ class DailyTestNotificationService:
             failed=total_failure,
             removed_tokens=removed,
         )
+
+
+    def send_test_to_user(
+        self,
+        user_id,
+        *,
+        title: str | None = None,
+        body: str | None = None,
+    ) -> DailyTestNotificationResult:
+        """Test-send to a single user's FCM tokens only.
+        Bypasses the full broadcast loop — safe to use without disturbing other users."""
+        if not self.enabled:
+            return DailyTestNotificationResult(0, 0, 0, 0)
+
+        from sqlalchemy import select
+        from quiz.models.daily_tests import DailyTestDeviceToken
+
+        session = self._database.session
+        try:
+            tokens = session.scalars(
+                select(DailyTestDeviceToken.token).where(
+                    DailyTestDeviceToken.student_guid == user_id
+                )
+            ).all()
+            tokens = [t for t in tokens if t]
+
+            if not tokens:
+                logger.info("send_test_to_user: no FCM tokens for %s", user_id)
+                return DailyTestNotificationResult(0, 0, 0, 0)
+
+            result = self._firebase_client.broadcast(
+                tokens,
+                title=title or self._firebase_settings.default_title,
+                body=body or self._firebase_settings.default_body,
+                data={"type": "daily_test", "test": "true"},
+            )
+
+            invalid = result.invalid_tokens
+            removed = 0
+            if invalid:
+                from quiz.repositories.daily_tests import DailyTestRepository
+                repo = DailyTestRepository(session)
+                removed = repo.delete_tokens(invalid)
+                session.commit()
+
+            return DailyTestNotificationResult(
+                requested=result.requested,
+                delivered=result.success,
+                failed=result.failure,
+                removed_tokens=removed,
+            )
+        finally:
+            session.close()
 
 
 class DailyTestNotificationScheduler:

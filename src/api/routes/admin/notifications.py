@@ -1,4 +1,5 @@
 import logging
+from uuid import UUID
 
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, HTTPException
@@ -27,6 +28,10 @@ class TestNotificationRequestDTO(BaseModel):
 
     title: str = Field(..., description="Notification title")
     body: str = Field(..., description="Notification body")
+    target_user_id: UUID | None = Field(
+        default=None,
+        description="Send only to this user (UUID). Omit to send to ALL devices.",
+    )
 
 
 class TestNotificationResponseDTO(BaseModel):
@@ -98,11 +103,18 @@ async def send_test_notification(
         )
 
     try:
-        result = notification_service.send_daily_notifications(
-            title=request.title,
-            body=request.body,
-            data={"type": "test"},
-        )
+        if request.target_user_id is not None:
+            result = notification_service.send_test_to_user(
+                request.target_user_id,
+                title=request.title,
+                body=request.body,
+            )
+        else:
+            result = notification_service.send_daily_notifications(
+                title=request.title,
+                body=request.body,
+                data={"type": "test"},
+            )
 
         logger.info(
             "Test notification sent",
@@ -111,6 +123,7 @@ async def send_test_notification(
                 "delivered": result.delivered,
                 "failed": result.failed,
                 "removed_tokens": result.removed_tokens,
+                "target_user_id": str(request.target_user_id) if request.target_user_id else "all",
             },
         )
 

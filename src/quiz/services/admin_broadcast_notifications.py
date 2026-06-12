@@ -132,6 +132,7 @@ class AdminBroadcastNotificationService:
 
             if invalid_tokens:
                 removed = repo.delete_tokens(invalid_tokens)
+                session.commit()
         finally:
             session.close()
 

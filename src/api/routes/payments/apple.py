@@ -19,15 +19,19 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from api.dependencies import (
+    get_admin_user_service,
     get_db_session,
     get_subscription_plan_service,
     get_subscription_service,
 )
 from api.routes.auth.routes import get_current_user
+from auth.admin_service import AdminUserService
 from auth.dtos.users import UserDTO
 from common.enums import PlanType
 from payments.apple_iap import AppleIAPVerifier
 from payments.models import Payment
+from quiz.repositories.user_points import UserPointsRepository
+from referrals.service import grant_pending_invitee_reward
 from pydantic import BaseModel
 from subscription.plan_service import SubscriptionPlanService
 from subscription.service import SubscriptionService
@@ -136,6 +140,7 @@ async def verify_apple_receipt(
     subscription_service: SubscriptionService = Depends(get_subscription_service),
     db_session: Session = Depends(get_db_session),
     plan_service: SubscriptionPlanService = Depends(get_subscription_plan_service),
+    admin_user_service: AdminUserService = Depends(get_admin_user_service),
 ):
     """Validate the StoreKit receipt and, on success, activate PRO.
 
@@ -209,6 +214,19 @@ async def verify_apple_receipt(
         result.expires_at,
         result.environment,
     )
+
+    # Grant deferred referral reward if this is the invitee's first real payment.
+    # Fail-soft: never break the purchase flow over a referral side-effect.
+    try:
+        grant_pending_invitee_reward(
+            user_id=current_user.id,
+            db=db_session,
+            user_points_repo=UserPointsRepository(db_session),
+            admin_user_service=admin_user_service,
+        )
+        db_session.commit()
+    except Exception:
+        logger.exception("Referral reward grant failed for user %s (Apple IAP)", current_user.id)
 
     return AppleVerifyOut(
         is_active=True,

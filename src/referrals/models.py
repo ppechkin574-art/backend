@@ -76,8 +76,15 @@ class ReferralRedemption(Base):
     # what each user was promised.
     inviter_stars_granted = Column(Integer, nullable=False)
     inviter_days_granted = Column(Integer, nullable=False)
+    # For invitee: these are the PROMISED amounts (snapshot at redemption).
+    # Actual grant happens on first paid subscription — see invitee_rewarded_at.
     invitee_stars_granted = Column(Integer, nullable=False)
     invitee_days_granted = Column(Integer, nullable=False)
+    # NULL = reward pending (invitee has not paid yet).
+    # NOT NULL = reward already granted at this timestamp.
+    # Rows created before this column existed have invitee_rewarded_at = redeemed_at
+    # (set by migration) — they were granted immediately under the old policy.
+    invitee_rewarded_at = Column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         # One promo per invitee lifetime — DB-enforced.

@@ -15,11 +15,14 @@ from api.dependencies import (
     get_payment_settings,
 )
 from api.routes.payments.websocket.manager import manager
+from auth.admin_service import AdminUserService
 from clients.freedom_pay.client import make_pg_sig, verify_pg_sig
 from clients.freedom_pay.settings import FreedomPaySettings
 from clients.identity_provider.client import IdentityProviderClientInterface
 from common.enums import PlanType, SubscriptionStatus
 from payments.models import Payment, PaymentStatusHistory
+from quiz.repositories.user_points import UserPointsRepository
+from referrals.service import grant_pending_invitee_reward
 from subscription.models import (
     Subscription,
     SubscriptionHistory,
@@ -255,6 +258,21 @@ async def result_notify(
                 subscription.id,
                 payment.user_id,
             )
+
+            # Grant deferred referral reward if this is the invitee's first real payment.
+            try:
+                admin_svc = AdminUserService(identity_provider_client, session=session)
+                grant_pending_invitee_reward(
+                    user_id=UUID(payment.user_id),
+                    db=session,
+                    user_points_repo=UserPointsRepository(session),
+                    admin_user_service=admin_svc,
+                )
+                session.commit()
+            except Exception:
+                logger.exception(
+                    "Referral reward grant failed for user %s (FreedomPay)", payment.user_id
+                )
 
         except Exception as e:
             logger.exception("Failed to activate subscription: %s", e)

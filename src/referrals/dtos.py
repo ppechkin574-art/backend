@@ -30,6 +30,13 @@ class RedemptionResultDTO(BaseModel):
     invitee_days_granted: int
     inviter_stars_granted: int
     inviter_days_granted: int
+    invitee_reward_pending: bool = Field(
+        default=True,
+        description=(
+            "True если награда инвайти отложена до первой оплаты. "
+            "Фронт должен показать: «Звёзды будут начислены после первой покупки подписки»."
+        ),
+    )
 
 
 class InviteeStatusDTO(BaseModel):

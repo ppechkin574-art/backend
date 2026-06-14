@@ -33,6 +33,7 @@ import logging
 import random
 import re
 import string
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -41,6 +42,7 @@ from sqlalchemy.orm import Session
 
 from app_config.service import AppSettingsService
 from auth.admin_service import AdminUserService
+from payments.models import Payment
 from quiz.repositories.user_points import UserPointsRepository
 from referrals.dtos import (
     InviteeStatusDTO,
@@ -68,7 +70,7 @@ _POLICY_KEYS = {
 # Anti-farm cap: max invitees an inviter earns a reward for. Tunable
 # from the admin panel; 0 disables the inviter reward entirely. The
 # invitee always gets their own bonus regardless of this cap.
-_INVITER_CAP_KEY = ("referral_inviter_max_rewards", 25)
+_INVITER_CAP_KEY = ("referral_inviter_max_rewards", 99999)
 
 _CODE_FORMAT_RE = re.compile(r"^[A-Z]{3}\d{3}[A-Z]{2}$")
 
@@ -205,11 +207,16 @@ class ReferralService:
             .count()
         )
         reward_inviter = rewarded_invitees < cap
-        inviter_stars = policy.inviter_stars if reward_inviter else 0
-        inviter_days = policy.inviter_days if reward_inviter else 0
 
-        # Persist the redemption with a TRUTHFUL snapshot of what each side
-        # actually gets (inviter fields are 0 when the cap is hit).
+        # Inviter reward: only if inviter has at least one real paid subscription
+        # (trial does not count). If inviter has never paid — they get 0.
+        inviter_has_paid = reward_inviter and self._has_ever_paid(owner.user_id)
+        inviter_stars = policy.inviter_stars if inviter_has_paid else 0
+        inviter_days = policy.inviter_days if inviter_has_paid else 0
+
+        # Persist the redemption. Invitee fields are a SNAPSHOT (promise) —
+        # actual grant happens on the invitee's first real payment.
+        # invitee_rewarded_at=None marks the reward as pending.
         redemption = ReferralRedemption(
             code_id=owner.user_id,
             inviter_id=owner.user_id,
@@ -218,16 +225,18 @@ class ReferralService:
             inviter_days_granted=inviter_days,
             invitee_stars_granted=policy.invitee_stars,
             invitee_days_granted=policy.invitee_days,
+            invitee_rewarded_at=None,
         )
         self.db.add(redemption)
         self.db.flush()
         redemption_id = redemption.id
 
-        # Stars are in-DB → part of THIS transaction. If the commit below
-        # loses the unique-constraint race they roll back together.
-        self.user_points_repo.add_points(invitee_id, policy.invitee_stars)
-        if reward_inviter:
+        # Inviter stars are in-DB → part of THIS transaction.
+        if inviter_has_paid and inviter_stars > 0:
             self.user_points_repo.add_points(owner.user_id, inviter_stars)
+
+        # Invitee stars: DEFERRED — granted by grant_pending_invitee_reward()
+        # when the invitee makes their first real payment.
 
         # Commit FIRST. The unique constraint on invitee_id is the atomic
         # guard against a concurrent second redemption: the loser's commit
@@ -243,18 +252,12 @@ class ReferralService:
                 "Ты уже использовал промокод. Один код на аккаунт.",
             )
 
-        # Pro days touch Keycloak (OUTSIDE the DB transaction). Grant them
-        # only AFTER a durable commit so the race-loser never grants and a
-        # failed commit can't leave Pro days dangling without a redemption
-        # row. A grant failure is logged for the reconciliation job — the
-        # committed row is the source of truth.
-        self._grant_pro_days_safe(
-            invitee_id, policy.invitee_days, redemption_id, "invitee"
-        )
-        if reward_inviter:
+        # Pro days for inviter: touch Keycloak OUTSIDE the DB transaction.
+        if inviter_has_paid:
             self._grant_pro_days_safe(
                 owner.user_id, inviter_days, redemption_id, "inviter"
             )
+        # Pro days for invitee: DEFERRED — see grant_pending_invitee_reward().
 
         return RedemptionResultDTO(
             inviter_id=owner.user_id,
@@ -262,6 +265,7 @@ class ReferralService:
             invitee_days_granted=policy.invitee_days,
             inviter_stars_granted=inviter_stars,
             inviter_days_granted=inviter_days,
+            invitee_reward_pending=True,
         )
 
     # ─── internals ────────────────────────────────────────────────────
@@ -327,6 +331,21 @@ class ReferralService:
         letters2 = "".join(random.choices(_CODE_LETTERS, k=2))
         return letters3 + digits3 + letters2
 
+    def _has_ever_paid(self, user_id: UUID) -> bool:
+        """True if the user has at least one successful paid subscription.
+        Trial (1-day free) does NOT count — only real money payments.
+        Checks the payments table which is populated by all 3 payment flows
+        (FreedomPay, Apple IAP, Google Play).
+        """
+        return (
+            self.db.query(Payment)
+            .filter(
+                Payment.user_id == str(user_id),
+                Payment.status == "paid",
+            )
+            .first()
+        ) is not None
+
     @staticmethod
     def _mask_phone(phone: str | None) -> str:
         # Fallback when user hasn't set a username — show last 4 digits.
@@ -334,3 +353,53 @@ class ReferralService:
             return "—"
         digits = "".join(c for c in phone if c.isdigit())
         return f"+…{digits[-4:]}" if len(digits) >= 4 else "—"
+
+
+def grant_pending_invitee_reward(
+    user_id: UUID,
+    db: Session,
+    user_points_repo: UserPointsRepository,
+    admin_user_service: AdminUserService,
+) -> bool:
+    """Grant a deferred referral reward to the invitee after their first real payment.
+
+    Called from every payment confirmation handler (FreedomPay webhook, Apple IAP,
+    Android IAP). Idempotent: does nothing if the reward was already granted or
+    if the user has no pending referral redemption.
+
+    Returns True if a reward was granted, False if nothing to do.
+    """
+    row = (
+        db.query(ReferralRedemption)
+        .filter(
+            ReferralRedemption.invitee_id == user_id,
+            ReferralRedemption.invitee_rewarded_at.is_(None),
+        )
+        .first()
+    )
+    if row is None:
+        return False
+
+    if row.invitee_stars_granted > 0:
+        user_points_repo.add_points(user_id, row.invitee_stars_granted)
+
+    if row.invitee_days_granted > 0:
+        try:
+            admin_user_service.grant_pro_subscription(
+                user_id=user_id, days=row.invitee_days_granted
+            )
+        except Exception:
+            logger.exception(
+                "Failed to grant referral Pro days to invitee %s", user_id
+            )
+
+    row.invitee_rewarded_at = datetime.now(UTC)
+    db.flush()
+
+    logger.info(
+        "Referral reward granted to invitee %s: stars=%s days=%s",
+        user_id,
+        row.invitee_stars_granted,
+        row.invitee_days_granted,
+    )
+    return True

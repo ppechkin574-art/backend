@@ -24,17 +24,21 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from api.dependencies import (
+    get_admin_user_service,
     get_db_session,
     get_subscription_plan_service,
     get_subscription_service,
     get_user_repository_keycloak,
 )
 from api.routes.auth.routes import get_current_user
+from auth.admin_service import AdminUserService
 from auth.dtos.users import UserDTO, UserQueryDTO
 from auth.repositories.users import UserRepositoryInterface
 from common.enums import PlanType
 from payments.android_iap import AndroidIAPVerifier
 from payments.models import Payment
+from quiz.repositories.user_points import UserPointsRepository
+from referrals.service import grant_pending_invitee_reward
 from subscription.plan_service import SubscriptionPlanService
 from subscription.service import SubscriptionService
 
@@ -203,6 +207,7 @@ async def verify_android_purchase(
     subscription_service: SubscriptionService = Depends(get_subscription_service),
     db_session: Session = Depends(get_db_session),
     plan_service: SubscriptionPlanService = Depends(get_subscription_plan_service),
+    admin_user_service: AdminUserService = Depends(get_admin_user_service),
 ):
     """Validate a Google Play purchase token and, on success, activate PRO.
 
@@ -283,6 +288,18 @@ async def verify_android_purchase(
         result.expires_at,
         result.environment,
     )
+
+    # Grant deferred referral reward if this is the invitee's first real payment.
+    try:
+        grant_pending_invitee_reward(
+            user_id=current_user.id,
+            db=db_session,
+            user_points_repo=UserPointsRepository(db_session),
+            admin_user_service=admin_user_service,
+        )
+        db_session.commit()
+    except Exception:
+        logger.exception("Referral reward grant failed for user %s (Android IAP)", current_user.id)
 
     return AndroidVerifyOut(
         is_active=True,

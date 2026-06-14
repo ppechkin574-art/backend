@@ -36,7 +36,7 @@ class InviteeStatusDTO(BaseModel):
     """One row in «Кого я пригласил» list on the profile screen."""
 
     invitee_id: UUID
-    invitee_display_name: str  # username or masked phone fallback
+    invitee_display_name: str  # display name or masked phone fallback
     invitee_avatar_url: str | None = Field(
         default=None,
         description=(
@@ -45,13 +45,6 @@ class InviteeStatusDTO(BaseModel):
         ),
     )
     redeemed_at: datetime
-    has_paid_subscription: bool = Field(
-        ...,
-        description=(
-            "True если приглашённый когда-либо оплачивал Pro. "
-            "Используется UI как 'статус ✅ оплатил'."
-        ),
-    )
 
 
 class ReferralPolicyDTO(BaseModel):

@@ -118,8 +118,7 @@ class ReferralService:
             avatar_url: str | None = None
             try:
                 user = self.admin_user_service.get_user(r.invitee_id)
-                display = user.username or self._mask_phone(user.phone)
-                has_paid = bool(user.subscription_end) and user.plan and user.plan.upper() == "PRO"
+                display = user.name or self._mask_phone(user.phone)
                 # Avatar is a flattened Keycloak attribute (bare filename) on
                 # UserDTO. Presign it for the client. Fail-soft: any hiccup
                 # leaves avatar_url None and the client falls back to the
@@ -139,14 +138,12 @@ class ReferralService:
                 # on one invitee — show a placeholder and move on.
                 logger.warning("Failed to fetch invitee %s: %s", r.invitee_id, e)
                 display = "—"
-                has_paid = False
             out.append(
                 InviteeStatusDTO(
                     invitee_id=r.invitee_id,
                     invitee_display_name=display,
                     invitee_avatar_url=avatar_url,
                     redeemed_at=r.redeemed_at,
-                    has_paid_subscription=has_paid,
                 )
             )
         return out

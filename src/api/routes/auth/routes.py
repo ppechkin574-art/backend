@@ -954,7 +954,7 @@ class DeletionScheduledDTO(BaseModel):
 
 class DeletionStatusDTO(BaseModel):
     pending: bool
-    scheduled_for: datetime | None = None
+    deletion_scheduled_for: datetime | None = None
     days_remaining: int | None = None
 
 
@@ -1062,7 +1062,7 @@ def delete_account(
     )
 
 
-@protected_router.post("/delete/cancel", status_code=204)
+@protected_router.post("/delete/cancel", status_code=200)
 def cancel_delete_account(
     user: UserDTO = Depends(get_user),
     db: Session = Depends(get_db_session),
@@ -1089,7 +1089,7 @@ def cancel_delete_account(
         action="delete_account_cancelled",
         auth_method="token",
     )
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return {"ok": True}
 
 
 @protected_router.get("/delete/status", response_model=DeletionStatusDTO)
@@ -1116,7 +1116,7 @@ def get_deletion_status(
     days_remaining = max(0, (pending.scheduled_for - datetime.now(UTC)).days)
     return DeletionStatusDTO(
         pending=True,
-        scheduled_for=pending.scheduled_for,
+        deletion_scheduled_for=pending.scheduled_for,
         days_remaining=days_remaining,
     )
 

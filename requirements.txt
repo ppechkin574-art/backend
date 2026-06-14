@@ -16,8 +16,8 @@ psycopg2-binary==2.9.10
 redis==5.2.1
 httpx==0.28.1
 requests==2.33.0
-python-multipart==0.0.26
-PyJWT==2.12.0
+python-multipart==0.0.27
+PyJWT==2.13.0
 cryptography==46.0.7
 # Apple's official lib for StoreKit 2 / App Store Server API.
 # Verifies JWS signed transactions locally using Apple Root CA G3 —

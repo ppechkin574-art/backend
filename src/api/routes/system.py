@@ -12,6 +12,7 @@ The contract:
     reply at all — that's enough to prove the worker is alive.
 """
 
+import contextlib
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Request
@@ -186,10 +187,8 @@ async def app_update_config(request: Request):
         session.commit()
         return result
     except Exception:  # noqa: BLE001 — fail-soft, never 500
-        try:
+        with contextlib.suppress(Exception):  # noqa: BLE001
             session.rollback()
-        except Exception:  # noqa: BLE001
-            pass
         return _empty_update_config()
     finally:
         session.close()

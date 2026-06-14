@@ -96,6 +96,8 @@ def _make_service(code: int, action: ConfirmationCodeAction):
         email_client=None,
         sms_client=None,
         whatsapp_client=None,
+        telegram_otp_client=None,
+        redis=None,
         google_client=None,
         apple_client=None,
         oauth_helper=None,

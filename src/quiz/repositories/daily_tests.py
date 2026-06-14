@@ -267,7 +267,7 @@ class DailyTestRepository:
             existing.student_guid = student_guid
             existing.platform = platform
             existing.device_id = device_id
-            existing.updated_at = datetime.utcnow()
+            existing.updated_at = datetime.now(UTC)
             entity = existing
         else:
             entity = DailyTestDeviceToken(

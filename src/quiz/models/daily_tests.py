@@ -29,8 +29,8 @@ class DailyTestSubjectPreference(Base):
     student_guid = Column(UUID(as_uuid=True), ForeignKey("students.id", ondelete="CASCADE"), nullable=False)
     subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False)
     is_default = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     # Relationships
     subject = relationship("Subject", foreign_keys=[subject_id])
@@ -55,8 +55,8 @@ class DailyTestAttempt(Base):
     correct_answers = Column(Integer, default=0, nullable=False)
     incorrect_answers = Column(Integer, default=0, nullable=False)
     skipped_answers = Column(Integer, default=0, nullable=False)
-    started_at = Column(DateTime, server_default=func.now(), nullable=False)
-    completed_at = Column(DateTime, nullable=True)
+    started_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
     subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
@@ -106,7 +106,7 @@ class DailyTestAnswer(Base):
     daily_test_attempt_id = Column(Integer, ForeignKey("daily_test_attempts.id", ondelete="CASCADE"), nullable=False)
     question_id = Column(Integer, ForeignKey("questions.id", ondelete="CASCADE"), nullable=False)
     variant_id = Column(Integer, ForeignKey("variants.id", ondelete="SET NULL"), nullable=True)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
     # Relationships
     attempt = relationship("DailyTestAttempt", back_populates="answers")
@@ -126,8 +126,8 @@ class DailyTestDeviceToken(Base):
     token = Column(String(512), nullable=False, unique=True)
     platform = Column(String(50), nullable=True)
     device_id = Column(String(255), nullable=True)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     __table_args__ = (Index("idx_daily_test_device_tokens_student", "student_guid"),)
 

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 from quiz.models.user_relationship import UserRelationship
@@ -75,7 +75,7 @@ class UserRelationshipRepository:
         rel = self.get_invitation(invitation_id)
         if rel:
             rel.status = new_status
-            rel.updated_at = datetime.utcnow()
+            rel.updated_at = datetime.now(UTC)
             self._session.flush()
         return rel
 

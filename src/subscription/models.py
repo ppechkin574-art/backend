@@ -41,8 +41,8 @@ class SubscriptionPlan(Base):
     is_visible = Column(Boolean, default=True)
     display_order = Column(Integer, default=0)
 
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     subscriptions = relationship("Subscription", back_populates="subscription_plan")
 
@@ -77,8 +77,8 @@ class Subscription(Base):
     promocode_usage_id = Column(Integer, ForeignKey("promocode_usages.id"), nullable=True)
 
     notes = Column(Text, nullable=True)
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     payment = relationship("Payment", back_populates="subscription", uselist=False)
 
@@ -113,7 +113,7 @@ class SubscriptionHistory(Base):
     new_status = Column(String(32), nullable=False)
     event_type = Column(String(64), nullable=False)
     history_metadata = Column(JSON, nullable=True)
-    created_at = Column(DateTime, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
         Index("ix_subscription_history_subscription_id", "subscription_id"),

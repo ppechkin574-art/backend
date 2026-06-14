@@ -49,8 +49,8 @@ class TrainerAttempt(Base):
     student_guid = Column(UUID(as_uuid=True), nullable=False)
     status = Column(Enum(Status), nullable=False)
     score = Column(Integer, default=0, nullable=False)
-    started_at = Column(DateTime, server_default=func.now(), nullable=False)
-    completed_at = Column(DateTime)
+    started_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    completed_at = Column(DateTime(timezone=True))
     active_time_seconds = Column(Integer, default=0)  # Сумма активного времени вопросов
     time_correction_applied = Column(Boolean, default=False)
 
@@ -97,8 +97,8 @@ class TrainerAttemptAnswer(Base):
         ForeignKey("students.id", ondelete="SET NULL"),
         nullable=True,
     )
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     attempt_question = relationship(TrainerAttemptQuestion, back_populates="answers", passive_deletes=True)
     variant = relationship("Variant", passive_deletes=True)

@@ -16,13 +16,14 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 
-# Import side-effect: register all ORM models with the SQLAlchemy
-# registry so `ReferralRedemption(...)` instantiation (inside the
-# service under test) doesn't blow up on un-resolved relationships
-# from sibling modules (cashback → Student, etc.). Cheap one-time
-# cost, keeps the rest of the tests pure-logic.
+# Register all ORM models so SQLAlchemy mapper relationship resolution
+# doesn't fail when ReferralService calls db.query(Payment) inside
+# _has_ever_paid() — Payment mapper needs Subscription, and Subscription
+# needs Payment; all must be registered before any query is executed.
+import payments.models  # noqa: F401
 import quiz.models  # noqa: F401
 import student.models  # noqa: F401
+import subscription.models  # noqa: F401
 from referrals.dtos import ReferralPolicyDTO
 from referrals.service import ReferralService, _CODE_FORMAT_RE
 
@@ -47,6 +48,7 @@ def _make_service(
     admin_user_service=None,
     user_points_repo=None,
     file_service=None,
+    cap: int = 99999,
 ):
     """Wire a ReferralService against fully-mocked collaborators."""
     if db_mock is None:
@@ -62,6 +64,7 @@ def _make_service(
         "referral_inviter_days": policy.inviter_days,
         "referral_invitee_stars": policy.invitee_stars,
         "referral_invitee_days": policy.invitee_days,
+        "referral_inviter_max_rewards": cap,
     }.get(key, default)
     return ReferralService(
         db=db_mock,
@@ -81,11 +84,16 @@ def _query_returns(db_mock, *return_values):
     db_mock.query.side_effect = chain_mocks
 
 
-def _setup_redeem_queries(db_mock, owner, prior=None, rewarded_count=0):
-    """Wire the THREE sequential queries a full redeem() issues:
+def _setup_redeem_queries(db_mock, owner, prior=None, rewarded_count=0,
+                          inviter_paid=True, cap=99999):
+    """Wire the sequential queries a full redeem() issues:
       1. ReferralCode lookup (.first)            → owner
       2. already-redeemed pre-check (.first)     → prior
       3. anti-farm cap COUNT (.count)            → rewarded_count
+      4. _has_ever_paid Payment lookup (.first)  → payment row or None
+         (only reached when reward_inviter=True, i.e. rewarded_count < cap)
+    Pass cap= matching the value used in _make_service(cap=) so the
+    reward_inviter calculation stays in sync.
     """
     code_chain = MagicMock()
     code_chain.filter.return_value.first.return_value = owner
@@ -93,7 +101,15 @@ def _setup_redeem_queries(db_mock, owner, prior=None, rewarded_count=0):
     prior_chain.filter.return_value.first.return_value = prior
     cap_chain = MagicMock()
     cap_chain.filter.return_value.count.return_value = rewarded_count
-    db_mock.query.side_effect = [code_chain, prior_chain, cap_chain]
+    payment_chain = MagicMock()
+    payment_chain.filter.return_value.first.return_value = (
+        SimpleNamespace(id=1) if inviter_paid else None
+    )
+    side_effects = [code_chain, prior_chain, cap_chain]
+    # Payment query only reached when reward_inviter=True (rewarded_count < cap)
+    if rewarded_count < cap:
+        side_effects.append(payment_chain)
+    db_mock.query.side_effect = side_effects
 
 
 # ─── _generate_code shape ─────────────────────────────────────────────
@@ -222,21 +238,20 @@ class TestRedeemRules:
 
         result = svc.redeem(invitee_id=invitee_id, code="EJW123JX")
 
-        # Star grants to both sides
-        points.add_points.assert_any_call(invitee_id, 30)
-        points.add_points.assert_any_call(owner_id, 100)
-        assert points.add_points.call_count == 2
+        # Invitee rewards are DEFERRED (granted on first payment via
+        # grant_pending_invitee_reward()). Only inviter is rewarded immediately.
+        points.add_points.assert_called_once_with(owner_id, 100)
 
-        # Pro-day grants to both sides
-        admin.grant_pro_subscription.assert_any_call(user_id=invitee_id, days=7)
-        admin.grant_pro_subscription.assert_any_call(user_id=owner_id, days=7)
+        # Inviter Pro days granted immediately; invitee days are deferred.
+        admin.grant_pro_subscription.assert_called_once_with(user_id=owner_id, days=7)
 
-        # Response carries the snapshot
+        # Response DTO carries the full snapshot (deferred amounts are still visible).
         assert result.inviter_id == owner_id
         assert result.invitee_stars_granted == 30
         assert result.invitee_days_granted == 7
         assert result.inviter_stars_granted == 100
         assert result.inviter_days_granted == 7
+        assert result.invitee_reward_pending is True
 
     def test_pro_grant_failure_does_not_block_redemption(self):
         # The redemption row is the source-of-truth for "this user used
@@ -270,13 +285,16 @@ class TestInviterCap:
         owner_id = uuid4()
         owner = _fake_code(owner_id, "EJW123JX")
         db = MagicMock()
-        _setup_redeem_queries(db, owner, prior=None, rewarded_count=24)  # 24 < 25
+        # cap=25: 24 < 25 → reward_inviter=True → Payment query included
+        _setup_redeem_queries(db, owner, prior=None, rewarded_count=24, cap=25)
         points = MagicMock()
-        svc = _make_service(db_mock=db, user_points_repo=points)
+        svc = _make_service(db_mock=db, user_points_repo=points, cap=25)
 
         result = svc.redeem(invitee_id=uuid4(), code="EJW123JX")
 
-        assert points.add_points.call_count == 2  # invitee + inviter
+        # Invitee stars are deferred; only inviter gets stars immediately.
+        assert points.add_points.call_count == 1
+        points.add_points.assert_called_once_with(owner_id, 100)
         assert result.inviter_stars_granted == 100
         assert result.inviter_days_granted == 7
 
@@ -285,23 +303,26 @@ class TestInviterCap:
         invitee_id = uuid4()
         owner = _fake_code(owner_id, "EJW123JX")
         db = MagicMock()
-        _setup_redeem_queries(db, owner, prior=None, rewarded_count=25)  # == cap
+        # cap=25: rewarded_count==cap → reward_inviter=False → no Payment query needed
+        _setup_redeem_queries(db, owner, prior=None, rewarded_count=25, cap=25)
         admin = MagicMock()
         points = MagicMock()
         svc = _make_service(
-            db_mock=db, admin_user_service=admin, user_points_repo=points
+            db_mock=db, admin_user_service=admin, user_points_repo=points, cap=25
         )
 
         result = svc.redeem(invitee_id=invitee_id, code="EJW123JX")
 
-        # Invitee still rewarded; inviter gets NOTHING (stars or days).
-        points.add_points.assert_called_once_with(invitee_id, 30)
-        admin.grant_pro_subscription.assert_called_once_with(
-            user_id=invitee_id, days=7
-        )
+        # Inviter at cap → no inviter rewards at all.
+        # Invitee stars/days are DEFERRED (granted on first payment),
+        # so add_points and grant_pro_subscription are NOT called immediately.
+        points.add_points.assert_not_called()
+        admin.grant_pro_subscription.assert_not_called()
+        # DTO still carries the deferred invitee snapshot.
         assert result.invitee_stars_granted == 30
         assert result.inviter_stars_granted == 0
         assert result.inviter_days_granted == 0
+        assert result.invitee_reward_pending is True
 
 
 # ─── concurrent-redeem race ───────────────────────────────────────────

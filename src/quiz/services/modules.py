@@ -1,6 +1,6 @@
 import builtins
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 # from typing import Any
 from uuid import UUID
@@ -1234,23 +1234,23 @@ class ModuleLessonService(ModuleLessonServiceInterface):
                 progress.test_attempts_count += 1
 
             progress.time_spent_seconds += time_spent
-            progress.last_accessed_at = datetime.now()
+            progress.last_accessed_at = datetime.now(UTC)
             progress.is_completed = progress.completed_test
 
             if progress.is_completed and not progress.completed_at:
-                progress.completed_at = datetime.now()
+                progress.completed_at = datetime.now(UTC)
 
             if progress.id is None:
                 progress_data = progress.dict(exclude={"id", "created_at", "updated_at"})
-                progress_data["created_at"] = datetime.now()
-                progress_data["updated_at"] = datetime.now()
+                progress_data["created_at"] = datetime.now(UTC)
+                progress_data["updated_at"] = datetime.now(UTC)
                 new_progress = self._uow.user_lesson_progress.create(progress_data)
                 progress.id = new_progress.id
                 progress.created_at = new_progress.created_at
                 progress.updated_at = new_progress.updated_at
                 logger.info("Created new progress record with id %s", progress.id)
             else:
-                progress.updated_at = datetime.now()
+                progress.updated_at = datetime.now(UTC)
                 self._uow.user_lesson_progress.update_or_create(progress)
                 logger.info("Updated existing progress record %s", progress.id)
 

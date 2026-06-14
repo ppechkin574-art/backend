@@ -58,8 +58,8 @@ class Payment(Base):
     attempts_count = Column(Integer, default=0)
     last_polled_at = Column(DateTime(timezone=True), nullable=True)
 
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     status_history = relationship("PaymentStatusHistory", backref="payment", cascade="all, delete-orphan")
     subscription = relationship("Subscription", back_populates="payment", uselist=False)
@@ -71,7 +71,7 @@ class PaymentStatusHistory(Base):
     id = Column(Integer, primary_key=True)
     payment_id = Column(Integer, ForeignKey("payments.id"))
     status = Column(String(32))
-    created_at = Column(DateTime, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class Card(Base):
@@ -84,4 +84,4 @@ class Card(Base):
     card_pan = Column(String(64), nullable=True)
     card_brand = Column(String(32), nullable=True)
     card_exp = Column(String(10), nullable=True)
-    created_at = Column(DateTime, server_default=func.now())
+    created_at = Column(DateTime(timezone=True), server_default=func.now())

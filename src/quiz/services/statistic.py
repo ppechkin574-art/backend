@@ -1,5 +1,5 @@
 import logging
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -399,7 +399,7 @@ class StatisticService:
         from quiz.dtos.enums import Status
         from quiz.models.ent import EntAttempt
 
-        cutoff = datetime.utcnow() - timedelta(days=365)
+        cutoff = datetime.now(UTC) - timedelta(days=365)
         attempts = (
             self.uow.ent_attempts._session.query(EntAttempt)
             .filter(

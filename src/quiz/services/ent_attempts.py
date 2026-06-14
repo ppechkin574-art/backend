@@ -512,38 +512,43 @@ class EntAttemptService:
                     subject_id = option.subject_id
 
             self._uow.ent_attempts.save_attempt_updates(ent_attempt)
-            # Business rule (set by operator 23.05.2026): leaderboard
-            # points (stars) accrue only from the full ҰБТ — that is the
-            # "rated game". A single-subject attempt is training and
-            # must NOT bump the leaderboard total. Keeping the score
-            # field on the attempt itself untouched (it still gets
-            # displayed on the test-result screen for both modes), only
-            # the user_points / leaderboard table is gated.
-            #
             # award_points_once() does an atomic UPDATE WHERE points_awarded=FALSE
             # and returns True only for the first (winning) call — prevents double
             # award both from repeated submissions and from concurrent race conditions.
-            if attempt_stat.score > 0 and ent_attempt.exam_type == ExamType.full_exam:
-                if self._uow.ent_attempts.award_points_once(ent_attempt.id):
-                    self._uow.user_points.add_points(
-                        student_guid,
-                        attempt_stat.score,
-                        source_type="ent_attempt",
-                        source_id=str(ent_attempt.id),
-                    )
-                else:
-                    self._uow.fraud_events.log_event(
-                        event_type="repeated_attempt",
-                        risk_score=75,
-                        user_id=student_guid,
-                        reason=(
-                            f"Attempt {ent_attempt.id}: award_points_once() blocked "
-                            f"duplicate point award (score={attempt_stat.score})"
-                        ),
-                        endpoint="/user/ents/attempts/answer",
-                        method="POST",
-                        metadata={"attempt_id": ent_attempt.id, "score": attempt_stat.score},
-                    )
+            # The amount and eligibility are controlled by PointsPolicy (admin panel).
+            _ent_activity = (
+                "ent_full" if ent_attempt.exam_type == ExamType.full_exam else "ent_subject"
+            )
+            _ent_policy = self._uow.points_policies.get_by_activity_type(_ent_activity)
+            if _ent_policy and _ent_policy.is_enabled:
+                from quiz.services.points_calculator import PointsCalculatorService
+                _calc = PointsCalculatorService()
+                _points = _calc.calculate_amount(
+                    _ent_policy, attempt_stat.score, attempt_stat.total_questions
+                )
+                if _points > 0 and _calc.passes_repeat_check(
+                    _ent_policy, student_guid, _points, self._uow
+                ):
+                    if self._uow.ent_attempts.award_points_once(ent_attempt.id):
+                        self._uow.user_points.add_points(
+                            student_guid,
+                            _points,
+                            source_type="ent_attempt",
+                            source_id=str(ent_attempt.id),
+                        )
+                    else:
+                        self._uow.fraud_events.log_event(
+                            event_type="repeated_attempt",
+                            risk_score=75,
+                            user_id=student_guid,
+                            reason=(
+                                f"Attempt {ent_attempt.id}: award_points_once() blocked "
+                                f"duplicate point award (score={attempt_stat.score})"
+                            ),
+                            endpoint="/user/ents/attempts/answer",
+                            method="POST",
+                            metadata={"attempt_id": ent_attempt.id, "score": attempt_stat.score},
+                        )
             self._uow.commit()
             self._cashback_service.check_and_update(student_guid)
 

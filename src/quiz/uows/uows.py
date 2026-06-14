@@ -1,3 +1,4 @@
+from quiz.repositories.points_policy import PointsPolicyRepository
 from quiz.repositories.user_points import UserPointsRepository
 from security.repository import FraudEventRepository
 from bank.repository import BankRepository
@@ -70,6 +71,7 @@ class UnitOfWorkTests(UnitOfWorkSQLAlchemy):
         self.bank = BankRepository(self.session)
         self.user_points = UserPointsRepository(self.session)
         self.fraud_events = FraudEventRepository(self.session)
+        self.points_policies = PointsPolicyRepository(self.session)
         return self
 
 

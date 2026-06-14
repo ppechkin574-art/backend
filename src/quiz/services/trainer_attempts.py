@@ -279,6 +279,23 @@ class TrainerAttemptService:
 
             self._uow.commit()
 
+            # Policy-based leaderboard points for trainer completion.
+            # Disabled by default; admin enables via /admin/points-policies/trainer.
+            try:
+                from quiz.services.points_calculator import PointsCalculatorService
+                _total = result.correct_answers + result.incorrect_answers + result.skipped_answers
+                PointsCalculatorService().award_for_activity(
+                    uow=self._uow,
+                    user_id=student_guid,
+                    activity_type="trainer",
+                    score=result.correct_answers,
+                    total_questions=_total,
+                    source_id=str(test_attempt_id),
+                )
+                self._uow.commit()
+            except Exception:
+                logger.exception("Points award failed for trainer attempt %s", test_attempt_id)
+
             try:
                 self._invalidate_lesson_progress_cache(student_guid)
 

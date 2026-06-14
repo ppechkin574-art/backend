@@ -865,6 +865,14 @@ def get_streak_bonus_service(
     )
 
 
+def get_points_policy_service(
+    db: Session = Depends(get_db_session),
+):
+    from quiz.services.points_policy_service import PointsPolicyService
+
+    return PointsPolicyService(db)
+
+
 def get_streak_reminder_service(request: Request):
     """Pulls the StreakReminderService singleton from the DI container so
     admin trigger endpoints can fire the same cron path on demand."""

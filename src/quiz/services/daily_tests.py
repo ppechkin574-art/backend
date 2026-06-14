@@ -292,6 +292,25 @@ class DailyTestService:
 
             self._uow.commit()
 
+            # Policy-based leaderboard points for daily test completion.
+            # Disabled by default; admin enables via /admin/points-policies/daily_test.
+            try:
+                from quiz.services.points_calculator import PointsCalculatorService
+                PointsCalculatorService().award_for_activity(
+                    uow=self._uow,
+                    user_id=student_guid,
+                    activity_type="daily_test",
+                    score=correct_count,
+                    total_questions=total_questions,
+                    source_id=str(attempt_id),
+                )
+                self._uow.commit()
+            except Exception:
+                import logging as _logging
+                _logging.getLogger(__name__).exception(
+                    "Points award failed for daily_test attempt %s", attempt_id
+                )
+
             percentage = (correct_count / total_questions * 100) if total_questions > 0 else 0
 
             self._cashback_service.check_and_update(student_guid)

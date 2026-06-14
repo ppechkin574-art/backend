@@ -24,6 +24,7 @@ from .subscription import router as subscription_router
 from .topics import router as topics_router
 from .trainers import router as trainers_router
 from .users import router as users_router
+from .points_policy import router as points_policy_router
 from .security import router as security_router
 
 routers = [
@@ -54,4 +55,5 @@ routers = [
     app_update_config_router,
     admin_payments_router,
     security_router,
+    points_policy_router,
 ]

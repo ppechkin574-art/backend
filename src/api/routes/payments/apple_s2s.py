@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -231,7 +231,7 @@ async def apple_notifications_v2(
     product_id = str(getattr(tx, "productId", "") or "")
     expires_ms = getattr(tx, "expiresDate", None)
     expires_at = (
-        datetime.fromtimestamp(expires_ms / 1000.0, tz=timezone.utc)
+        datetime.fromtimestamp(expires_ms / 1000.0, tz=UTC)
         if expires_ms
         else None
     )

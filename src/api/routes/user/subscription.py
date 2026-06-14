@@ -175,7 +175,6 @@ async def create_subscription_payment(
 ):
     """Создание платежа для подписки"""
     try:
-        client_ip = request.client.host if request.client else None
         payment = await payment_service.create_subscription_payment(
             subscription_plan_id=subscription_data.subscription_plan_id,
             months=subscription_data.months,

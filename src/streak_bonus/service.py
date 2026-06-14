@@ -16,7 +16,7 @@ or store a separate streak. This module only owns the reward layer.
 """
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -51,7 +51,7 @@ class StreakBonusService:
 
     # ─── helpers ─────────────────────────────────────────────────────
 
-    def _today_kz(self) -> "date":
+    def _today_kz(self) -> date:
         return to_kz_date(datetime.utcnow()) or datetime.utcnow().date()
 
     def _coins_for_streak(self, streak: int) -> int:

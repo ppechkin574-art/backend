@@ -48,7 +48,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import requests
@@ -332,9 +332,9 @@ class AppleIAPVerifier:
         # originalTransactionId, expiresDate (ms epoch), purchaseDate, etc.
         expires_at = None
         if payload.expiresDate:
-            expires_at = datetime.fromtimestamp(payload.expiresDate / 1000.0, tz=timezone.utc)
+            expires_at = datetime.fromtimestamp(payload.expiresDate / 1000.0, tz=UTC)
 
-        is_active = bool(expires_at and expires_at > datetime.now(timezone.utc))
+        is_active = bool(expires_at and expires_at > datetime.now(UTC))
 
         logger.info(
             "[apple_iap] JWS verified env=%s product=%s tx=%s orig_tx=%s expires=%s active=%s",
@@ -448,11 +448,11 @@ class AppleIAPVerifier:
         most_recent = latest_sorted[0]
         expires_ms = int(most_recent.get("expires_date_ms", 0))
         expires_at = (
-            datetime.fromtimestamp(expires_ms / 1000, tz=timezone.utc)
+            datetime.fromtimestamp(expires_ms / 1000, tz=UTC)
             if expires_ms
             else None
         )
-        is_active = bool(expires_at and expires_at > datetime.now(timezone.utc))
+        is_active = bool(expires_at and expires_at > datetime.now(UTC))
         return AppleVerifyResult(
             is_valid=True,
             is_active_subscription=is_active,

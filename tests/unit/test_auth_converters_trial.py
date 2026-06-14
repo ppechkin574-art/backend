@@ -185,11 +185,11 @@ class TestToUserCreateDtoRegistrationDefaults:
         result = to_user_create_dto(self._register_dto(), is_active=True)
         assert result.plan == PlanType.PRO
 
-    def test_registration_subscription_end_is_approximately_3_days(self):
-        """Trial window is 3 days, not 0 (no trial) or 30 (full month)."""
+    def test_registration_subscription_end_is_approximately_1_day(self):
+        """Trial window is 1 day, not 0 (no trial) or 30 (full month)."""
         result = to_user_create_dto(self._register_dto(), is_active=True)
         delta = result.subscription_end - datetime.now(UTC)
-        assert 2.9 < delta.total_seconds() / 86_400 < 3.1
+        assert 0.9 < delta.total_seconds() / 86_400 < 1.1
 
     def test_registration_is_active_propagated(self):
         assert to_user_create_dto(self._register_dto(), is_active=True).is_active is True

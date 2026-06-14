@@ -29,7 +29,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import requests
 from google.auth.transport.requests import Request as GoogleRequest
@@ -54,7 +54,7 @@ _V2_ACTIVE_STATES = {
 }
 
 
-def _parse_rfc3339(value: str | None) -> "datetime | None":
+def _parse_rfc3339(value: str | None) -> datetime | None:
     """Parse a Google RFC3339 timestamp (e.g. '2026-07-09T12:00:00Z')."""
     if not value:
         return None
@@ -107,7 +107,7 @@ def parse_subscriptionsv2(
     is_active = bool(
         state in _V2_ACTIVE_STATES
         and expires_at
-        and expires_at > datetime.now(timezone.utc)
+        and expires_at > datetime.now(UTC)
     )
     return AndroidVerifyResult(
         is_valid=True,

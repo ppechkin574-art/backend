@@ -1,6 +1,8 @@
+import hashlib
 import json
 import logging
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from fastapi import (
     APIRouter,
@@ -14,16 +16,21 @@ from fastapi import (
     UploadFile,
     status,
 )
+from pydantic import BaseModel
 from redis import Redis
+from sqlalchemy.orm import Session
 
 from api.dependencies import (
     get_app_settings_service,
     get_auth_service,
+    get_db_session,
     get_file_service,
     get_notification_client_email,
     get_redis,
     get_user,
 )
+from auth.deletion_models import DELETION_GRACE_DAYS, AccountDeletionRequest
+from payments.models import Payment
 from api.middlewares.rate_limit import limiter
 from api.middlewares.sms_quota import check_sms_quota, record_sms_request
 from app_config.service import AppSettingsService
@@ -940,47 +947,178 @@ def logout(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@protected_router.delete("/delete", status_code=204, responses=delete_account_responses)
+class DeletionScheduledDTO(BaseModel):
+    deletion_scheduled_for: datetime
+    message: str
+
+
+class DeletionStatusDTO(BaseModel):
+    pending: bool
+    deletion_scheduled_for: datetime | None = None
+    days_remaining: int | None = None
+
+
+@protected_router.delete("/delete", response_model=DeletionScheduledDTO)
 def delete_account(
     user: UserDTO = Depends(get_user),
     service: AuthServiceInterface = Depends(get_auth_service),
     file_service: FileService = Depends(get_file_service),
+    db: Session = Depends(get_db_session),
 ):
-    """Delete user account"""
+    """Request account deletion.
+
+    Does NOT immediately delete the account — schedules hard-deletion in
+    DELETION_GRACE_DAYS days. During the grace period the user can still
+    log in and cancel via POST /auth/delete/cancel.
+
+    Blocked if the user has a paid subscription payment within the last
+    30 days (chargeback window — P3 anti-abuse policy).
+    """
     log_info(
         "Delete account request",
         user_id=user.id,
         action="delete_account",
         auth_method="token",
     )
-    try:
-        if user.avatar:
+
+    # P3: block deletion if there's a recent paid subscription.
+    recent_cutoff = datetime.now(UTC) - timedelta(days=30)
+    recent_payment = (
+        db.query(Payment)
+        .filter(
+            Payment.user_id == str(user.id),
+            Payment.status == "paid",
+            Payment.created_at >= recent_cutoff,
+        )
+        .first()
+    )
+    if recent_payment:
+        days_left = 30 - (datetime.now(UTC) - recent_payment.created_at.replace(tzinfo=UTC)).days
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Аккаунт с активной подпиской нельзя удалить в течение 30 дней "
+                f"с момента последней оплаты. Попробуйте через {max(days_left, 1)} дн."
+            ),
+            headers={"X-Error-Code": "recent_payment_exists"},
+        )
+
+    # Idempotent: if a pending deletion already exists — return existing schedule.
+    existing = (
+        db.query(AccountDeletionRequest)
+        .filter(
+            AccountDeletionRequest.user_id == user.id,
+            AccountDeletionRequest.executed_at.is_(None),
+        )
+        .first()
+    )
+    if existing:
+        return DeletionScheduledDTO(
+            deletion_scheduled_for=existing.scheduled_for,
+            message=(
+                f"Ваш аккаунт уже запланирован к удалению. "
+                f"Вы можете отменить это до {existing.scheduled_for.strftime('%d.%m.%Y')}."
+            ),
+        )
+
+    scheduled_for = datetime.now(UTC) + timedelta(days=DELETION_GRACE_DAYS)
+
+    # Resolve phone hash for referral anti-abuse (stored on the deletion record
+    # so it can be checked even after the Keycloak account is gone).
+    phone_hash: str | None = None
+    if user.phone:
+        phone_hash = hashlib.sha256(user.phone.encode()).hexdigest()
+
+    # Delete avatar immediately (no reason to keep it during grace period).
+    if user.avatar:
+        try:
             filename = user.avatar.split("/")[-1]
             file_service.delete_avatar(filename)
-            log_info(
-                f"Deleted avatar during account deletion: {filename}",
-                user_id=user.id,
-                action="delete_account",
-                auth_method="token",
-            )
-        service.delete_account(user)
-        log_info(
-            "Account deleted successfully",
-            user_id=user.id,
-            action="delete_account",
-            auth_method="token",
-        )
-    except AuthUserNotFoundError as e:
-        log_warning(
-            "Account deletion failed - user not found",
-            user_id=user.id,
-            action="delete_account",
-            auth_method="token",
-            error_type="AuthUserNotFoundError",
-        )
-        raise e
+        except Exception:
+            logger.exception("Failed to delete avatar for user %s during deletion request", user.id)
 
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
+    db.add(
+        AccountDeletionRequest(
+            user_id=user.id,
+            phone_hash=phone_hash,
+            scheduled_for=scheduled_for,
+        )
+    )
+    db.commit()
+
+    log_info(
+        "Account deletion scheduled",
+        user_id=user.id,
+        action="delete_account_scheduled",
+        auth_method="token",
+    )
+
+    return DeletionScheduledDTO(
+        deletion_scheduled_for=scheduled_for,
+        message=(
+            f"Ваш аккаунт будет удалён {scheduled_for.strftime('%d.%m.%Y')}. "
+            f"До этого момента вы можете войти и отменить удаление."
+        ),
+    )
+
+
+@protected_router.post("/delete/cancel", status_code=200)
+def cancel_delete_account(
+    user: UserDTO = Depends(get_user),
+    db: Session = Depends(get_db_session),
+):
+    """Cancel a pending account deletion request."""
+    deleted = (
+        db.query(AccountDeletionRequest)
+        .filter(
+            AccountDeletionRequest.user_id == user.id,
+            AccountDeletionRequest.executed_at.is_(None),
+        )
+        .first()
+    )
+    if deleted is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Нет активного запроса на удаление аккаунта.",
+        )
+    db.delete(deleted)
+    db.commit()
+    log_info(
+        "Account deletion cancelled",
+        user_id=user.id,
+        action="delete_account_cancelled",
+        auth_method="token",
+    )
+    return {"ok": True}
+
+
+@protected_router.get("/delete/status", response_model=DeletionStatusDTO)
+def get_deletion_status(
+    user: UserDTO = Depends(get_user),
+    db: Session = Depends(get_db_session),
+):
+    """Return pending deletion info for the authenticated user.
+
+    Frontend should call this on app launch. If pending=true — show the
+    'deletion pending' screen with a Cancel button.
+    """
+    pending = (
+        db.query(AccountDeletionRequest)
+        .filter(
+            AccountDeletionRequest.user_id == user.id,
+            AccountDeletionRequest.executed_at.is_(None),
+        )
+        .first()
+    )
+    if pending is None:
+        return DeletionStatusDTO(pending=False)
+
+    days_remaining = max(0, (pending.scheduled_for - datetime.now(UTC)).days)
+    return DeletionStatusDTO(
+        pending=True,
+        deletion_scheduled_for=pending.scheduled_for,
+        days_remaining=days_remaining,
+    )
 
 
 # ---------------------------------------------------------------------------

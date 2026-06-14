@@ -29,6 +29,7 @@ Policy values live in `app_settings`:
   - referral_inviter_max_rewards  (default 25)
 """
 
+import hashlib
 import logging
 import random
 import re
@@ -37,6 +38,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -176,12 +178,37 @@ class ReferralService:
                 "Нельзя вводить свой собственный код",
             )
 
-        # Fast, friendly pre-check for the common "already used" case. The
-        # DB unique constraint (caught at commit below) is the REAL guard
-        # against the concurrent double-tap race.
+        # Resolve invitee phone hash — survives account deletion + re-registration.
+        # Fail-soft: if Keycloak is temporarily unavailable we still allow the
+        # redeem but without the phone-level guard (UUID-level guard still applies).
+        invitee_phone_hash: str | None = None
+        try:
+            invitee_user = self.admin_user_service.get_user(invitee_id)
+            if invitee_user.phone:
+                invitee_phone_hash = hashlib.sha256(
+                    invitee_user.phone.encode()
+                ).hexdigest()
+        except Exception:
+            logger.warning(
+                "Could not resolve phone hash for invitee %s — UUID-only check applies",
+                invitee_id,
+            )
+
+        # Fast, friendly pre-check for the common "already used" case.
+        # Checks BOTH uuid AND phone hash so the same number can't redeem
+        # twice after deleting and re-registering (different UUID, same phone).
+        # The DB unique constraints are the REAL guard against concurrent races.
+        already_redeemed_filter = [ReferralRedemption.invitee_id == invitee_id]
+        if invitee_phone_hash:
+            already_redeemed_filter = [
+                or_(
+                    ReferralRedemption.invitee_id == invitee_id,
+                    ReferralRedemption.invitee_phone_hash == invitee_phone_hash,
+                )
+            ]
         already_redeemed = (
             self.db.query(ReferralRedemption)
-            .filter(ReferralRedemption.invitee_id == invitee_id)
+            .filter(*already_redeemed_filter)
             .first()
         )
         if already_redeemed is not None:
@@ -221,6 +248,7 @@ class ReferralService:
             code_id=owner.user_id,
             inviter_id=owner.user_id,
             invitee_id=invitee_id,
+            invitee_phone_hash=invitee_phone_hash,
             inviter_stars_granted=inviter_stars,
             inviter_days_granted=inviter_days,
             invitee_stars_granted=policy.invitee_stars,

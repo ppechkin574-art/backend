@@ -19,9 +19,11 @@ from sqlalchemy import (
     Column,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.sql import func
 
@@ -53,6 +55,10 @@ class ReferralRedemption(Base):
     one promo per user per account lifetime (no second redemption
     even after a year). Self-redemption is blocked at the service
     layer (the FK alone can't express "inviter != invitee").
+
+    `invitee_phone_hash` (sha256 of phone) is stored alongside invitee_id
+    so the same phone number cannot redeem a code even after deleting and
+    re-registering (which produces a new UUID but the same phone).
     """
 
     __tablename__ = "referral_redemptions"
@@ -65,6 +71,9 @@ class ReferralRedemption(Base):
     )
     inviter_id = Column(UUID(as_uuid=True), nullable=False, index=True)
     invitee_id = Column(UUID(as_uuid=True), nullable=False)
+    # sha256(phone) — survives account deletion + re-registration.
+    # Nullable only for rows created before this column was added.
+    invitee_phone_hash = Column(String(64), nullable=True)
     redeemed_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -89,4 +98,11 @@ class ReferralRedemption(Base):
     __table_args__ = (
         # One promo per invitee lifetime — DB-enforced.
         UniqueConstraint("invitee_id", name="uq_referral_redemptions_invitee"),
+        # Same phone number cannot redeem across account churn (partial — excludes NULLs).
+        Index(
+            "uix_referral_redemptions_phone_hash",
+            "invitee_phone_hash",
+            unique=True,
+            postgresql_where=text("invitee_phone_hash IS NOT NULL"),
+        ),
     )

@@ -32,7 +32,7 @@ google-auth==2.36.0
 
 dependency-injector==4.43.0
 prometheus-client==0.21.1
-pandas==2.2.3
+pandas==3.0.3
 Pillow==12.2.0
 pillow-heif==0.18.0
 defusedxml==0.7.1

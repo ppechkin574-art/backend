@@ -8,6 +8,8 @@ from pydantic import (
     ValidationInfo,
     field_validator,
 )
+from typing import Annotated
+from pydantic.functional_validators import BeforeValidator
 
 from auth.dtos.confirmation_codes import ConfirmationCodeAction
 from clients.notification import CodePlatform
@@ -142,7 +144,7 @@ class CodeCheckDTO(BaseModel):
     """Check confirmation code"""
 
     verification_id: UUID = Field(..., description="Verification ID from code request")
-    code: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$", description="6-digit confirmation code")
+    code: Annotated[str, BeforeValidator(str)] = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$", description="6-digit confirmation code")
     action: ConfirmationCodeAction = Field(..., description="Action type")
 
 

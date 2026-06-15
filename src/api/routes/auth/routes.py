@@ -281,7 +281,7 @@ async def check_code(
     )
 
     is_valid = service.check_code(
-        request_data.verification_id, request_data.code, request_data.action
+        request_data.verification_id, int(request_data.code), request_data.action
     )
 
     if is_valid:

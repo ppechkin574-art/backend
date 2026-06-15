@@ -142,7 +142,7 @@ class CodeCheckDTO(BaseModel):
     """Check confirmation code"""
 
     verification_id: UUID = Field(..., description="Verification ID from code request")
-    code: int = Field(..., ge=100000, le=999999, description="Confirmation code to check")
+    code: str = Field(..., min_length=6, max_length=6, pattern=r"^\d{6}$", description="6-digit confirmation code")
     action: ConfirmationCodeAction = Field(..., description="Action type")
 
 

@@ -683,7 +683,11 @@ class AuthService:
                 is_temporary=True,
             )
 
-            confirmation_code = self._confirmation_codes.get(query)
+            try:
+                confirmation_code = self._confirmation_codes.get(query)
+            except ConfirmationCodeNotFoundError:
+                logger.warning("Verification ID not found or expired: %s", verification_id)
+                return False
 
             if confirmation_code.expires_at and confirmation_code.expires_at < datetime.now(UTC):
                 logger.warning("Code expired for verification_id: %s", verification_id)

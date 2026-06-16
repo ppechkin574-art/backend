@@ -13,15 +13,22 @@ from quiz.exceptions import (
     UserNotChild,
     InvalidAction,
 )
+from utils.file_service import FileService
 
 logger = logging.getLogger(__name__)
 
 
 class FamilyService:
-    def __init__(self, session: Session, idp_client: IdentityProviderClientKeycloak):
+    def __init__(
+        self,
+        session: Session,
+        idp_client: IdentityProviderClientKeycloak,
+        file_service: FileService | None = None,
+    ):
         self._session = session
         self._repo = UserRelationshipRepository(session)
         self._idp = idp_client
+        self._file_service = file_service
 
     def _get_user_role(self, user_id: UUID) -> str:
         try:
@@ -37,7 +44,7 @@ class FamilyService:
             raise AuthUserNotFoundError
 
     def _get_user_info(self, user_id: UUID) -> tuple[str, str | None]:
-        """Возвращает (name, avatar)"""
+        """Возвращает (name, presigned_avatar_url | None)."""
         try:
             user = self._idp.get(KeycloakUserQueryDTO(id=user_id))
             name = (
@@ -45,12 +52,18 @@ class FamilyService:
                 if user.attributes and user.attributes.name
                 else ""
             )
-            avatar = (
+            raw_avatar = (
                 user.attributes.avatar[0]
                 if user.attributes and user.attributes.avatar
                 else None
             )
-            return name, avatar
+            avatar_url = None
+            if raw_avatar and self._file_service:
+                try:
+                    avatar_url = self._file_service.get_avatar_url(raw_avatar) or None
+                except Exception:
+                    logger.warning("Failed to presign avatar for user %s", user_id)
+            return name, avatar_url
         except Exception:
             return "Unknown", None
 

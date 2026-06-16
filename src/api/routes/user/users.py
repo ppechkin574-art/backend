@@ -1,10 +1,10 @@
-# В api/routes/user/users.py
 from fastapi import APIRouter, Depends, HTTPException
 from uuid import UUID
-from api.dependencies import get_user, get_identity_provider_client_keycloak
+from api.dependencies import get_user, get_identity_provider_client_keycloak, get_file_service
 from auth.dtos.users import UserDTO
 from clients.identity_provider.client import IdentityProviderClientKeycloak
 from clients.identity_provider.dtos import KeycloakUserQueryDTO
+from utils.file_service import FileService
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -16,6 +16,7 @@ async def get_user_by_id(
     idp: IdentityProviderClientKeycloak = Depends(
         get_identity_provider_client_keycloak
     ),
+    file_service: FileService = Depends(get_file_service),
 ):
     # Доступно только авторизованным, возвращаем минимальную информацию
     try:
@@ -26,15 +27,16 @@ async def get_user_by_id(
             if keycloak_user.attributes and keycloak_user.attributes.name
             else ""
         )
-        avatar = (
+        raw_avatar = (
             keycloak_user.attributes.avatar[0]
             if keycloak_user.attributes and keycloak_user.attributes.avatar
             else None
         )
+        avatar_url = file_service.get_avatar_url(raw_avatar) if raw_avatar else None
         return {
             "id": user_id,
             "name": name,
-            "avatar": avatar,
+            "avatar": avatar_url,
             "role": (
                 "parent"
                 if "parent" in roles

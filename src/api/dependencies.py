@@ -845,8 +845,9 @@ def get_family_service(
     idp: IdentityProviderClientKeycloak = Depends(
         get_identity_provider_client_keycloak
     ),
+    file_service: FileService = Depends(get_file_service),
 ) -> FamilyService:
-    return FamilyService(session, idp)
+    return FamilyService(session, idp, file_service)
 
 
 def get_streak_bonus_service(

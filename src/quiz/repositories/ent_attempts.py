@@ -854,7 +854,7 @@ class EntAttemptRepository:
             )
         )
 
-        if not exam_type:
+        if exam_type:
             answers_query = answers_query.filter(EntAttempt.exam_type == exam_type)
 
         answers = answers_query.all()

@@ -21,9 +21,34 @@ from quiz.utils.period.init import (
     to_kz_date,
 )
 from quiz.utils.validation.init import StatisticValidator
-from utils.cache import CacheService, CacheStrategy, cached
+from utils.cache import CacheService, CacheStrategy
 
 logger = logging.getLogger(__name__)
+
+
+def _stats_cache_params(request: StatisticRequestDTO) -> str:
+    """Stable cache-key fragment for a StatisticRequestDTO.
+
+    @cached decorator cannot extract student_id from positional args for
+    get_enhanced_global_statistic (args[0]=UUID, args[1]=DTO — the
+    generic branch checks isinstance(args[1], UUID) which fails). Manual
+    caching with this helper fixes both the user_id extraction and the
+    period-type differentiation that @cached would have flattened to "".
+    """
+    parts = [f"p={request.period_type.value}"]
+    if request.week_date:
+        parts.append(f"w={request.week_date.isoformat()}")
+    if request.month_year:
+        parts.append(f"m={request.month_year}")
+    if request.custom_start_date:
+        parts.append(f"cs={request.custom_start_date.isoformat()}")
+    if request.custom_end_date:
+        parts.append(f"ce={request.custom_end_date.isoformat()}")
+    if request.subject_id is not None:
+        parts.append(f"s={request.subject_id}")
+    if request.exam_type:
+        parts.append(f"e={request.exam_type.value}")
+    return ":".join(parts)
 
 
 class StatisticService:
@@ -37,12 +62,28 @@ class StatisticService:
         self.analytic_service = analytic_service
         self._cache_service = cache_service
 
-    @cached(strategy=CacheStrategy.USER, ttl=3600, resource="enhanced_global_statistic")
     def get_enhanced_global_statistic(
         self,
         student_id: UUID,
         request: StatisticRequestDTO,
     ) -> dict[str, Any]:
+        # Manual cache: @cached can't extract student_id here because the
+        # generic USER branch checks isinstance(args[1], UUID) — but args[1]
+        # is StatisticRequestDTO, so it falls through to user_id=None and
+        # bypasses the cache entirely. Also, _make_cache_params excludes
+        # "request" by name, so every period type would collide on one key.
+        cache_key = None
+        if self._cache_service:
+            cache_key = self._cache_service.make_key(
+                CacheStrategy.USER,
+                user_id=student_id,
+                resource="enhanced_global_statistic",
+                params=_stats_cache_params(request),
+            )
+            cached_result = self._cache_service.get(cache_key)
+            if cached_result is not None:
+                return cached_result
+
         start_date, end_date, description = PeriodCalculator.calculate_period_dates(request)
 
         # start_date/end_date are KZ-local dates (see today_kz in
@@ -340,6 +381,9 @@ class StatisticService:
         if validation_errors:
             logger.warning("Statistic validation warnings: %s", validation_errors)
 
+        if cache_key and self._cache_service:
+            self._cache_service.set(cache_key, result, ttl=3600)
+
         return result
 
     @staticmethod
@@ -589,17 +633,16 @@ class StatisticService:
                 "progress_by_subject": [],
             }
 
-        total_questions = 0
-        total_correct = 0
-        total_score = 0
-
+        # Batch subject stats already contain per-answer totals — derive
+        # total_questions and total_correct from them instead of calling
+        # get_attempt_statistic(attempt.id) per attempt (N queries → 0).
+        # average_score still needs per-attempt .score, but that field is
+        # already loaded on each EntAttempt ORM object — pure Python, no DB.
         subject_stats = self.uow.ent_attempts.get_attempt_subjects_statistics(student_id, exam_type)
 
-        for attempt in attempts:
-            attempt_stats = self.uow.ent_attempts.get_attempt_statistic(attempt.id, None)
-            total_questions += attempt_stats.total_questions
-            total_correct += attempt_stats.correct
-            total_score += attempt_stats.score
+        total_questions = sum(s["total_questions"] for s in subject_stats.values())
+        total_correct = sum(s["correct_answers"] for s in subject_stats.values())
+        total_score = sum(a.score or 0 for a in attempts)
 
         overall_accuracy = MathUtils.calculate_accuracy(total_correct, total_questions)
         average_score = total_score / len(attempts) if attempts else 0
@@ -753,18 +796,16 @@ class StatisticService:
                 "progress_by_topic": [],
             }
 
-        total_questions = 0
-        total_correct = 0
-
-        for attempt in attempts:
-            attempt_stats = self.uow.trainer_attempts.get_attempt_statistic(attempt.id)
-            total_questions += attempt_stats.get("total_questions", 0)
-            total_correct += attempt_stats.get("correct", 0)
-
-        overall_accuracy = MathUtils.calculate_accuracy(total_correct, total_questions)
-
+        # Derive total_questions/total_correct from batch subject-progress query
+        # instead of calling get_attempt_statistic(attempt.id) per attempt (N → 0
+        # extra queries). The subject-progress JOIN already aggregates all answers.
         subject_stats = self.uow.trainer_attempts.get_overall_subject_progress(student_id)
         topic_stats = self.uow.trainer_attempts.get_overall_topic_progress(student_id)
+
+        total_questions = sum(s["total_questions"] for s in subject_stats.values())
+        total_correct = sum(s["correct_answers"] for s in subject_stats.values())
+
+        overall_accuracy = MathUtils.calculate_accuracy(total_correct, total_questions)
 
         overall_progress_by_subject = []
         for subject_id, stats in subject_stats.items():

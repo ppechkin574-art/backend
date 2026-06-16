@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import RedirectResponse
 from uuid import UUID
 from api.dependencies import get_user, get_identity_provider_client_keycloak, get_file_service
 from auth.dtos.users import UserDTO
@@ -7,6 +8,40 @@ from clients.identity_provider.dtos import KeycloakUserQueryDTO
 from utils.file_service import FileService
 
 router = APIRouter(prefix="/users", tags=["Users"])
+
+
+@router.get("/{user_id}/avatar")
+async def get_user_avatar(
+    user_id: UUID,
+    idp: IdentityProviderClientKeycloak = Depends(
+        get_identity_provider_client_keycloak
+    ),
+    file_service: FileService = Depends(get_file_service),
+):
+    """302-редирект на актуальный presigned URL аватарки.
+
+    Стабильный ключ кеша для клиента — `/users/{id}/avatar` никогда не меняется.
+    Бэк при каждом запросе генерирует свежий presigned URL и редиректит на него.
+    Авторизация не требуется — аватарки публичны по смыслу.
+    """
+    try:
+        keycloak_user = idp.get(KeycloakUserQueryDTO(id=user_id))
+    except Exception:
+        raise HTTPException(404, "User not found")
+
+    raw_avatar = (
+        keycloak_user.attributes.avatar[0]
+        if keycloak_user.attributes and keycloak_user.attributes.avatar
+        else None
+    )
+    if not raw_avatar:
+        raise HTTPException(404, "No avatar")
+
+    presigned = file_service.get_avatar_url(raw_avatar)
+    if not presigned:
+        raise HTTPException(404, "No avatar")
+
+    return RedirectResponse(url=presigned, status_code=302)
 
 
 @router.get("/{user_id}")

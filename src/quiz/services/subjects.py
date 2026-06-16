@@ -550,14 +550,13 @@ class SubjectService(SubjectServiceInterface):
 
     def get_all_subjects_with_detailed_info(self) -> builtins.list[AdminSubjectDTO]:
         with self._uow:
+            question_counts = self._uow.questions.count_all_by_subject()
             result = []
             for (
                 subject,
                 topic_count,
                 _,
             ) in self._uow.subjects.get_all_subjects_with_detailed_counts():
-                accurate_question_count = self._uow.questions.count_by_subject(subject.id)
-
                 result.append(
                     AdminSubjectDTO(
                         id=subject.id,
@@ -565,7 +564,7 @@ class SubjectService(SubjectServiceInterface):
                         type=subject.type,
                         image=self._file_service.get_subject_image_url(subject.image),
                         topic_count=topic_count,
-                        question_count=accurate_question_count,
+                        question_count=question_counts.get(subject.id, 0),
                         topics=[],
                     )
                 )

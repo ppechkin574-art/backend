@@ -218,6 +218,15 @@ class TrainerRepository:
         """Подсчитать количество тренажёров по теме"""
         return self._session.query(Trainer).filter_by(topic_id=topic_id).count()
 
+    def count_all_by_topic(self) -> dict[int, int]:
+        """Single query: {topic_id: trainer_count} for all topics."""
+        rows = (
+            self._session.query(Trainer.topic_id, func.count(Trainer.id))
+            .group_by(Trainer.topic_id)
+            .all()
+        )
+        return {topic_id: count for topic_id, count in rows}
+
     def get_all_trainers_with_detailed_counts(
         self,
     ) -> list[tuple[TrainerRepositoryDTO, int]]:

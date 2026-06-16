@@ -135,7 +135,7 @@ class CacheService:
             return False
 
     def invalidate_by_resource(self, resource: str, user_id: UUID | None = None) -> int:
-        return self.delete_pattern(f"user:user:{user_id}:{resource}:*" if user_id else f"global:{resource}:*")
+        return self.delete_pattern(f"{CacheStrategy.USER.value}:{user_id}:{resource}:*" if user_id else f"{CacheStrategy.GLOBAL.value}:{resource}:*")
 
     def invalidate_by_resources(self, resources: list[str], user_id: UUID | None = None) -> int:
         total_deleted = 0

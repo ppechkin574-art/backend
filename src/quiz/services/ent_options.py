@@ -424,7 +424,7 @@ class EntOptionService:
                             id=option.id,
                             option_number=option.option_number,
                             subject_id=option.subject_id,
-                            subject_name=option.subject.name,
+                            subject_name=option.subject.name if option.subject else "",
                             question_count=question_count,
                         )
                     )
@@ -442,7 +442,7 @@ class EntOptionService:
                     id=option.id,
                     option_number=option.option_number,
                     subject_id=option.subject_id,
-                    subject_name=option.subject,
+                    subject_name=option.subject.name if option.subject else "",
                     question_count=0,
                 )
                 for option in options

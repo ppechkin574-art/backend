@@ -647,6 +647,24 @@ class QuestionRepository(QuestionRepositoryInterface):
         """Count questions by topic"""
         return self._session.query(Question).filter_by(topic_id=topic_id).count()
 
+    def count_all_by_subject(self) -> dict[int, int]:
+        """Single query: {subject_id: question_count} for all subjects."""
+        rows = (
+            self._session.query(Question.subject_id, func.count(Question.id))
+            .group_by(Question.subject_id)
+            .all()
+        )
+        return {subject_id: count for subject_id, count in rows}
+
+    def count_all_by_topic(self) -> dict[int, int]:
+        """Single query: {topic_id: question_count} for all topics."""
+        rows = (
+            self._session.query(Question.topic_id, func.count(Question.id))
+            .group_by(Question.topic_id)
+            .all()
+        )
+        return {topic_id: count for topic_id, count in rows}
+
     def get_answered_questions_by_trainer(self, student_guid: UUID, trainer_id: int) -> builtins.list[int]:
         """Get answered questions by student in trainer"""
         query = text(

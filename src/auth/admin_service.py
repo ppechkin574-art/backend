@@ -3,7 +3,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 from auth.converters import to_keycloak_create_user_dto, to_user_dto
@@ -54,19 +54,20 @@ class AdminUserService:
         attendance_streaks or students default to 0 (same as the DTO default).
         """
         ids = [str(u.id) for u in users]
-        id_list = ", ".join(f"'{uid}'" for uid in ids)
 
         try:
             streak_rows = self._session.execute(
                 text(
-                    f"SELECT student_guid, current_streak_days, total_points "
-                    f"FROM attendance_streaks WHERE student_guid IN ({id_list})"
-                )
+                    "SELECT student_guid, current_streak_days, total_points "
+                    "FROM attendance_streaks WHERE student_guid = ANY(:ids)"
+                ),
+                {"ids": ids},
             ).fetchall()
             streak_map = {str(r[0]): (r[1], r[2]) for r in streak_rows}
 
             points_rows = self._session.execute(
-                text(f"SELECT id, rating FROM students WHERE id IN ({id_list})")
+                text("SELECT id, rating FROM students WHERE id = ANY(:ids)"),
+                {"ids": ids},
             ).fetchall()
             points_map = {str(r[0]): r[1] for r in points_rows}
         except Exception:

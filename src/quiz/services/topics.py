@@ -519,20 +519,19 @@ class TopicService(TopicServiceInterface):
     def get_all_topics_with_detailed_info(self) -> builtins.list[AdminTopicDTO]:
         """Получить все темы с детальной информацией для админки"""
         with self._uow:
+            question_counts = self._uow.questions.count_all_by_topic()
+            trainer_counts = self._uow.trainers.count_all_by_topic()
             topics_with_counts = self._uow.topics.get_all_topics_with_detailed_counts()
 
             result = []
             for topic, _question_count, _trainer_count in topics_with_counts:
-                accurate_question_count = self._uow.questions.count_by_topic(topic.id)
-                accurate_trainer_count = self._uow.trainers.count_by_topic(topic.id)
-
                 result.append(
                     AdminTopicDTO(
                         id=topic.id,
                         name=topic.name,
                         subject_id=topic.subject_id,
-                        question_count=accurate_question_count,
-                        trainer_count=accurate_trainer_count,
+                        question_count=question_counts.get(topic.id, 0),
+                        trainer_count=trainer_counts.get(topic.id, 0),
                         trainers=[],
                     )
                 )

@@ -58,15 +58,17 @@ class AdminUserService:
         try:
             streak_rows = self._session.execute(
                 text(
-                    "SELECT student_guid, current_streak_days, total_points "
-                    "FROM attendance_streaks WHERE student_guid = ANY(:ids)"
-                ),
+                    "SELECT student_guid::text, current_streak_days, total_points "
+                    "FROM attendance_streaks WHERE student_guid::text IN :ids"
+                ).bindparams(bindparam("ids", expanding=True)),
                 {"ids": ids},
             ).fetchall()
             streak_map = {str(r[0]): (r[1], r[2]) for r in streak_rows}
 
             points_rows = self._session.execute(
-                text("SELECT id, rating FROM students WHERE id = ANY(:ids)"),
+                text(
+                    "SELECT id::text, rating FROM students WHERE id::text IN :ids"
+                ).bindparams(bindparam("ids", expanding=True)),
                 {"ids": ids},
             ).fetchall()
             points_map = {str(r[0]): r[1] for r in points_rows}

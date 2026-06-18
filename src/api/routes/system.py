@@ -141,8 +141,8 @@ async def kk_pilot_status(request: Request):
 def _empty_update_config() -> dict:
     """Fail-soft default — min_build=0 means the app never force-updates."""
     return {
-        "ios": {"min_build": 0, "store_url": ""},
-        "android": {"min_build": 0, "store_url": ""},
+        "ios": {"min_build": 0, "recommended_build": 0, "store_url": ""},
+        "android": {"min_build": 0, "recommended_build": 0, "store_url": ""},
     }
 
 
@@ -159,8 +159,28 @@ async def app_update_config(request: Request):
     FAIL-SOFT: any DB / DI error returns zeros/empty (min_build=0) so a
     transient DB hiccup can never force-update — or 500 — the whole app.
     """
+    from quiz.services.app_update_config import (
+        PUBLIC_CACHE_KEY,
+        PUBLIC_CACHE_TTL,
+    )
+
     try:
         container = request.app.state.container
+    except Exception:  # noqa: BLE001 — fail-soft, never 500
+        return _empty_update_config()
+
+    # Read-through Redis cache. Fail-soft: any cache error just falls through
+    # to the DB read, so a Redis hiccup can never break the gate.
+    cache = None
+    try:
+        cache = container.cache_service()
+        cached = cache.get(PUBLIC_CACHE_KEY)
+        if cached:
+            return cached
+    except Exception:  # noqa: BLE001
+        cache = None
+
+    try:
         db = container.database()
     except Exception:  # noqa: BLE001 — fail-soft, never 500
         return _empty_update_config()
@@ -176,15 +196,20 @@ async def app_update_config(request: Request):
         result = {
             "ios": {
                 "min_build": config.ios_min_build or 0,
+                "recommended_build": config.ios_recommended_build or 0,
                 "store_url": config.ios_store_url or "",
             },
             "android": {
                 "min_build": config.android_min_build or 0,
+                "recommended_build": config.android_recommended_build or 0,
                 "store_url": config.android_store_url or "",
             },
         }
         # get_or_create may have inserted the seed row on first boot.
         session.commit()
+        if cache is not None:
+            with contextlib.suppress(Exception):  # noqa: BLE001
+                cache.set(PUBLIC_CACHE_KEY, result, ttl=PUBLIC_CACHE_TTL)
         return result
     except Exception:  # noqa: BLE001 — fail-soft, never 500
         with contextlib.suppress(Exception):  # noqa: BLE001

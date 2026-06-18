@@ -1324,4 +1324,21 @@ Pattern для будущих re-import'ов: `[[feedback_phase7b_translation_pa
 - Информатика (код-сниппеты на Python — НЕ переводить identifiers и keywords!). Проверить визуально, но `\code` блоки обычно отдельный block-type — splice не должен их трогать. На скрине Q74 «Келесі код үзіндісін іске қосу нәтижесін таңдаңыз» с Python-кодом — код виден правильно (не переведён). Норм.
 - Другие предметы — пока сигнала нет.
 
+---
+
+## 🔄 Force-Update Hardening (аудит + реализация 18.06.2026)
+
+Аудит функции принудительного обновления (`app_update_config`) выявил: ядро корректно (fail-soft, раздельные пороги iOS/Android, persisted в Postgres), но **нет предохранителей против операторской ошибки**. Сделано на ветках `feat/force-update-hardening` (backend / admin / app):
+
+**Реализовано (П1–4):**
+- **П1.** Колонки `ios_last_known_build` / `android_last_known_build` (миграция `c1d2e3f4a5b6`). PUT `/admin/app-update-config` отклоняет `min_build > last_known_build` (422) → нельзя заблокировать юзеров на неопубликованную версию. Admin: поля + блокировка Save + confirm-модалка.
+- **П2.** Таблица `app_update_config_audit_log` (миграция `d2e3f4a5b6c7`), GET `/admin/app-update-config/history`, откат из админки (загрузка снимка в форму → валидированный PUT).
+- **П3.** Колонки `ios_recommended_build` / `android_recommended_build` (миграция `e3f4a5b6c7d8`) — soft-update. App: закрываемый диалог `SoftUpdateDialog` при `min ≤ build < recommended`, раз/день (Hive `app_settings`). Публичный GET отдаёт `recommended_build`.
+- **П4.** Валидация `store_url` (https + host `apps.apple.com`/`play.google.com`, иначе 422). Redis-кэш публичного `/app/update-config` (TTL 300с, fail-soft, инвалидация при PUT).
+
+**Отложено (П5) — требует кредов и решения:**
+- **Авто-подстановка текущих live-версий из сторов** в админку (чтобы оператор не сверял вручную). Нужно: **App Store Connect API** (ключ `.p8` + issuer id + key id) и **Google Play Developer API** (service-account JSON). У заказчика этих кредов пока нет (часть ключей у Романа — см. Фазу 3).
+- **Google In-App Updates API** (`IMMEDIATE`/`FLEXIBLE`) как альтернатива собственному гейту на Android — отдельная нативная работа в `android/` (собирается на Windows-машине).
+- Действие: вернуться, когда появятся креды ASC / Google Play. Текущая защита (ручное поле «последний build в сторе» + валидация) закрывает критичный риск без этих интеграций.
+
 

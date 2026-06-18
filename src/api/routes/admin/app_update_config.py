@@ -125,6 +125,16 @@ def _validate_store_urls(body: AppUpdateConfigUpdateDTO, current) -> None:
         url = url.strip()
         if not url:
             continue  # clearing the URL is fine
+        # Reject internal whitespace / control chars: .strip() only trims the
+        # ends, so a pasted "…id6766537009 AIMA EHT" would slip through the
+        # host check (host is still apps.apple.com) yet break launchUrl on the
+        # client — leaving a forced user on a dead "Обновить" button.
+        if any(ch.isspace() or ord(ch) < 0x20 for ch in url):
+            errors.append(
+                f"{platform}: ссылка не должна содержать пробелов или "
+                f"переносов строк. Получено: {url!r}."
+            )
+            continue
         parsed = urlparse(url)
         host = (parsed.hostname or "").lower()
         if parsed.scheme != "https" or host not in _ALLOWED_STORE_HOSTS[platform]:

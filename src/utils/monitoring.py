@@ -30,6 +30,20 @@ ERROR_COUNT = Counter(
     ["method", "endpoint", "error_type"],
 )
 
+# Payment / subscription observability. `platform` = apple|google,
+# `result` = active|inactive|rejected|error (verify) or the S2S event type.
+IAP_VERIFY_COUNT = Counter(
+    "aimaapp_iap_verify_total",
+    "In-app purchase receipt verifications",
+    ["platform", "result"],
+)
+
+IAP_EVENT_COUNT = Counter(
+    "aimaapp_iap_event_total",
+    "Subscription lifecycle events (purchase/renew/expire/refund/revoke)",
+    ["platform", "event"],
+)
+
 LEVEL_MAP = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
 
 

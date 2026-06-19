@@ -44,8 +44,10 @@ from payments.apple_iap import (
     _peek_jws_payload,
 )
 from payments.models import Payment
+from subscription.event_log import log_subscription_event
 from subscription.plan_service import SubscriptionPlanService
 from subscription.service import SubscriptionService
+from utils.monitoring import IAP_EVENT_COUNT
 
 logger = logging.getLogger(__name__)
 
@@ -132,6 +134,41 @@ def _user_for_original_tx(session: Session, original_tx_id: str) -> str | None:
     except Exception:
         logger.exception("[apple_s2s] user lookup failed for tx=%s", original_tx_id[:16])
         return None
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        UUID(value)
+        return True
+    except (ValueError, AttributeError, TypeError):
+        return False
+
+
+def _resolve_user(
+    session: Session, original_tx_id: str, app_account_token: str
+) -> str | None:
+    """Map an Apple transaction to our user_id.
+
+    Primary: the Payment row written by POST /payments/apple/verify (keyed by
+    originalTransactionId). With the iOS client now retrying verify until it
+    succeeds (ApplePurchaseProcessor), this row is reliably present.
+
+    Fallback: `appAccountToken` — the UUID the app sets to the user_id at
+    purchase time, which Apple echoes back in EVERY notification for this
+    subscription. This closes the gap where a renewal/expiry/refund arrives
+    before any /verify ever ran (bought offline, reinstall, first-verify
+    network fail) — without it those events were silently dropped and the
+    paying user lost PRO. No DB row is needed: the token rides every event.
+    """
+    existing = _user_for_original_tx(session, original_tx_id)
+    if existing:
+        return existing
+    if app_account_token and _is_uuid(app_account_token):
+        logger.info(
+            "[apple_s2s] resolved user via appAccountToken (no /verify row yet)"
+        )
+        return app_account_token
+    return None
 
 
 def _pro_price(plan_service: SubscriptionPlanService) -> Decimal:
@@ -229,6 +266,7 @@ async def apple_notifications_v2(
     original_tx_id = str(getattr(tx, "originalTransactionId", "") or "")
     transaction_id = str(getattr(tx, "transactionId", "") or original_tx_id)
     product_id = str(getattr(tx, "productId", "") or "")
+    app_account_token = str(getattr(tx, "appAccountToken", "") or "")
     expires_ms = getattr(tx, "expiresDate", None)
     expires_at = (
         datetime.fromtimestamp(expires_ms / 1000.0, tz=UTC)
@@ -240,11 +278,11 @@ async def apple_notifications_v2(
         logger.warning("[apple_s2s] no originalTransactionId type=%s", ntype)
         return {"ok": True}
 
-    user_id = _user_for_original_tx(session, original_tx_id)
+    user_id = _resolve_user(session, original_tx_id, app_account_token)
     if not user_id:
         logger.warning(
             "[apple_s2s] no user mapped for originalTx=%s type=%s — "
-            "initial purchase not recorded via /verify yet",
+            "no /verify row and no appAccountToken",
             original_tx_id[:16],
             ntype,
         )
@@ -263,8 +301,19 @@ async def apple_notifications_v2(
             user = users.get(UserQueryDTO(id=UUID(user_id)))
             subscription_service.revoke_subscription(user)
             logger.info("[apple_s2s] revoked PRO for user=%s type=%s", user_id, ntype)
+            IAP_EVENT_COUNT.labels("apple", ntype).inc()
+            log_subscription_event(
+                session, platform="apple", event_type=ntype.lower(),
+                status="success", user_id=user_id, product_id=product_id,
+                transaction_id=transaction_id, detail=f"S2S {ntype}",
+            )
         except Exception:
             logger.exception("[apple_s2s] revoke failed for user=%s", user_id)
+            log_subscription_event(
+                session, platform="apple", event_type=ntype.lower(),
+                status="failed", user_id=user_id, transaction_id=transaction_id,
+                detail=f"S2S {ntype} revoke failed",
+            )
         return {"ok": True}
 
     if ntype in _MONEY_IN:
@@ -278,8 +327,21 @@ async def apple_notifications_v2(
                 "[apple_s2s] extended PRO for user=%s type=%s expires=%s",
                 user_id, ntype, expires_at,
             )
+            IAP_EVENT_COUNT.labels("apple", ntype).inc()
+            log_subscription_event(
+                session, platform="apple",
+                event_type="renew" if ntype == "DID_RENEW" else "purchase",
+                status="success", user_id=user_id, product_id=product_id,
+                transaction_id=transaction_id,
+                detail=f"S2S {ntype} expires={expires_at}",
+            )
         except Exception:
             logger.exception("[apple_s2s] activate_subscription failed for user=%s", user_id)
+            log_subscription_event(
+                session, platform="apple", event_type="activate_failed",
+                status="failed", user_id=user_id, transaction_id=transaction_id,
+                detail=f"S2S {ntype} activate failed",
+            )
         return {"ok": True}
 
     logger.info("[apple_s2s] unhandled type=%s subtype=%s user=%s", ntype, nsubtype, user_id)

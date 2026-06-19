@@ -39,8 +39,10 @@ from payments.android_iap import AndroidIAPVerifier
 from payments.models import Payment
 from quiz.repositories.user_points import UserPointsRepository
 from referrals.service import grant_pending_invitee_reward
+from subscription.event_log import log_subscription_event
 from subscription.plan_service import SubscriptionPlanService
 from subscription.service import SubscriptionService
+from utils.monitoring import IAP_VERIFY_COUNT
 
 logger = logging.getLogger(__name__)
 
@@ -86,33 +88,57 @@ def _insert_google_payment(
     product_id: str,
     desc: str,
 ) -> None:
-    """Idempotently insert a paid Google Play Payment row.
+    """Idempotently insert a paid Google Play Payment row, with retries.
 
-    Best-effort: any failure is swallowed (never breaks the caller). Idempotent
-    on order_id, so repeated verify/RTDN deliveries don't create duplicates.
+    This row is the user↔purchase-token binding that RTDN renewals/refunds map
+    through (see `_token_owner` / `_revoke_pro_for_token`). Losing it silently
+    means a later renewal or refund can't find the user, so we do NOT swallow a
+    transient failure: retry a few times, and if it still fails, log it LOUDLY
+    (ERROR) so it surfaces in monitoring instead of vanishing. Never raises —
+    PRO is already granted by the caller; this is bookkeeping that must not
+    break the purchase response.
+    Idempotent on order_id, so retries / repeated RTDN deliveries don't dupe.
     Amount is gross (pre-Google-fee); exact payouts come from Google's reports.
     """
-    try:
-        if session.query(Payment).filter(Payment.order_id == order_id).first():
-            return  # already recorded
-        session.add(
-            Payment(
-                order_id=order_id,
-                amount=_pro_price(plan_service),
-                currency="KZT",
-                status="paid",
-                pg_payment_method="google_play",
-                is_subscription_payment=True,
-                subscription_plan="PRO",
-                user_id=str(user_id),
-                pg_status_desc=desc,
+    last_exc: Exception | None = None
+    for attempt in range(1, 4):  # up to 3 attempts
+        try:
+            if session.query(Payment).filter(Payment.order_id == order_id).first():
+                return  # already recorded (idempotent)
+            session.add(
+                Payment(
+                    order_id=order_id,
+                    amount=_pro_price(plan_service),
+                    currency="KZT",
+                    status="paid",
+                    pg_payment_method="google_play",
+                    is_subscription_payment=True,
+                    subscription_plan="PRO",
+                    user_id=str(user_id),
+                    pg_status_desc=desc,
+                )
             )
-        )
-        session.commit()
-        logger.info("Recorded Google Play payment %s for user %s", order_id, user_id)
-    except Exception:  # noqa: BLE001 — bookkeeping must never break the caller
-        session.rollback()
-        logger.exception("Failed to record Google Play payment for user %s", user_id)
+            session.commit()
+            logger.info("Recorded Google Play payment %s for user %s", order_id, user_id)
+            return
+        except Exception as exc:  # noqa: BLE001
+            last_exc = exc
+            session.rollback()
+            logger.warning(
+                "Google Play payment record attempt %s/3 failed for user %s: %s",
+                attempt,
+                user_id,
+                exc,
+            )
+
+    logger.error(
+        "CRITICAL: could not record Google Play payment after 3 attempts "
+        "for user %s order=%s — RTDN renewals/refunds may not map back to this "
+        "user. last_error=%s",
+        user_id,
+        order_id,
+        last_exc,
+    )
 
 
 def _token_order_id(purchase_token: str) -> str:
@@ -300,6 +326,20 @@ async def verify_android_purchase(
         db_session.commit()
     except Exception:
         logger.exception("Referral reward grant failed for user %s (Android IAP)", current_user.id)
+
+    IAP_VERIFY_COUNT.labels("google", "active").inc()
+    log_subscription_event(
+        db_session,
+        platform="google",
+        event_type="purchase",
+        status="success",
+        user_id=str(current_user.id),
+        product_id=body.product_id,
+        transaction_id=body.purchase_token[:64],
+        amount=_pro_price(plan_service),
+        environment=result.environment,
+        detail=f"PRO activated expires={result.expires_at}",
+    )
 
     return AndroidVerifyOut(
         is_active=True,

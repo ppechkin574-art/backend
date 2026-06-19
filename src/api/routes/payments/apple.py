@@ -33,8 +33,10 @@ from payments.models import Payment
 from quiz.repositories.user_points import UserPointsRepository
 from referrals.service import grant_pending_invitee_reward
 from pydantic import BaseModel
+from subscription.event_log import log_subscription_event
 from subscription.plan_service import SubscriptionPlanService
 from subscription.service import SubscriptionService
+from utils.monitoring import IAP_VERIFY_COUNT
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,13 @@ def _pro_price(plan_service: SubscriptionPlanService) -> Decimal:
     except Exception:  # noqa: BLE001 — price lookup is best-effort
         logger.warning("Could not read PRO price; using fallback %s", _PRO_FALLBACK_PRICE)
     return _PRO_FALLBACK_PRICE
+
+
+# Only OUR product unlocks PRO. The product_id comes from the verified Apple
+# receipt; without this guard, any active auto-renewable subscription of this
+# app (a future different product / a cheaper SKU) would grant PRO. Mirrors the
+# Google Play guard in android.py.
+_ALLOWED_PRODUCT_IDS = {"kz.aima.aima.pro.monthly"}
 
 
 def _apple_order_id(transaction_id: str) -> str:
@@ -159,6 +168,16 @@ async def verify_apple_receipt(
             result.raw_status,
             result.error,
         )
+        IAP_VERIFY_COUNT.labels("apple", "error").inc()
+        log_subscription_event(
+            db_session,
+            platform="apple",
+            event_type="verify_rejected",
+            status="failed",
+            user_id=str(current_user.id),
+            environment=result.environment,
+            detail=f"receipt invalid status={result.raw_status} err={result.error}",
+        )
         raise HTTPException(status_code=400, detail="Receipt verification failed")
 
     if not result.is_active_subscription:
@@ -170,6 +189,35 @@ async def verify_apple_receipt(
         logger.info(
             "Apple receipt valid but no active subscription for user %s",
             current_user.id,
+        )
+        IAP_VERIFY_COUNT.labels("apple", "inactive").inc()
+        return AppleVerifyOut(
+            is_active=False,
+            product_id=result.product_id,
+            expires_at=(result.expires_at.isoformat() if result.expires_at else None),
+            environment=result.environment,
+            user=current_user,
+        )
+
+    # Product allow-list: only OUR product grants PRO. Validate only when the
+    # receipt actually carries a product_id (legacy SK1 receipts can omit it on
+    # the top level — don't block an otherwise-valid active sub on a missing id).
+    if result.product_id and result.product_id not in _ALLOWED_PRODUCT_IDS:
+        logger.warning(
+            "Apple receipt active but unknown product_id=%s for user %s — not activating",
+            result.product_id,
+            current_user.id,
+        )
+        IAP_VERIFY_COUNT.labels("apple", "rejected").inc()
+        log_subscription_event(
+            db_session,
+            platform="apple",
+            event_type="verify_rejected",
+            status="failed",
+            user_id=str(current_user.id),
+            product_id=result.product_id,
+            environment=result.environment,
+            detail="unknown product_id",
         )
         return AppleVerifyOut(
             is_active=False,
@@ -227,6 +275,20 @@ async def verify_apple_receipt(
         db_session.commit()
     except Exception:
         logger.exception("Referral reward grant failed for user %s (Apple IAP)", current_user.id)
+
+    IAP_VERIFY_COUNT.labels("apple", "active").inc()
+    log_subscription_event(
+        db_session,
+        platform="apple",
+        event_type="purchase",
+        status="success",
+        user_id=str(current_user.id),
+        product_id=result.product_id,
+        transaction_id=tx_id,
+        amount=_pro_price(plan_service),
+        environment=result.environment,
+        detail=f"PRO activated expires={result.expires_at}",
+    )
 
     return AppleVerifyOut(
         is_active=True,

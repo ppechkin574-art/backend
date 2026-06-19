@@ -332,7 +332,14 @@ class SubscriptionService:
                     final_expires_at = start_date + timedelta(
                         days=plan_features.duration_days * months
                     )
-                update_data = UserUpdateDTO(plan=plan, subscription_end=final_expires_at)
+                # Clear any prior cancellation flag: an active PRO purchase /
+                # renewal / restore means the user is NOT cancelled, so the UI
+                # must not keep showing «подписка отменена».
+                update_data = UserUpdateDTO(
+                    plan=plan,
+                    subscription_end=final_expires_at,
+                    subscription_cancelled=False,
+                )
             else:
                 update_data = UserUpdateDTO(plan=plan, subscription_end=None)
 

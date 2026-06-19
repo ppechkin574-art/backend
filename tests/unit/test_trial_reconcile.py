@@ -1,17 +1,23 @@
-"""reconcile_registration_trial — anti-farming for the registration trial.
+"""Trial reconciliation — anti-farming + one-time trial for existing users,
+with the trial length driven by an admin-configurable duration (passed in as
+`trial_days`; app_settings `trial_duration_days`).
 
-`complete_registration` always grants a fresh 1-day trial. `reconcile_*`
-reconciles it against the persistent phone ledger (`trial_history`):
+reconcile_registration_trial(user, trial_days):
+- phone never seen             → record it, stamp the trial to trial_days.
+- phone in ledger + paywall ON    → REVOKE (set FREE).
+- phone in ledger + paywall OFF   → keep, stamp to trial_days, no double-record.
+- no phone (email)             → skip entirely.
+- DB hiccup                    → non-raising; user keeps the registration trial.
 
-- phone never seen             → record it, KEEP the trial.
-- phone in ledger + paywall ON   → REVOKE (set FREE).
-- phone in ledger + paywall OFF  → keep (today's behaviour), no double-record.
-- no phone (email registration)  → skip entirely (used_trial gates it).
-- DB hiccup                     → non-raising; user keeps the trial.
-- TRIAL_DURATION_MINUTES > 0    → QA shortener re-stamps the trial end.
+reconcile_login_trial(user, trial_days):
+- flag OFF                     → no-op.
+- existing FREE user, new phone → grant trial_days, record.
+- phone in ledger              → no grant (must buy).
+- active PRO                   → untouched.
+- no phone / grant failure     → safe no-op.
 
-The method is SYNC (called from the async registration route as a plain call),
-so these tests call it directly without await.
+TRIAL_DURATION_MINUTES env (if >0) overrides trial_days for QA.
+Both methods are SYNC (called from the async routes as plain calls).
 """
 
 from datetime import UTC, datetime, timedelta
@@ -103,7 +109,7 @@ def _make_user(
     used_trial=True,
     subscription_end=None,
 ) -> UserDTO:
-    # plan=PRO simulates the 1-day trial complete_registration just granted.
+    # plan=PRO simulates the placeholder 1-day trial complete_registration grants.
     return UserDTO(
         id=uuid4(),
         username="u",
@@ -121,20 +127,38 @@ def _svc(db, auth) -> SubscriptionService:
     return SubscriptionService(auth_service=auth, database=db)
 
 
-# ──────────────────────────── tests ────────────────────────────
+# ───────────────── reconcile_registration_trial ─────────────────
 
 
-def test_new_phone_records_and_keeps_trial(monkeypatch):
+def test_new_phone_records_and_stamps_trial(monkeypatch):
     monkeypatch.delenv("TRIAL_PAYWALL_ENABLED", raising=False)
     monkeypatch.delenv("TRIAL_DURATION_MINUTES", raising=False)
     db = _FakeDatabase(existing_rows=[])
     auth = _FakeAuthService()
 
-    out = _svc(db, auth).reconcile_registration_trial(_make_user())
+    out = _svc(db, auth).reconcile_registration_trial(_make_user(), 1)
 
     assert any(s.added for s in db._sessions), "ledger row should be inserted"
-    assert out.plan == PlanType.PRO, "trial must stay for a never-seen phone"
-    assert auth.updates == [], "no Keycloak write when keeping the trial"
+    assert len(auth.updates) == 1, "trial stamped to the configured duration"
+    assert auth.updates[0].plan == PlanType.PRO
+    assert auth.updates[0].subscription_end is not None
+    assert out.plan == PlanType.PRO
+
+
+def test_registration_uses_configured_duration(monkeypatch):
+    monkeypatch.delenv("TRIAL_PAYWALL_ENABLED", raising=False)
+    monkeypatch.delenv("TRIAL_DURATION_MINUTES", raising=False)
+    db = _FakeDatabase(existing_rows=[])
+    auth = _FakeAuthService()
+    before = datetime.now(UTC)
+
+    _svc(db, auth).reconcile_registration_trial(_make_user(), 3)
+
+    end = auth.updates[0].subscription_end
+    delta = end - before
+    assert timedelta(days=2, hours=23) < delta < timedelta(days=3, hours=1), (
+        f"expected ~3 days, got {delta}"
+    )
 
 
 def test_known_phone_paywall_on_revokes(monkeypatch):
@@ -144,7 +168,7 @@ def test_known_phone_paywall_on_revokes(monkeypatch):
     db = _FakeDatabase(existing_rows=[existing])
     auth = _FakeAuthService()
 
-    out = _svc(db, auth).reconcile_registration_trial(_make_user())
+    out = _svc(db, auth).reconcile_registration_trial(_make_user(), 1)
 
     assert len(auth.updates) == 1, "should revoke via one Keycloak write"
     assert auth.updates[0].plan == PlanType.FREE
@@ -153,16 +177,17 @@ def test_known_phone_paywall_on_revokes(monkeypatch):
     assert all(not s.added for s in db._sessions), "no double-record"
 
 
-def test_known_phone_paywall_off_keeps_trial(monkeypatch):
+def test_known_phone_paywall_off_keeps_and_stamps(monkeypatch):
     monkeypatch.delenv("TRIAL_PAYWALL_ENABLED", raising=False)  # default OFF
     monkeypatch.delenv("TRIAL_DURATION_MINUTES", raising=False)
     existing = TrialHistory(phone_hash=_hash_phone("+77787943760"))
     db = _FakeDatabase(existing_rows=[existing])
     auth = _FakeAuthService()
 
-    out = _svc(db, auth).reconcile_registration_trial(_make_user())
+    out = _svc(db, auth).reconcile_registration_trial(_make_user(), 1)
 
-    assert auth.updates == [], "flag off → no revoke (today's behaviour)"
+    assert len(auth.updates) == 1, "flag off → keep + stamp (no revoke)"
+    assert auth.updates[0].plan == PlanType.PRO
     assert out.plan == PlanType.PRO
     assert all(not s.added for s in db._sessions), "already recorded → no insert"
 
@@ -172,7 +197,7 @@ def test_no_phone_skips_entirely(monkeypatch):
     db = _FakeDatabase(existing_rows=[])
     auth = _FakeAuthService()
 
-    out = _svc(db, auth).reconcile_registration_trial(_make_user(phone=None))
+    out = _svc(db, auth).reconcile_registration_trial(_make_user(phone=None), 1)
 
     assert auth.updates == []
     assert out.plan == PlanType.PRO
@@ -186,11 +211,11 @@ def test_new_phone_paywall_on_still_keeps_trial(monkeypatch):
     db = _FakeDatabase(existing_rows=[])
     auth = _FakeAuthService()
 
-    out = _svc(db, auth).reconcile_registration_trial(_make_user())
+    out = _svc(db, auth).reconcile_registration_trial(_make_user(), 1)
 
     assert any(s.added for s in db._sessions)
     assert out.plan == PlanType.PRO
-    assert auth.updates == []
+    assert auth.updates[0].plan == PlanType.PRO  # stamped, not revoked
 
 
 def test_db_failure_is_non_fatal(monkeypatch):
@@ -200,24 +225,25 @@ def test_db_failure_is_non_fatal(monkeypatch):
     auth = _FakeAuthService()
 
     # Must NOT raise — a ledger hiccup can't break registration.
-    out = _svc(db, auth).reconcile_registration_trial(_make_user())
+    out = _svc(db, auth).reconcile_registration_trial(_make_user(), 1)
 
     assert out.plan == PlanType.PRO
     assert any(s.rolled_back for s in db._sessions)
+    assert auth.updates == [], "stamp is skipped when the ledger write failed"
 
 
-def test_qa_shortener_restamps_trial(monkeypatch):
+def test_qa_minutes_override_wins(monkeypatch):
     monkeypatch.delenv("TRIAL_PAYWALL_ENABLED", raising=False)
     monkeypatch.setenv("TRIAL_DURATION_MINUTES", "5")
     db = _FakeDatabase(existing_rows=[])
     auth = _FakeAuthService()
+    before = datetime.now(UTC)
 
-    out = _svc(db, auth).reconcile_registration_trial(_make_user())
+    _svc(db, auth).reconcile_registration_trial(_make_user(), 30)  # 30 days config
 
-    assert len(auth.updates) == 1, "shortener should re-stamp the trial once"
-    assert auth.updates[0].plan == PlanType.PRO
-    assert auth.updates[0].subscription_end is not None
-    assert out.plan == PlanType.PRO
+    end = auth.updates[0].subscription_end
+    delta = end - before
+    assert delta < timedelta(hours=1), f"env minutes should win, got {delta}"
 
 
 # ───────────────── reconcile_login_trial (existing users) ─────────────────
@@ -228,7 +254,7 @@ def test_login_flag_off_is_noop(monkeypatch):
     db = _FakeDatabase(existing_rows=[])
     auth = _FakeAuthService()
 
-    out = _svc(db, auth).reconcile_login_trial(_make_user(plan=PlanType.FREE))
+    out = _svc(db, auth).reconcile_login_trial(_make_user(plan=PlanType.FREE), 1)
 
     assert auth.updates == []
     assert db._sessions == [], "flag off → no DB touch at all"
@@ -241,7 +267,7 @@ def test_login_grants_existing_free_user(monkeypatch):
     db = _FakeDatabase(existing_rows=[])
     auth = _FakeAuthService()
 
-    out = _svc(db, auth).reconcile_login_trial(_make_user(plan=PlanType.FREE))
+    out = _svc(db, auth).reconcile_login_trial(_make_user(plan=PlanType.FREE), 1)
 
     assert len(auth.updates) == 1, "should grant a one-time trial"
     assert auth.updates[0].plan == PlanType.PRO
@@ -256,7 +282,7 @@ def test_login_known_phone_no_grant(monkeypatch):
     db = _FakeDatabase(existing_rows=[existing])
     auth = _FakeAuthService()
 
-    out = _svc(db, auth).reconcile_login_trial(_make_user(plan=PlanType.FREE))
+    out = _svc(db, auth).reconcile_login_trial(_make_user(plan=PlanType.FREE), 1)
 
     assert auth.updates == [], "phone already used its one trial → must buy"
     assert out.plan == PlanType.FREE
@@ -269,7 +295,7 @@ def test_login_active_pro_untouched(monkeypatch):
     future = datetime.now(UTC) + timedelta(days=10)
 
     out = _svc(db, auth).reconcile_login_trial(
-        _make_user(plan=PlanType.PRO, subscription_end=future)
+        _make_user(plan=PlanType.PRO, subscription_end=future), 1
     )
 
     assert auth.updates == [], "an active payer must not be disturbed"
@@ -283,7 +309,7 @@ def test_login_no_phone_skips(monkeypatch):
     auth = _FakeAuthService()
 
     out = _svc(db, auth).reconcile_login_trial(
-        _make_user(phone=None, plan=PlanType.FREE)
+        _make_user(phone=None, plan=PlanType.FREE), 1
     )
 
     assert auth.updates == []
@@ -301,7 +327,7 @@ def test_login_grant_keycloak_failure_non_fatal(monkeypatch):
     auth.update_user_profile = _boom
 
     # Must NOT raise — a grant hiccup can't break login.
-    out = _svc(db, auth).reconcile_login_trial(_make_user(plan=PlanType.FREE))
+    out = _svc(db, auth).reconcile_login_trial(_make_user(plan=PlanType.FREE), 1)
 
     assert out.plan == PlanType.FREE
     # Grant failed BEFORE recording → phone not blacklisted (can retry later).

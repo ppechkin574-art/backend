@@ -315,6 +315,7 @@ async def registration_complete(
     request_data: RegistrationCompleteDTO,
     service: AuthService = Depends(get_auth_service),
     subscription_service: SubscriptionService = Depends(get_subscription_service),
+    app_settings: AppSettingsService = Depends(get_app_settings_service),
 ):
     """Complete registration after code verification"""
     log_info(
@@ -335,8 +336,9 @@ async def registration_complete(
         # TRIAL_PAYWALL_ENABLED is on; fills the ledger otherwise. Best-effort —
         # must never break a successful registration.
         try:
+            trial_days = app_settings.get_int("trial_duration_days", 1)
             new_user = service.get_user_from_token(tokens.access_token)
-            subscription_service.reconcile_registration_trial(new_user)
+            subscription_service.reconcile_registration_trial(new_user, trial_days)
         except Exception:
             logger.exception(
                 "Trial reconcile failed (non-fatal) after registration"
@@ -674,6 +676,7 @@ def login(
     login_params: LoginParamsDTO,
     service: AuthServiceInterface = Depends(get_auth_service),
     subscription_service: SubscriptionService = Depends(get_subscription_service),
+    app_settings: AppSettingsService = Depends(get_app_settings_service),
 ):
     """Authenticate user with credentials"""
     log_info(
@@ -687,8 +690,9 @@ def login(
     # One-time trial for EXISTING users (self-paced rollout). Flag-gated and
     # best-effort — must never break login.
     try:
+        trial_days = app_settings.get_int("trial_duration_days", 1)
         logged_in_user = service.get_user_from_token(tokens.access_token)
-        subscription_service.reconcile_login_trial(logged_in_user)
+        subscription_service.reconcile_login_trial(logged_in_user, trial_days)
     except Exception:
         logger.exception("Login trial reconcile failed (non-fatal)")
     return tokens

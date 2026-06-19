@@ -431,7 +431,7 @@ class SubscriptionService:
             "yes",
         )
 
-    def reconcile_registration_trial(self, user: UserDTO) -> UserDTO:
+    def reconcile_registration_trial(self, user: UserDTO, trial_days: int) -> UserDTO:
         """Reconcile the just-granted registration trial against the phone ledger.
 
         `complete_registration` ALWAYS grants a fresh 1-day trial. On its own
@@ -463,24 +463,21 @@ class SubscriptionService:
                 .filter(TrialHistory.phone_hash == phone_hash)
                 .first()
             )
-            if existing:
-                if paywall:
-                    logger.warning(
-                        "Trial farming blocked: phone %s re-registered "
-                        "(user=%s) — revoking trial",
-                        user.phone[:6] + "***",
-                        user.id,
-                    )
-                    return self.auth_service.update_user_profile(
-                        user,
-                        UserUpdateDTO(plan=PlanType.FREE, subscription_end=None),
-                    )
-                # Flag off → preserve current behaviour (the trial stays).
-                return user
-
-            # First time we see this number → remember it; the trial stays.
-            session.add(TrialHistory(phone_hash=phone_hash))
-            session.commit()
+            if existing and paywall:
+                logger.warning(
+                    "Trial farming blocked: phone %s re-registered "
+                    "(user=%s) — revoking trial",
+                    user.phone[:6] + "***",
+                    user.id,
+                )
+                return self.auth_service.update_user_profile(
+                    user,
+                    UserUpdateDTO(plan=PlanType.FREE, subscription_end=None),
+                )
+            if not existing:
+                # First time we see this number → remember it (the trial stays).
+                session.add(TrialHistory(phone_hash=phone_hash))
+                session.commit()
         except Exception as e:  # noqa: BLE001 — must never break registration
             logger.exception(
                 "reconcile_registration_trial failed for user %s: %s", user.id, e
@@ -493,40 +490,40 @@ class SubscriptionService:
         finally:
             session.close()
 
-        # QA/dev knob: shorten the freshly-granted trial so the
-        # expiry→paywall transition can be tested without waiting a full day.
-        # Default 0 = keep the 1 day set at registration. Best-effort.
+        # Trial is kept → stamp it to the admin-configured duration (registration
+        # set a placeholder 1 day; this honours app_settings `trial_duration_days`,
+        # and the TRIAL_DURATION_MINUTES QA override inside _trial_end).
         try:
-            minutes = int(os.getenv("TRIAL_DURATION_MINUTES", "0") or "0")
-        except ValueError:
-            minutes = 0
-        if minutes > 0:
-            try:
-                user = self.auth_service.update_user_profile(
-                    user,
-                    UserUpdateDTO(
-                        plan=PlanType.PRO,
-                        subscription_end=datetime.now(UTC)
-                        + timedelta(minutes=minutes),
-                    ),
-                )
-            except Exception:  # noqa: BLE001 — dev knob must never break flow
-                logger.exception("trial-duration shortener failed (non-fatal)")
-        return user
+            return self.auth_service.update_user_profile(
+                user,
+                UserUpdateDTO(
+                    plan=PlanType.PRO, subscription_end=self._trial_end(trial_days)
+                ),
+            )
+        except Exception:  # noqa: BLE001 — never break registration
+            logger.exception(
+                "reconcile_registration_trial duration stamp failed (non-fatal) for %s",
+                user.id,
+            )
+            return user
 
-    def _trial_end(self) -> datetime:
-        """When a freshly-granted trial should expire. 1 day by default;
-        TRIAL_DURATION_MINUTES>0 shortens it so QA can watch the
-        expiry→paywall transition without waiting a full day."""
+    def _trial_end(self, trial_days: int) -> datetime:
+        """When a freshly-granted trial should expire.
+
+        Uses the admin-configured `trial_days` (app_settings key
+        `trial_duration_days`, default 1 — editable from the admin panel). The
+        TRIAL_DURATION_MINUTES env var, if >0, overrides it for QA so the
+        expiry->paywall window can be tested without waiting a full day.
+        """
         try:
-            minutes = int(os.getenv("TRIAL_DURATION_MINUTES", "0") or "0")
+            env_minutes = int(os.getenv("TRIAL_DURATION_MINUTES", "0") or "0")
         except ValueError:
-            minutes = 0
-        if minutes > 0:
-            return datetime.now(UTC) + timedelta(minutes=minutes)
-        return datetime.now(UTC) + timedelta(days=1)
+            env_minutes = 0
+        if env_minutes > 0:
+            return datetime.now(UTC) + timedelta(minutes=env_minutes)
+        return datetime.now(UTC) + timedelta(days=max(1, trial_days))
 
-    def reconcile_login_trial(self, user: UserDTO) -> UserDTO:
+    def reconcile_login_trial(self, user: UserDTO, trial_days: int) -> UserDTO:
         """One-time trial for EXISTING users, granted on login (self-paced).
 
         New users get their trial at registration. Users who registered before
@@ -573,7 +570,9 @@ class SubscriptionService:
         try:
             granted = self.auth_service.update_user_profile(
                 user,
-                UserUpdateDTO(plan=PlanType.PRO, subscription_end=self._trial_end()),
+                UserUpdateDTO(
+                    plan=PlanType.PRO, subscription_end=self._trial_end(trial_days)
+                ),
             )
         except Exception:  # noqa: BLE001 — never break login
             logger.exception("reconcile_login_trial grant failed for %s", user.id)

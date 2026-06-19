@@ -1,3 +1,4 @@
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -118,6 +119,46 @@ async def grant_pro_subscription(
         return service.grant_pro_subscription(user_id, days=payload.days)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+class AdjustPointsRequest(BaseModel):
+    # "delta" adds `value` (may be negative); "set" replaces the total with
+    # `value` (>= 0). Frontend "reset" = mode="set", value=0.
+    mode: Literal["delta", "set"] = "delta"
+    value: int = Field(ge=-1_000_000, le=1_000_000)
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class AdjustPointsResponse(BaseModel):
+    user_id: UUID
+    total_points: int
+    rank: int
+    applied_delta: int
+
+
+@router.patch("/{user_id}/points", response_model=AdjustPointsResponse)
+async def adjust_user_points(
+    user_id: UUID,
+    payload: AdjustPointsRequest,
+    service: AdminUserService = Depends(get_admin_user_service),
+    cache_service: CacheService = Depends(get_cache_service),
+):
+    """Manually add/subtract/set a user's leaderboard points (the in-app
+    "stars" in user_points.total_points). Writes a PointsAuditLog row and
+    busts the user's cached points/rank so the leaderboard reflects the
+    change immediately (otherwise stale for up to the 60s TTL).
+
+    Admin-only (this whole router is `allow_only_admins`).
+    """
+    try:
+        result = service.adjust_points(
+            user_id, mode=payload.mode, value=payload.value, reason=payload.reason
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    # Clears user:<id>:user_points:total and :rank (TTL-cached in get_user).
+    cache_service.invalidate_by_resource("user_points", user_id=user_id)
+    return result
 
 
 class SeedStreakRequest(BaseModel):

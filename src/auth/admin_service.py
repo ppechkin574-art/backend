@@ -20,6 +20,7 @@ from clients.identity_provider.dtos import (
     KeycloakUserUpdateDTO,
 )
 from common.enums import PlanType
+from quiz.repositories.user_points import UserPointsRepository
 
 logger = logging.getLogger(__name__)
 
@@ -48,14 +49,24 @@ class AdminUserService:
         return users
 
     def _enrich_with_pg_stats(self, users: list[UserDTO]) -> None:
-        """Batch-fetch streak and points from PostgreSQL and merge into DTOs.
+        """Batch-fetch per-user stats from PostgreSQL and merge into DTOs.
 
-        Two queries for all users at once — no N+1. Users without a row in
-        attendance_streaks or students default to 0 (same as the DTO default).
+        Several batched queries for all users at once — no N+1. Each query is
+        wrapped independently so a single missing/empty table degrades one
+        column to its default instead of dropping every enriched field.
+
+        Enriched columns:
+          * attendance streak           ← attendance_streaks
+          * leaderboard points + rank   ← user_points (the in-app "stars";
+            NOT students.rating, which is the separate legacy trainer rating)
+          * device / version / activity ← latest user_activity event, with a
+            daily_test_device_tokens platform fallback
         """
         ids = [str(u.id) for u in users]
         id_list = ", ".join(f"'{uid}'" for uid in ids)
 
+        # --- attendance streak ------------------------------------------
+        streak_map: dict[str, tuple] = {}
         try:
             streak_rows = self._session.execute(
                 text(
@@ -64,22 +75,75 @@ class AdminUserService:
                 )
             ).fetchall()
             streak_map = {str(r[0]): (r[1], r[2]) for r in streak_rows}
-
-            points_rows = self._session.execute(
-                text(f"SELECT id, rating FROM students WHERE id IN ({id_list})")
-            ).fetchall()
-            points_map = {str(r[0]): r[1] for r in points_rows}
         except Exception:
-            logger.exception("Failed to enrich user list with PG stats — returning defaults")
-            return
+            logger.exception("enrich: attendance_streaks query failed")
+
+        # --- leaderboard points + rank (user_points) --------------------
+        # rank = number of users with strictly more points + 1, excluding
+        # admin-hidden users (mirrors UserPointsRepository.get_user_rank).
+        lb_map: dict[str, tuple] = {}
+        try:
+            lb_rows = self._session.execute(
+                text(
+                    f"SELECT up.user_id, up.total_points, "
+                    f"  (SELECT COUNT(*) + 1 FROM user_points up2 "
+                    f"   WHERE up2.total_points > up.total_points "
+                    f"     AND up2.user_id NOT IN "
+                    f"         (SELECT user_id FROM leaderboard_hidden_users)) AS rank "
+                    f"FROM user_points up WHERE up.user_id IN ({id_list})"
+                )
+            ).fetchall()
+            lb_map = {str(r[0]): (r[1], r[2]) for r in lb_rows}
+        except Exception:
+            logger.exception("enrich: user_points query failed")
+
+        # --- latest analytics event: platform / os / version / activity -
+        act_map: dict[str, tuple] = {}
+        try:
+            act_rows = self._session.execute(
+                text(
+                    f"SELECT DISTINCT ON (user_id) user_id, platform, os_version, "
+                    f"  app_version, event_time "
+                    f"FROM user_activity WHERE user_id IN ({id_list}) "
+                    f"ORDER BY user_id, event_time DESC"
+                )
+            ).fetchall()
+            act_map = {str(r[0]): (r[1], r[2], r[3], r[4]) for r in act_rows}
+        except Exception:
+            logger.exception("enrich: user_activity query failed")
+
+        # --- device-token platform fallback (FCM registration) ----------
+        dev_map: dict[str, str] = {}
+        try:
+            dev_rows = self._session.execute(
+                text(
+                    f"SELECT DISTINCT ON (student_guid) student_guid, platform "
+                    f"FROM daily_test_device_tokens WHERE student_guid IN ({id_list}) "
+                    f"ORDER BY student_guid, updated_at DESC"
+                )
+            ).fetchall()
+            dev_map = {str(r[0]): r[1] for r in dev_rows if r[1]}
+        except Exception:
+            logger.exception("enrich: daily_test_device_tokens query failed")
 
         for u in users:
             uid = str(u.id)
             if uid in streak_map:
                 u.attendance_streak_days = streak_map[uid][0] or 0
                 u.attendance_total_points = streak_map[uid][1] or 0
-            if uid in points_map:
-                u.points = points_map[uid] or 0
+            if uid in lb_map:
+                u.points = lb_map[uid][0] or 0
+                u.rank = lb_map[uid][1]
+            act = act_map.get(uid)
+            if act:
+                u.device_platform = act[0]
+                u.device_os_version = act[1]
+                u.app_version = act[2]
+                u.last_active_at = act[3]
+            # Fall back to the registered push-token platform when analytics
+            # carried none (e.g. user never sent a platform-tagged event).
+            if not u.device_platform and uid in dev_map:
+                u.device_platform = dev_map[uid]
 
     def create_user(self, data: AdminUserCreateDTO) -> AdminUserCreateResponseDTO:
         password = data.password
@@ -268,3 +332,63 @@ class AdminUserService:
             user_id, days, end_iso,
         )
         return self.get_user(user_id)
+
+    def adjust_points(
+        self,
+        user_id: UUID,
+        mode: str,
+        value: int,
+        reason: str | None = None,
+    ) -> dict:
+        """Manually adjust a user's leaderboard points (user_points.total_points).
+
+        mode="delta" → add `value` (may be negative) to the current total.
+        mode="set"   → set the total to exactly `value` (must be >= 0); the
+                       applied delta is derived as value - current so the
+                       PointsAuditLog before/after stays accurate.
+
+        Every change goes through UserPointsRepository.add_points, which writes
+        a PointsAuditLog row (source_type="admin_adjustment"). The total is
+        floored at 0 — negative leaderboard standings are nonsensical, so a
+        delta that would underflow is clamped to -current and the actually
+        applied delta is reported back.
+
+        Caller is responsible for cache invalidation
+        (`user_points` resource for this user) — see the route.
+        """
+        if self._session is None:
+            raise RuntimeError("DB session is required to adjust points")
+        if mode not in ("delta", "set"):
+            raise ValueError(f"unknown mode {mode!r} (expected 'delta' or 'set')")
+        if mode == "set" and value < 0:
+            raise ValueError("value must be >= 0 in 'set' mode")
+
+        repo = UserPointsRepository(self._session)
+        current = repo.get_total_points(user_id)
+        delta = (value - current) if mode == "set" else value
+        # Floor the resulting total at 0.
+        if current + delta < 0:
+            delta = -current
+
+        if delta != 0:
+            repo.add_points(
+                user_id,
+                delta,
+                source_type="admin_adjustment",
+                reason=reason or "Manual admin adjustment",
+            )
+            self._session.commit()
+
+        new_total = repo.get_total_points(user_id)
+        new_rank = repo.get_user_rank(user_id)
+        logger.info(
+            "Admin adjusted points for user %s: mode=%s value=%d applied_delta=%+d "
+            "→ total=%d rank=%d (reason=%r)",
+            user_id, mode, value, delta, new_total, new_rank, reason,
+        )
+        return {
+            "user_id": str(user_id),
+            "total_points": new_total,
+            "rank": new_rank,
+            "applied_delta": delta,
+        }

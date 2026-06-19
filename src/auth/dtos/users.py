@@ -60,8 +60,24 @@ class UserDTO(BaseModel):
     attendance_total_points: int = 0
     attendance_today_points: int | None = None
 
+    # Leaderboard "stars" — the value the in-app leaderboard ranks by.
+    # Sourced from `user_points.total_points` (same as the mobile get_user
+    # flow in dependencies.py). NOTE: the admin list previously populated
+    # this from `students.rating`, a separate legacy trainer rating, which
+    # diverged from what the user actually sees. It now matches the app.
+    # This is also the field the admin "edit points" action mutates.
     points: int = 0
     rank: int | None = None
+
+    # Best-effort device / version / activity signals, enriched from the
+    # latest analytics event (`user_activity`) with a device-token platform
+    # fallback. May be None for users who have never sent an analytics event
+    # or registered a push token — coverage is PARTIAL (FCM is disabled), so
+    # the admin UI must tolerate missing values.
+    device_platform: str | None = None       # "ios" / "android"
+    device_os_version: str | None = None      # e.g. "17.4" / "14"
+    app_version: str | None = None            # last-known build the app reported
+    last_active_at: datetime | None = None    # latest analytics event_time
 
     @computed_field
     @property

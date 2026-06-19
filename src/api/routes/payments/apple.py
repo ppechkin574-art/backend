@@ -15,9 +15,10 @@ import hashlib
 import logging
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
+from api.middlewares.rate_limit import limiter
 from api.dependencies import (
     get_admin_user_service,
     get_db_session,
@@ -143,7 +144,9 @@ class AppleVerifyOut(BaseModel):
 
 
 @router.post("/verify", response_model=AppleVerifyOut)
+@limiter.limit("20/minute")
 async def verify_apple_receipt(
+    request: Request,
     body: AppleVerifyIn,
     current_user: UserDTO = Depends(get_current_user),
     subscription_service: SubscriptionService = Depends(get_subscription_service),
@@ -226,6 +229,41 @@ async def verify_apple_receipt(
             environment=result.environment,
             user=current_user,
         )
+
+    # #3 (soft anti-sharing): if this subscription (originalTransactionId) is
+    # already bound to a DIFFERENT app account, FLAG it for the finance monitor
+    # but DON'T block — a hard block would break restore after a user deletes and
+    # re-registers. The operator reviews shared receipts manually in admin.
+    if result.original_transaction_id:
+        try:
+            prior = (
+                db_session.query(Payment)
+                .filter(
+                    Payment.order_id
+                    == _apple_order_id(result.original_transaction_id)
+                )
+                .first()
+            )
+            if prior and prior.user_id and prior.user_id != str(current_user.id):
+                logger.warning(
+                    "Apple receipt %s already bound to user %s, now verified by %s",
+                    result.original_transaction_id,
+                    prior.user_id,
+                    current_user.id,
+                )
+                log_subscription_event(
+                    db_session,
+                    platform="apple",
+                    event_type="shared_account",
+                    status="flagged",
+                    user_id=str(current_user.id),
+                    product_id=result.product_id,
+                    transaction_id=result.original_transaction_id,
+                    environment=result.environment,
+                    detail=f"receipt already bound to user {prior.user_id}",
+                )
+        except Exception:  # noqa: BLE001 — flag check must never break activation
+            logger.exception("cross-account flag check failed (non-fatal)")
 
     # Receipt valid + currently in the paid period → mirror Apple's expiry
     # date. We pass `expires_at` from the receipt instead of `months=1` so

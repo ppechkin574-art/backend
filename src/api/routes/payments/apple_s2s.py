@@ -45,6 +45,7 @@ from payments.apple_iap import (
 )
 from payments.models import Payment
 from subscription.event_log import log_subscription_event
+from payments.apple_notification import record_notification
 from subscription.plan_service import SubscriptionPlanService
 from subscription.service import SubscriptionService
 from utils.monitoring import IAP_EVENT_COUNT
@@ -249,6 +250,13 @@ async def apple_notifications_v2(
     uuid = str(getattr(notification, "notificationUUID", "") or "")
 
     logger.info("[apple_s2s] type=%s subtype=%s uuid=%s", ntype, nsubtype, uuid)
+
+    # #4: store raw + dedup. Apple delivers at-least-once; a notificationUUID we
+    # already recorded is skipped (the UNIQUE insert is the atomic dedup). The
+    # raw JWS is kept for audit / replay analysis.
+    if uuid and not record_notification(session, uuid, ntype, signed_payload):
+        logger.info("[apple_s2s] duplicate notification uuid=%s — skipping", uuid)
+        return {"ok": True}
 
     if ntype == "TEST":
         logger.info("[apple_s2s] test notification OK")

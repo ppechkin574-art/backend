@@ -2,17 +2,30 @@
 
 import asyncio
 import logging
+from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from api.dependencies import allow_only_admins, get_database, get_db_session, get_payment_settings, get_settings
+from api.dependencies import (
+    allow_only_admins,
+    get_database,
+    get_db_session,
+    get_payment_settings,
+    get_settings,
+    get_user_repository_keycloak,
+)
+from auth.dtos.users import UserQueryDTO
+from auth.repositories import UserRepositoryInterface
 from clients.freedom_pay.settings import FreedomPaySettings
 from clients.freedom_pay.poller import _check_payment_status
 from database import Database
 from payments.models import Payment
 from settings import Settings
+from subscription.event_log import SubscriptionEventLog
 
 logger = logging.getLogger(__name__)
 
@@ -87,3 +100,91 @@ async def poll_pending_now(
         pending_count=pending_count,
         message=f"Запущено в фоне: {pending_count} платежей. Обновите страницу через 1-2 минуты.",
     )
+
+
+@router.get("/iap-events")
+def iap_events(
+    platform: str = "apple",
+    status: str | None = None,
+    days: int = 30,
+    limit: int = 50,
+    offset: int = 0,
+    session: Session = Depends(get_db_session),
+    users: UserRepositoryInterface = Depends(get_user_repository_keycloak),
+):
+    """IAP (in-app purchase) event monitor for the Finance page.
+
+    Reads the `subscription_event_log` audit trail and returns:
+      - summary counts (success / failed / flagged / total),
+      - a paginated list of events with the user's name + phone resolved.
+
+    Defaults to iOS (platform="apple"): purchases, renewals, expiries, refunds,
+    revokes, verify rejections, shared-account flags. `status` filters the list
+    (e.g. "failed"); `days` bounds the window.
+    """
+    since = datetime.now(UTC) - timedelta(days=max(1, days))
+    base = session.query(SubscriptionEventLog).filter(
+        SubscriptionEventLog.platform == platform,
+        SubscriptionEventLog.created_at >= since,
+    )
+
+    by_status = dict(
+        base.with_entities(SubscriptionEventLog.status, func.count())
+        .group_by(SubscriptionEventLog.status)
+        .all()
+    )
+    summary = {
+        "total": sum(by_status.values()),
+        "success": by_status.get("success", 0),
+        "failed": by_status.get("failed", 0),
+        "flagged": by_status.get("flagged", 0),
+    }
+
+    q = base
+    if status:
+        q = q.filter(SubscriptionEventLog.status == status)
+    filtered_total = q.count()
+    page = (
+        q.order_by(SubscriptionEventLog.created_at.desc())
+        .offset(max(0, offset))
+        .limit(min(200, max(1, limit)))
+        .all()
+    )
+
+    # Resolve name + phone per unique user_id (operator chose richer rows).
+    user_map: dict[str, dict] = {}
+    for uid in {r.user_id for r in page if r.user_id}:
+        try:
+            u = users.get(UserQueryDTO(id=UUID(uid)))
+            user_map[uid] = {
+                "name": getattr(u, "name", None),
+                "phone": getattr(u, "phone", None),
+            }
+        except Exception:  # noqa: BLE001 — a missing/deleted user must not 500
+            user_map[uid] = {"name": None, "phone": None}
+
+    items = [
+        {
+            "id": r.id,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "event_type": r.event_type,
+            "status": r.status,
+            "user_id": r.user_id,
+            "user_name": (user_map.get(r.user_id) or {}).get("name"),
+            "user_phone": (user_map.get(r.user_id) or {}).get("phone"),
+            "product_id": r.product_id,
+            "transaction_id": r.transaction_id,
+            "amount": float(r.amount) if r.amount is not None else None,
+            "environment": r.environment,
+            "detail": r.detail,
+        }
+        for r in page
+    ]
+
+    return {
+        "summary": summary,
+        "total": filtered_total,
+        "limit": limit,
+        "offset": offset,
+        "items": items,
+    }

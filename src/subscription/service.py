@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import os
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -414,6 +415,184 @@ class SubscriptionService:
                 session.close()
 
         return updated_user
+
+    def _trial_paywall_enabled(self) -> bool:
+        """Anti-farming + paywall enforcement switch.
+
+        OFF by default so this change ships INERT: until the operator sets
+        TRIAL_PAYWALL_ENABLED=true (after the Apple/Google intro free-trial is
+        removed and the app paywall ships), registration behaves exactly as
+        before. Read from env to match the existing os.getenv pattern in
+        auth.services — no DI/settings plumbing needed.
+        """
+        return os.getenv("TRIAL_PAYWALL_ENABLED", "false").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+        )
+
+    def reconcile_registration_trial(self, user: UserDTO) -> UserDTO:
+        """Reconcile the just-granted registration trial against the phone ledger.
+
+        `complete_registration` ALWAYS grants a fresh 1-day trial. On its own
+        that lets a user farm unlimited trials: delete account → re-register the
+        same number → new trial. Here we reconcile against the persistent
+        `trial_history` ledger (sha256(phone), survives Keycloak deletion):
+
+          - phone never seen           → record it, KEEP the trial.
+          - phone in ledger + paywall ON  → REVOKE the trial (set FREE) so a
+            re-registered number must buy immediately (the anti-farming rule).
+          - phone in ledger + paywall OFF → leave as-is (today's behaviour).
+
+        The ledger is populated even while the flag is OFF, so flipping
+        TRIAL_PAYWALL_ENABLED=true later finds the history already there.
+
+        NON-raising / best-effort: any failure leaves the user with the trial
+        they were already granted rather than breaking registration. Web/email
+        users (no phone) are skipped — Keycloak `used_trial` still gates them.
+        """
+        if not user.phone:
+            return user
+
+        phone_hash = _hash_phone(user.phone)
+        paywall = self._trial_paywall_enabled()
+        session = self._database.session
+        try:
+            existing = (
+                session.query(TrialHistory)
+                .filter(TrialHistory.phone_hash == phone_hash)
+                .first()
+            )
+            if existing:
+                if paywall:
+                    logger.warning(
+                        "Trial farming blocked: phone %s re-registered "
+                        "(user=%s) — revoking trial",
+                        user.phone[:6] + "***",
+                        user.id,
+                    )
+                    return self.auth_service.update_user_profile(
+                        user,
+                        UserUpdateDTO(plan=PlanType.FREE, subscription_end=None),
+                    )
+                # Flag off → preserve current behaviour (the trial stays).
+                return user
+
+            # First time we see this number → remember it; the trial stays.
+            session.add(TrialHistory(phone_hash=phone_hash))
+            session.commit()
+        except Exception as e:  # noqa: BLE001 — must never break registration
+            logger.exception(
+                "reconcile_registration_trial failed for user %s: %s", user.id, e
+            )
+            try:
+                session.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+            return user
+        finally:
+            session.close()
+
+        # QA/dev knob: shorten the freshly-granted trial so the
+        # expiry→paywall transition can be tested without waiting a full day.
+        # Default 0 = keep the 1 day set at registration. Best-effort.
+        try:
+            minutes = int(os.getenv("TRIAL_DURATION_MINUTES", "0") or "0")
+        except ValueError:
+            minutes = 0
+        if minutes > 0:
+            try:
+                user = self.auth_service.update_user_profile(
+                    user,
+                    UserUpdateDTO(
+                        plan=PlanType.PRO,
+                        subscription_end=datetime.now(UTC)
+                        + timedelta(minutes=minutes),
+                    ),
+                )
+            except Exception:  # noqa: BLE001 — dev knob must never break flow
+                logger.exception("trial-duration shortener failed (non-fatal)")
+        return user
+
+    def _trial_end(self) -> datetime:
+        """When a freshly-granted trial should expire. 1 day by default;
+        TRIAL_DURATION_MINUTES>0 shortens it so QA can watch the
+        expiry→paywall transition without waiting a full day."""
+        try:
+            minutes = int(os.getenv("TRIAL_DURATION_MINUTES", "0") or "0")
+        except ValueError:
+            minutes = 0
+        if minutes > 0:
+            return datetime.now(UTC) + timedelta(minutes=minutes)
+        return datetime.now(UTC) + timedelta(days=1)
+
+    def reconcile_login_trial(self, user: UserDTO) -> UserDTO:
+        """One-time trial for EXISTING users, granted on login (self-paced).
+
+        New users get their trial at registration. Users who registered before
+        the paywall existed never went through that path, so when
+        TRIAL_PAYWALL_ENABLED is on, the FIRST login of a phone we've never
+        granted to gets a single 1-day trial — then it's recorded in
+        `trial_history`, so it never repeats (including after account deletion +
+        re-registration). Skips:
+          - flag OFF (no-op until the operator flips the rollout),
+          - phone-less (email) accounts — Keycloak `used_trial` gates them,
+          - users who already have an ACTIVE PRO/trial (never disturb a payer).
+
+        Best-effort / NON-raising: any failure must never break login.
+        """
+        if not self._trial_paywall_enabled() or not user.phone:
+            return user
+        if (
+            user.plan == PlanType.PRO
+            and user.subscription_end
+            and user.subscription_end > datetime.now(UTC)
+        ):
+            return user  # active entitlement — leave it alone
+
+        phone_hash = _hash_phone(user.phone)
+
+        # 1) Read the ledger. If we can't read it, do NOT grant (fail safe).
+        session = self._database.session
+        try:
+            existing = (
+                session.query(TrialHistory)
+                .filter(TrialHistory.phone_hash == phone_hash)
+                .first()
+            )
+        except Exception as e:  # noqa: BLE001 — never break login
+            logger.exception("reconcile_login_trial ledger read failed: %s", e)
+            return user
+        finally:
+            session.close()
+        if existing:
+            return user  # already used their one trial → must buy
+
+        # 2) Grant BEFORE recording, so a Keycloak failure can't blacklist the
+        #    phone without ever granting (mirrors activate_free_trial ordering).
+        try:
+            granted = self.auth_service.update_user_profile(
+                user,
+                UserUpdateDTO(plan=PlanType.PRO, subscription_end=self._trial_end()),
+            )
+        except Exception:  # noqa: BLE001 — never break login
+            logger.exception("reconcile_login_trial grant failed for %s", user.id)
+            return user
+
+        # 3) Record the grant (best-effort).
+        session = self._database.session
+        try:
+            session.add(TrialHistory(phone_hash=phone_hash))
+            session.commit()
+        except Exception as e:  # noqa: BLE001
+            logger.exception("reconcile_login_trial record failed: %s", e)
+            try:
+                session.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+        finally:
+            session.close()
+        return granted
 
     async def cancel_subscription(self, user: UserDTO) -> UserDTO:
         """Soft cancel: keep PRO active until subscription_end, then auto-FREE.

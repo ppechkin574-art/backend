@@ -27,10 +27,12 @@ from api.dependencies import (
     get_file_service,
     get_notification_client_email,
     get_redis,
+    get_subscription_service,
     get_user,
 )
 from auth.deletion_models import DELETION_GRACE_DAYS, AccountDeletionRequest
 from payments.models import Payment
+from subscription.service import SubscriptionService
 from api.middlewares.rate_limit import limiter
 from api.middlewares.sms_quota import check_sms_quota, record_sms_request
 from app_config.service import AppSettingsService
@@ -312,6 +314,7 @@ async def check_code(
 async def registration_complete(
     request_data: RegistrationCompleteDTO,
     service: AuthService = Depends(get_auth_service),
+    subscription_service: SubscriptionService = Depends(get_subscription_service),
 ):
     """Complete registration after code verification"""
     log_info(
@@ -326,6 +329,18 @@ async def registration_complete(
         tokens = service.complete_registration(
             request_data.verification_id, request_data.password, request_data.name
         )
+
+        # Anti-farming: reconcile the just-granted 1-day trial against the
+        # persistent phone ledger. Revokes a re-registered number's trial when
+        # TRIAL_PAYWALL_ENABLED is on; fills the ledger otherwise. Best-effort —
+        # must never break a successful registration.
+        try:
+            new_user = service.get_user_from_token(tokens.access_token)
+            subscription_service.reconcile_registration_trial(new_user)
+        except Exception:
+            logger.exception(
+                "Trial reconcile failed (non-fatal) after registration"
+            )
 
         log_info(
             "Registration completed successfully",
@@ -658,6 +673,7 @@ def login(
     request: Request,
     login_params: LoginParamsDTO,
     service: AuthServiceInterface = Depends(get_auth_service),
+    subscription_service: SubscriptionService = Depends(get_subscription_service),
 ):
     """Authenticate user with credentials"""
     log_info(
@@ -667,7 +683,15 @@ def login(
         auth_method="password",
     )
     params = to_auth_login_dto(login_params)
-    return perform_login(params, service)
+    tokens = perform_login(params, service)
+    # One-time trial for EXISTING users (self-paced rollout). Flag-gated and
+    # best-effort — must never break login.
+    try:
+        logged_in_user = service.get_user_from_token(tokens.access_token)
+        subscription_service.reconcile_login_trial(logged_in_user)
+    except Exception:
+        logger.exception("Login trial reconcile failed (non-fatal)")
+    return tokens
 
 
 @protected_router.get(

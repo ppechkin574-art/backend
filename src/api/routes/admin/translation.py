@@ -61,6 +61,11 @@ def _blocks_text(link: TextBlockLink | None) -> str:
     return "\n".join(p.strip() for p in parts).strip()
 
 
+def _pick_sample(ids: list[int], sample: int, limit: int) -> list[int]:
+    """Every `sample`-th id (1 = all), capped at `limit` (hard max 200)."""
+    return ids[:: max(1, sample)][: min(200, max(1, limit))]
+
+
 # ─────────────────────────── coverage ───────────────────────────
 
 
@@ -213,6 +218,85 @@ def export_for_translation(
         },
         "questions": out_questions,
     }
+
+
+# ─────────────────────────── preview ───────────────────────────
+
+
+@router.get("/preview")
+def preview_translations(
+    subject_id: int,
+    status: str = "done",
+    sample: int = 1,
+    limit: int = 50,
+    session: Session = Depends(get_db_session),
+):
+    """RU↔KK pairs of already-translated questions, for in-admin spot-checking.
+
+    `sample`: take every Nth question by id (1 = all). `status`: done | draft.
+    """
+    if status not in {"done", "draft"}:
+        raise HTTPException(status_code=400, detail="status must be done|draft")
+    sample = max(1, sample)
+
+    ids = [
+        qid
+        for (qid,) in session.query(Question.id)
+        .filter(
+            Question.subject_id == subject_id,
+            Question.translation_status_kk == status,
+        )
+        .order_by(Question.id)
+        .all()
+    ]
+    total = len(ids)
+    picked = _pick_sample(ids, sample, limit)
+    if not picked:
+        return {"items": [], "total": total, "shown": 0, "sample": sample}
+
+    questions = (
+        session.query(Question)
+        .options(
+            selectinload(Question.link).selectinload(TextBlockLink.blocks),
+            selectinload(Question.variants).selectinload(Variant.link).selectinload(TextBlockLink.blocks),
+            selectinload(Question.hint).selectinload(Hint.link).selectinload(TextBlockLink.blocks),
+        )
+        .filter(Question.id.in_(picked))
+        .order_by(Question.id)
+        .all()
+    )
+
+    items = []
+    for q in questions:
+        items.append(
+            {
+                "id": q.id,
+                "question": {"ru": _blocks_text(q.link), "kk": q.question_text_kk or ""},
+                "variants": [
+                    {
+                        "id": v.id,
+                        "ru": _blocks_text(v.link),
+                        "kk": v.variant_text_kk or "",
+                        "is_correct": v.is_correct,
+                    }
+                    for v in q.variants
+                ],
+                "hint": {
+                    "ru": _blocks_text(q.hint.link) if q.hint else "",
+                    "kk": q.hint_text_kk or "",
+                },
+                "task_description": {
+                    "ru": q.task_description_ru or "",
+                    "kk": q.task_description_kk or "",
+                },
+                "explanation": {
+                    "ru": q.explanation_ru or "",
+                    "kk": q.explanation_kk or "",
+                },
+            }
+        )
+
+    return {"items": items, "total": total, "shown": len(items), "sample": sample}
 
 
 # ─────────────────────────── import ───────────────────────────

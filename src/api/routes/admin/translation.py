@@ -18,6 +18,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
 from api.dependencies import allow_only_admins, get_db_session
+from app_config.models import AppSetting
 from quiz.dtos.enums import BlockType
 from quiz.models.edu_content import Hint, Question, Subject, Variant
 from quiz.models.text_blocks import TextBlockLink
@@ -64,6 +65,28 @@ def _blocks_text(link: TextBlockLink | None) -> str:
 def _pick_sample(ids: list[int], sample: int, limit: int) -> list[int]:
     """Every `sample`-th id (1 = all), capped at `limit` (hard max 200)."""
     return ids[:: max(1, sample)][: min(200, max(1, limit))]
+
+
+_PAUSE_KEY = "translation_paused"
+
+
+def _is_paused(session: Session) -> bool:
+    """Background-worker pause flag. Absent row → paused by default, so the
+    operator must press «Продолжить» to start translating (explicit control)."""
+    row = session.query(AppSetting).filter(AppSetting.key == _PAUSE_KEY).first()
+    return True if row is None else row.value == "1"
+
+
+def _set_paused(session: Session, paused: bool) -> None:
+    val = "1" if paused else "0"
+    row = session.query(AppSetting).filter(AppSetting.key == _PAUSE_KEY).first()
+    if row is None:
+        session.add(
+            AppSetting(key=_PAUSE_KEY, value=val, description="Пауза фонового переводчика (1=пауза)")
+        )
+    else:
+        row.value = val
+    session.commit()
 
 
 # ─────────────────────────── coverage ───────────────────────────
@@ -136,6 +159,34 @@ def requeue_question(question_id: int, session: Session = Depends(get_db_session
     q.translation_status_kk = "queued"
     session.commit()
     return {"ok": True, "question_id": question_id, "status": "queued"}
+
+
+@router.get("/control")
+def get_control(session: Session = Depends(get_db_session)):
+    """Pause state of the background translator — read by the admin UI (to pick
+    «Продолжить» vs «Идёт перевод…») and by the worker (skip while paused)."""
+    return {"paused": _is_paused(session)}
+
+
+@router.post("/control/resume")
+def resume_translation(session: Session = Depends(get_db_session)):
+    """Operator «Продолжить» — let the worker process the queue."""
+    _set_paused(session, False)
+    return {"paused": False}
+
+
+@router.post("/control/cancel")
+def cancel_translation(session: Session = Depends(get_db_session)):
+    """Operator «Отменить» — drop everything still queued back to 'none' and
+    pause. Already-translated questions keep their kk."""
+    n = (
+        session.query(Question)
+        .filter(Question.translation_status_kk == "queued")
+        .update({Question.translation_status_kk: "none"}, synchronize_session=False)
+    )
+    session.commit()
+    _set_paused(session, True)
+    return {"cleared": n, "paused": True}
 
 
 @router.get("/queued-subjects")

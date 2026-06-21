@@ -165,6 +165,24 @@ def requeue_question(question_id: int, session: Session = Depends(get_db_session
     return {"ok": True, "question_id": question_id, "status": "queued"}
 
 
+@router.post("/requeue-subject")
+def requeue_subject(subject_id: int, session: Session = Depends(get_db_session)):
+    """Re-queue ALL questions of a subject (done|draft → queued) for re-translation."""
+    n = (
+        session.query(Question)
+        .filter(
+            Question.subject_id == subject_id,
+            Question.translation_status_kk.in_(["done", "draft"]),
+        )
+        .update(
+            {Question.translation_status_kk: "queued", Question.quality_flags_kk: None},
+            synchronize_session=False,
+        )
+    )
+    session.commit()
+    return {"queued": n}
+
+
 @router.get("/control")
 def get_control(session: Session = Depends(get_db_session)):
     """Pause state of the background translator — read by the admin UI (to pick

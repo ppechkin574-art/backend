@@ -31,7 +31,7 @@ router = APIRouter(
     dependencies=[Depends(allow_only_admins)],
 )
 
-_STATUSES = {"none", "draft", "done"}
+_STATUSES = {"none", "queued", "draft", "done"}
 
 _HOW = (
     "Переведи каждый вопрос с русского на казахский. Поля для перевода: "
@@ -82,13 +82,59 @@ def coverage(session: Session = Depends(get_db_session)):
     for sid, sname, status, cnt in rows:
         d = agg.setdefault(
             sid,
-            {"subject_id": sid, "subject_name": sname, "none": 0, "draft": 0, "done": 0, "total": 0},
+            {
+                "subject_id": sid,
+                "subject_name": sname,
+                "none": 0,
+                "queued": 0,
+                "draft": 0,
+                "done": 0,
+                "total": 0,
+            },
         )
         if status in _STATUSES:
             d[status] += cnt
             d["total"] += cnt
     items = sorted(agg.values(), key=lambda x: x["subject_name"] or "")
     return {"items": items}
+
+
+# ─────────────────────────── queue ───────────────────────────
+
+
+@router.post("/queue")
+def queue_subject(subject_id: int, session: Session = Depends(get_db_session)):
+    """Operator clicks «Перевести» — flag this subject's untranslated questions
+    as 'queued' so the background translation worker (a scheduled Claude job)
+    picks them up. Returns how many were queued."""
+    n = (
+        session.query(Question)
+        .filter(
+            Question.subject_id == subject_id,
+            Question.translation_status_kk == "none",
+        )
+        .update(
+            {Question.translation_status_kk: "queued"}, synchronize_session=False
+        )
+    )
+    session.commit()
+    return {"queued": n}
+
+
+@router.get("/queued-subjects")
+def queued_subjects(session: Session = Depends(get_db_session)):
+    """Subjects with questions waiting for translation — polled by the worker."""
+    rows = (
+        session.query(Subject.id, Subject.name, func.count(Question.id))
+        .join(Question, Question.subject_id == Subject.id)
+        .filter(Question.translation_status_kk == "queued")
+        .group_by(Subject.id, Subject.name)
+        .all()
+    )
+    return [
+        {"subject_id": sid, "subject_name": name, "queued": cnt}
+        for sid, name, cnt in rows
+    ]
 
 
 # ─────────────────────────── export ───────────────────────────

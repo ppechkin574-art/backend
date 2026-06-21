@@ -161,8 +161,30 @@ def requeue_question(question_id: int, session: Session = Depends(get_db_session
     if q is None:
         raise HTTPException(status_code=404, detail="Question not found")
     q.translation_status_kk = "queued"
+    q.quality_flags_kk = None
     session.commit()
     return {"ok": True, "question_id": question_id, "status": "queued"}
+
+
+class _RequeueBulkPayload(BaseModel):
+    question_ids: list[int]
+
+
+@router.post("/requeue-bulk")
+def requeue_bulk(payload: _RequeueBulkPayload, session: Session = Depends(get_db_session)):
+    """Bulk re-queue already-translated questions (done|draft → queued)."""
+    if not payload.question_ids:
+        return {"queued": 0}
+    updated = (
+        session.query(Question)
+        .filter(Question.id.in_(payload.question_ids))
+        .update(
+            {Question.translation_status_kk: "queued", Question.quality_flags_kk: None},
+            synchronize_session=False,
+        )
+    )
+    session.commit()
+    return {"queued": updated}
 
 
 @router.get("/control")

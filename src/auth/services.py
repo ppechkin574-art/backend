@@ -1441,15 +1441,19 @@ class AuthService:
     #     )
 
     def login(self, params: AuthLoginDTO) -> AuthSessionDTO:
-        logger.info("Login attempt: %s", params.login)
+        # Stable "auth.login.*" tags so logins are filterable in the log
+        # aggregator for security audit (who/from where — client_ip + request_id
+        # are added to every log by LoggingContextMiddleware). Pairs with the
+        # single-session work: lets us trace a stolen-account / brute-force case.
+        logger.info("auth.login.attempt login=%s", params.login)
         try:
             tokens = self._users.create_tokens(params.login, params.password)
-            logger.info("Login successful for: %s", params.login)
+            logger.info("auth.login.success login=%s", params.login)
         except UserBadCredentialsError:
-            logger.warning("Invalid credentials for: %s", params.login)
+            logger.warning("auth.login.failed reason=bad_credentials login=%s", params.login)
             raise AuthBadCredentialsError
         except UserNotVerifiedError:
-            logger.warning("User not verified: %s", params.login)
+            logger.warning("auth.login.failed reason=not_verified login=%s", params.login)
             raise AuthNotVerifiedError
 
         return to_auth_session_dto(tokens)
@@ -1557,12 +1561,12 @@ class AuthService:
             logger.info("Processing OAuth %s user: %s <%s>", provider, name, email)
 
             tokens = self.oauth_helper.handle_oauth_user(email, name, provider)
-            logger.info("%s OAuth successful for: %s", provider, email)
+            logger.info("auth.login.oauth.success provider=%s email=%s", provider, email)
 
             return to_auth_session_dto(tokens)
 
         except Exception as e:
-            logger.exception("%s OAuth failed: %s", provider, str(e))
+            logger.exception("auth.login.oauth.failed provider=%s error=%s", provider, str(e))
             self._handle_oauth_error(e, provider)
 
     def _handle_oauth_error(self, error: Exception, provider: str):

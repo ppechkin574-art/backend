@@ -133,6 +133,13 @@ class Question(Base):
     explanation_ru = Column(Text, nullable=True)
     explanation_kk = Column(Text, nullable=True)
 
+    # Translation workflow status for the Kazakh version: 'none' / 'draft' /
+    # 'done'. Drives the admin coverage view and the export filter. Backfilled
+    # from question_text_kk on the introducing migration (non-null → 'done').
+    translation_status_kk = Column(
+        String, nullable=False, server_default="none", index=True
+    )
+
     topic = relationship("Topic", back_populates="questions", passive_deletes=True)
     subject = relationship("Subject", back_populates="questions", passive_deletes=True)
     hint = relationship("Hint", back_populates="question", passive_deletes=True)

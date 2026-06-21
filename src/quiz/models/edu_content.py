@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import UUID, Boolean, Column, Enum, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, UUID, Boolean, Column, Enum, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from database import Base
@@ -139,6 +139,9 @@ class Question(Base):
     translation_status_kk = Column(
         String, nullable=False, server_default="none", index=True
     )
+    # JSON array of {field, phrase, type, note} flagged during translation.
+    # Populated by the worker when it sets status='draft'; cleared on re-translate.
+    quality_flags_kk = Column(JSON, nullable=True)
 
     topic = relationship("Topic", back_populates="questions", passive_deletes=True)
     subject = relationship("Subject", back_populates="questions", passive_deletes=True)

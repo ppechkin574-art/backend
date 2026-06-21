@@ -41,7 +41,11 @@ _HOW = (
     "терминов. Формулы/LaTeX (r\"...\") и числа НЕ меняй. Верни JSON вида "
     "{\"questions\":[{\"id\":N,\"question_text_kk\":\"…\",\"variants\":"
     "[{\"id\":N,\"text_kk\":\"…\"}],\"hint_kk\":\"…\",\"task_description_kk\":\"…\","
-    "\"explanation_kk\":\"…\"}]} — те же id. Пустые исходные поля пропусти."
+    "\"explanation_kk\":\"…\"}]} — те же id. Пустые исходные поля пропусти. "
+    "Дополнительно добавь \"quality_flags\":{\"<id>\":[{\"field\":\"question_text|variant_<id>|hint|task_description|explanation\","
+    "\"phrase\":\"точная фраза из KK текста\",\"type\":\"agreement|government|morphological|syntactic|semantic|untranslatable\","
+    "\"note\":\"пояснение на русском\"}]} — только реальные проблемы. "
+    "Не включай вопросы без проблем. English-предметы: английский текст вопроса/вариантов — не untranslatable."
 )
 
 
@@ -382,14 +386,16 @@ class _ImportItem(BaseModel):
 
 class _ImportPayload(BaseModel):
     questions: list[_ImportItem]
-    mark: str = "done"  # 'done' | 'draft'
+    mark: str = "draft"  # 'done' | 'draft' — default draft for review gate
+    # {str(question_id): [{field, phrase, type, note}]}
+    quality_flags: dict[str, list[dict]] = {}
 
 
 @router.post("/import")
 def import_translations(
     payload: _ImportPayload, session: Session = Depends(get_db_session)
 ):
-    """Apply a translated file: write *_kk fields + set status."""
+    """Apply a translated file: write *_kk fields + set status + store quality flags."""
     if payload.mark not in {"done", "draft"}:
         raise HTTPException(status_code=400, detail="mark must be done|draft")
 
@@ -411,6 +417,8 @@ def import_translations(
         if item.question_translation_kk is not None:
             ques.question_translation_kk = item.question_translation_kk
         ques.translation_status_kk = payload.mark
+        flags = payload.quality_flags.get(str(item.id))
+        ques.quality_flags_kk = flags if flags else None
         for v in item.variants:
             if v.text_kk is None:
                 continue
@@ -424,6 +432,121 @@ def import_translations(
         applied += 1
     session.commit()
     return {"applied": applied, "skipped": skipped}
+
+
+# ─────────────────────────── approve (draft → done) ───────────────────────────
+
+
+class _ApprovePayload(BaseModel):
+    question_ids: list[int]
+
+
+@router.post("/approve")
+def approve_translations(
+    payload: _ApprovePayload, session: Session = Depends(get_db_session)
+):
+    """Bulk-approve draft translations: draft → done. Clears quality flags."""
+    if not payload.question_ids:
+        return {"approved": 0}
+    updated = (
+        session.query(Question)
+        .filter(
+            Question.id.in_(payload.question_ids),
+            Question.translation_status_kk == "draft",
+        )
+        .update(
+            {
+                Question.translation_status_kk: "done",
+                Question.quality_flags_kk: None,
+            },
+            synchronize_session=False,
+        )
+    )
+    session.commit()
+    return {"approved": updated}
+
+
+# ─────────────────────────── review (draft list with flags) ───────────────────────────
+
+
+@router.get("/review")
+def review_drafts(
+    subject_id: int,
+    page: int = 1,
+    page_size: int = 20,
+    filter: str = "all",  # all | flagged | clean
+    session: Session = Depends(get_db_session),
+):
+    """Paginated list of draft translations with quality flags for operator review."""
+    if filter not in {"all", "flagged", "clean"}:
+        raise HTTPException(status_code=400, detail="filter must be all|flagged|clean")
+    page_size = min(max(1, page_size), 50)
+    page = max(1, page)
+
+    q = session.query(Question).filter(
+        Question.subject_id == subject_id,
+        Question.translation_status_kk == "draft",
+    )
+    if filter == "flagged":
+        q = q.filter(
+            Question.quality_flags_kk.isnot(None),
+            func.jsonb_array_length(Question.quality_flags_kk) > 0,
+        )
+    elif filter == "clean":
+        from sqlalchemy import or_
+        q = q.filter(
+            or_(
+                Question.quality_flags_kk.is_(None),
+                func.jsonb_array_length(Question.quality_flags_kk) == 0,
+            )
+        )
+
+    total = q.count()
+    questions = (
+        q.options(
+            selectinload(Question.link).selectinload(TextBlockLink.blocks),
+            selectinload(Question.variants).selectinload(Variant.link).selectinload(TextBlockLink.blocks),
+            selectinload(Question.hint).selectinload(Hint.link).selectinload(TextBlockLink.blocks),
+        )
+        .order_by(Question.id)
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+        .all()
+    )
+
+    items = []
+    for q_obj in questions:
+        items.append(
+            {
+                "id": q_obj.id,
+                "quality_flags": q_obj.quality_flags_kk or [],
+                "question": {"ru": _blocks_text(q_obj.link), "kk": q_obj.question_text_kk or ""},
+                "variants": [
+                    {
+                        "id": v.id,
+                        "ru": _blocks_text(v.link),
+                        "kk": v.variant_text_kk or "",
+                        "is_correct": v.is_correct,
+                    }
+                    for v in q_obj.variants
+                ],
+                "hint": {
+                    "ru": _blocks_text(q_obj.hint.link) if q_obj.hint else "",
+                    "kk": q_obj.hint_text_kk or "",
+                },
+                "task_description": {
+                    "ru": q_obj.task_description_ru or "",
+                    "kk": q_obj.task_description_kk or "",
+                },
+                "explanation": {
+                    "ru": q_obj.explanation_ru or "",
+                    "kk": q_obj.explanation_kk or "",
+                },
+            }
+        )
+
+    pages = max(1, (total + page_size - 1) // page_size)
+    return {"items": items, "total": total, "page": page, "pages": pages, "page_size": page_size}
 
 
 # ─────────────────────── manual per-question edit ───────────────────────

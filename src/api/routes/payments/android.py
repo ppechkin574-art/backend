@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from api.middlewares.rate_limit import limiter
 from api.dependencies import (
     get_admin_user_service,
     get_db_session,
@@ -36,6 +37,7 @@ from auth.dtos.users import UserDTO, UserQueryDTO
 from auth.repositories.users import UserRepositoryInterface
 from common.enums import PlanType
 from payments.android_iap import AndroidIAPVerifier
+from payments.google_notification import record_google_notification
 from payments.models import Payment
 from quiz.repositories.user_points import UserPointsRepository
 from referrals.service import grant_pending_invitee_reward
@@ -50,6 +52,18 @@ logger = logging.getLogger(__name__)
 # client, so it must be checked against this allow-list before activation.
 _DEFAULT_PRODUCT_ID = "kz.aima.aima.pro.monthly"
 _ALLOWED_PRODUCT_IDS = {_DEFAULT_PRODUCT_ID}
+
+
+def _sandbox_tester_ids() -> set[str]:
+    """User ids allowed to unlock PRO from a Sandbox/test purchase.
+
+    Comma-separated ``SANDBOX_IAP_TESTER_USER_IDS`` env var. A Play license-tester
+    gets the product for free via Google's test-purchase flow, so without this
+    gate anyone on the tester list would get real PRO. Users NOT listed get no
+    PRO from a sandbox purchase; empty list (default) → no sandbox grants at all.
+    """
+    raw = os.getenv("SANDBOX_IAP_TESTER_USER_IDS", "")
+    return {x.strip() for x in raw.split(",") if x.strip()}
 
 router = APIRouter(prefix="/payments/android", tags=["User - Payments"])
 
@@ -227,7 +241,9 @@ class AndroidVerifyOut(BaseModel):
 
 
 @router.post("/verify", response_model=AndroidVerifyOut)
+@limiter.limit("20/minute")
 async def verify_android_purchase(
+    request: Request,
     body: AndroidVerifyIn,
     current_user: UserDTO = Depends(get_current_user),
     subscription_service: SubscriptionService = Depends(get_subscription_service),
@@ -249,6 +265,16 @@ async def verify_android_purchase(
             body.product_id,
             current_user.id,
         )
+        IAP_VERIFY_COUNT.labels("google", "rejected").inc()
+        log_subscription_event(
+            db_session,
+            platform="google",
+            event_type="verify_rejected",
+            status="failed",
+            user_id=str(current_user.id),
+            product_id=body.product_id,
+            detail="unknown product_id (client)",
+        )
         raise HTTPException(status_code=400, detail="Unknown product")
 
     result = _verifier.verify(body.purchase_token, body.product_id)
@@ -260,7 +286,38 @@ async def verify_android_purchase(
             body.product_id,
             result.error,
         )
+        IAP_VERIFY_COUNT.labels("google", "error").inc()
+        log_subscription_event(
+            db_session,
+            platform="google",
+            event_type="verify_rejected",
+            status="failed",
+            user_id=str(current_user.id),
+            product_id=body.product_id,
+            detail=f"token invalid err={result.error}",
+        )
         raise HTTPException(status_code=400, detail="Purchase verification failed")
+
+    # S6: the product Google actually returned (subscriptionsv2 keys off the
+    # token only) must ALSO be on the allow-list — don't trust the client-claimed
+    # product_id alone, or a cheaper SKU's token could unlock PRO. Mirrors Apple.
+    if result.product_id and result.product_id not in _ALLOWED_PRODUCT_IDS:
+        logger.warning(
+            "Google Play verify: returned product %s not allow-listed (user %s)",
+            result.product_id,
+            current_user.id,
+        )
+        IAP_VERIFY_COUNT.labels("google", "rejected").inc()
+        log_subscription_event(
+            db_session,
+            platform="google",
+            event_type="verify_rejected",
+            status="failed",
+            user_id=str(current_user.id),
+            product_id=result.product_id,
+            detail="returned product not allow-listed",
+        )
+        raise HTTPException(status_code=400, detail="Unknown product")
 
     # Bind the purchase to the first account that verified it. A single Google
     # purchase token must not unlock PRO on many accounts (token sharing/replay).
@@ -270,6 +327,16 @@ async def verify_android_purchase(
             "Google Play token replay: already linked to %s, rejected for %s",
             existing_owner,
             current_user.id,
+        )
+        log_subscription_event(
+            db_session,
+            platform="google",
+            event_type="shared_account",
+            status="flagged",
+            user_id=str(current_user.id),
+            product_id=body.product_id,
+            transaction_id=body.purchase_token[:64],
+            detail=f"token already bound to user {existing_owner}",
         )
         raise HTTPException(
             status_code=409,
@@ -291,6 +358,59 @@ async def verify_android_purchase(
             user=current_user,
         )
 
+    # S3: Sandbox / test purchases grant PRO ONLY to explicitly allow-listed
+    # testers (SANDBOX_IAP_TESTER_USER_IDS). A Play license-tester otherwise gets
+    # full PRO for free via Google's test-purchase flow.
+    if result.environment == "Sandbox" and str(current_user.id) not in _sandbox_tester_ids():
+        logger.warning(
+            "Google Play verify: sandbox purchase blocked for non-tester user %s",
+            current_user.id,
+        )
+        log_subscription_event(
+            db_session,
+            platform="google",
+            event_type="sandbox_blocked",
+            status="flagged",
+            user_id=str(current_user.id),
+            product_id=body.product_id,
+            environment=result.environment,
+            detail="sandbox purchase, user not in tester allow-list",
+        )
+        return AndroidVerifyOut(
+            is_active=False,
+            expires_at=(result.expires_at.isoformat() if result.expires_at else None),
+            environment=result.environment,
+            user=current_user,
+        )
+
+    # S7: claim the token→account binding BEFORE granting PRO so a race can't let
+    # one purchase token unlock PRO on two accounts. Payment.order_id is UNIQUE,
+    # so only one inserter wins; the loser re-reads the owner and is rejected.
+    if existing_owner is None:
+        _record_google_payment(
+            db_session, plan_service, str(current_user.id), body.product_id, body.purchase_token
+        )
+        existing_owner = _token_owner(db_session, body.purchase_token)
+        if existing_owner is not None and existing_owner != str(current_user.id):
+            logger.warning(
+                "Google Play token claimed by another account in a race: %s vs %s",
+                existing_owner,
+                current_user.id,
+            )
+            log_subscription_event(
+                db_session,
+                platform="google",
+                event_type="shared_account",
+                status="flagged",
+                user_id=str(current_user.id),
+                product_id=body.product_id,
+                detail="lost token-binding race",
+            )
+            raise HTTPException(
+                status_code=409,
+                detail="This purchase is already linked to another account",
+            )
+
     # Token valid + currently within the paid period → activate PRO. Use
     # Google's authoritative expiry so the PRO period matches what was actually
     # bought (monthly, annual, trial, grace) instead of a hardcoded 30 days.
@@ -299,12 +419,6 @@ async def verify_android_purchase(
         PlanType.PRO,
         months=1,
         expires_at=result.expires_at,
-    )
-
-    # Record the purchase so it shows up in the admin panel next to FreedomPay.
-    # Best-effort — never blocks activation (PRO is already granted above).
-    _record_google_payment(
-        db_session, plan_service, str(current_user.id), body.product_id, body.purchase_token
     )
 
     logger.info(
@@ -409,6 +523,24 @@ async def google_rtdn(
         logger.warning("RTDN: could not decode notification payload")
         return {"ok": True}
 
+    # S2 — dedup on the Pub/Sub messageId (at-least-once delivery + replay). Skip
+    # if already handled; store the raw envelope for audit. Mirrors Apple S2S.
+    message_id = str((envelope.get("message") or {}).get("messageId") or "")
+    if notif.get("voidedPurchaseNotification"):
+        _ntype_label = "voided"
+    elif notif.get("subscriptionNotification"):
+        _ntype_label = _RTDN_TYPES.get(
+            (notif.get("subscriptionNotification") or {}).get("notificationType"),
+            "subscription",
+        )
+    else:
+        _ntype_label = "other"
+    if message_id and not record_google_notification(
+        db_session, message_id, _ntype_label, json.dumps(envelope)
+    ):
+        logger.info("RTDN: duplicate messageId=%s skipped", message_id)
+        return {"ok": True}
+
     voided = notif.get("voidedPurchaseNotification")
     if voided:
         # Refund / chargeback → strip PRO (money was returned).
@@ -418,8 +550,20 @@ async def google_rtdn(
             voided.get("orderId"),
             token[:16],
         )
+        _owner = _token_owner(db_session, token)
         _revoke_pro_for_token(
             db_session, users, subscription_service, token, "refund/void"
+        )
+        log_subscription_event(
+            db_session,
+            platform="google",
+            event_type="refund",
+            status="success" if _owner else "flagged",
+            user_id=_owner,
+            transaction_id=token[:64],
+            detail="voided/refund — PRO stripped"
+            if _owner
+            else "voided/refund — no user mapped",
         )
         return {"ok": True}
 
@@ -441,12 +585,25 @@ async def google_rtdn(
 
     if ntype in _RTDN_REVOKE and purchase_token:
         # REVOKED (refund) / EXPIRED → take PRO away now.
+        _owner = _token_owner(db_session, purchase_token)
         _revoke_pro_for_token(
             db_session,
             users,
             subscription_service,
             purchase_token,
             _RTDN_TYPES.get(ntype, str(ntype)),
+        )
+        log_subscription_event(
+            db_session,
+            platform="google",
+            event_type="revoke",
+            status="success" if _owner else "flagged",
+            user_id=_owner,
+            product_id=product_id,
+            transaction_id=purchase_token[:64],
+            detail=f"{_RTDN_TYPES.get(ntype, ntype)} — PRO stripped"
+            if _owner
+            else f"{_RTDN_TYPES.get(ntype, ntype)} — no user mapped",
         )
         return {"ok": True}
 
@@ -459,8 +616,43 @@ async def google_rtdn(
             .filter(Payment.order_id == "gplay-" + token_hash[:40])
             .first()
         )
-        if not original or not original.user_id:
-            logger.warning("RTDN: no user mapped for token (no original Payment), type=%s", ntype)
+        user_id = str(original.user_id) if original and original.user_id else None
+
+        # Re-verify the token against Google (the renewal keeps the same token).
+        # Gives the authoritative expiry AND — when the initial /verify never
+        # recorded a binding (offline / reinstall) — the obfuscatedExternalAccountId
+        # fallback so a paying user still gets PRO (mirrors Apple's appAccountToken).
+        try:
+            result = _verifier.verify(purchase_token, product_id)
+        except Exception:  # noqa: BLE001 — verify hiccup must not 500 the push
+            logger.exception("RTDN: token verify failed, type=%s", ntype)
+            result = None
+
+        if user_id is None and result is not None and result.obfuscated_account_id:
+            user_id = result.obfuscated_account_id
+            # Backfill the missing token→account binding so future RTDNs map too.
+            _record_google_payment(
+                db_session, plan_service, user_id, product_id, purchase_token
+            )
+            logger.info(
+                "RTDN: recovered user %s via obfuscatedAccountId (no prior /verify)",
+                user_id,
+            )
+
+        if user_id is None:
+            logger.warning(
+                "RTDN: no user mapped for token (no Payment row, no obfuscatedAccountId), type=%s",
+                ntype,
+            )
+            log_subscription_event(
+                db_session,
+                platform="google",
+                event_type="renew",
+                status="flagged",
+                product_id=product_id,
+                transaction_id=purchase_token[:64],
+                detail=f"{_RTDN_TYPES.get(ntype, ntype)} — no user mapped (dropped)",
+            )
             return {"ok": True}
 
         event_ms = str(notif.get("eventTimeMillis", "0"))
@@ -470,21 +662,17 @@ async def google_rtdn(
             db_session,
             plan_service,
             order_id,
-            original.user_id,
+            user_id,
             product_id,
             f"Google Play RTDN: {_RTDN_TYPES.get(ntype, ntype)}",
         )
 
-        # Extend PRO on renewal. Without this the user's subscription_end (set
-        # to ~1 month at the first purchase) lapses and the backend
-        # auto-downgrades to FREE — even though Google keeps charging. Re-verify
-        # the token (the renewal keeps the same token) and, while it's active,
-        # re-activate PRO so subscription_end moves forward. Best-effort: never
-        # break the 200 response.
+        # Extend PRO on renewal. Without this the user's subscription_end lapses
+        # and the backend auto-downgrades to FREE even though Google keeps
+        # charging. Idempotent overwrite using Google's authoritative expiry.
         try:
-            result = _verifier.verify(purchase_token, product_id)
-            if result.is_valid and result.is_active_subscription:
-                user = users.get(UserQueryDTO(id=UUID(str(original.user_id))))
+            if result and result.is_valid and result.is_active_subscription:
+                user = users.get(UserQueryDTO(id=UUID(str(user_id))))
                 await subscription_service.activate_subscription(
                     user,
                     PlanType.PRO,
@@ -492,17 +680,47 @@ async def google_rtdn(
                     expires_at=result.expires_at,
                 )
                 logger.info(
-                    "RTDN: extended PRO for user %s (type=%s)", original.user_id, ntype
+                    "RTDN: extended PRO for user %s (type=%s)", user_id, ntype
+                )
+                log_subscription_event(
+                    db_session,
+                    platform="google",
+                    event_type="renew" if ntype == 2 else "purchase",
+                    status="success",
+                    user_id=user_id,
+                    product_id=product_id,
+                    transaction_id=purchase_token[:64],
+                    amount=_pro_price(plan_service),
+                    environment=result.environment,
+                    detail=f"{_RTDN_TYPES.get(ntype, ntype)} → expires={result.expires_at}",
                 )
             else:
                 logger.info(
                     "RTDN: token not active on renewal for user %s (type=%s)",
-                    original.user_id,
+                    user_id,
                     ntype,
                 )
+                log_subscription_event(
+                    db_session,
+                    platform="google",
+                    event_type="renew",
+                    status="flagged",
+                    user_id=user_id,
+                    product_id=product_id,
+                    transaction_id=purchase_token[:64],
+                    detail=f"{_RTDN_TYPES.get(ntype, ntype)} — token not active",
+                )
         except Exception:  # noqa: BLE001 — entitlement sync must not 500 the push
-            logger.exception(
-                "RTDN: failed to extend PRO for user %s", original.user_id
+            logger.exception("RTDN: failed to extend PRO for user %s", user_id)
+            log_subscription_event(
+                db_session,
+                platform="google",
+                event_type="renew",
+                status="failed",
+                user_id=user_id,
+                product_id=product_id,
+                transaction_id=purchase_token[:64],
+                detail=f"{_RTDN_TYPES.get(ntype, ntype)} — activation error",
             )
 
     return {"ok": True}

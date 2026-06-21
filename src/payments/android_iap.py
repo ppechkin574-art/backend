@@ -78,6 +78,10 @@ class AndroidVerifyResult:
     expires_at: datetime | None
     environment: str  # "Production" | "Sandbox" (test purchase)
     error: str | None = None
+    # obfuscatedExternalAccountId echoed by Google when the client set
+    # applicationUserName at purchase. Lets an RTDN recover the user even when
+    # the initial /verify never recorded a Payment binding (offline/reinstall).
+    obfuscated_account_id: str | None = None
 
 
 def parse_subscriptionsv2(
@@ -109,12 +113,15 @@ def parse_subscriptionsv2(
         and expires_at
         and expires_at > datetime.now(UTC)
     )
+    external = payload.get("externalAccountIdentifiers") or {}
+    obfuscated_account_id = external.get("obfuscatedExternalAccountId") or None
     return AndroidVerifyResult(
         is_valid=True,
         is_active_subscription=is_active,
         product_id=product_from_payload or fallback_product_id,
         expires_at=expires_at,
         environment=environment,
+        obfuscated_account_id=obfuscated_account_id,
     )
 
 

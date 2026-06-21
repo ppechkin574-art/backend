@@ -38,6 +38,20 @@ from payments.android_iap import AndroidVerifyResult
 PRO = "kz.aima.aima.pro.monthly"
 
 
+@pytest.fixture(autouse=True)
+def _disable_rate_limit():
+    """/verify is decorated with @limiter.limit; disable it so these direct-call
+    unit tests don't need a real starlette Request to satisfy slowapi."""
+    android.limiter.enabled = False
+    yield
+    android.limiter.enabled = True
+
+
+def _req():
+    """Stand-in for the `request` param /verify now takes (for slowapi)."""
+    return SimpleNamespace()
+
+
 # --------------------------------------------------------------------------- #
 # Fakes
 # --------------------------------------------------------------------------- #
@@ -155,6 +169,7 @@ async def test_verify_rejects_unknown_product(monkeypatch):
     monkeypatch.setattr(android, "_verifier", _Verifier(_result()))
     with pytest.raises(HTTPException) as exc:
         await verify_android_purchase(
+            _req(),
             AndroidVerifyIn(purchase_token="t", product_id="com.evil.cheap"),
             current_user=_user(),
             subscription_service=_SubService(),
@@ -169,6 +184,7 @@ async def test_verify_rejects_invalid_token(monkeypatch):
     monkeypatch.setattr(android, "_verifier", _Verifier(_result(is_valid=False)))
     with pytest.raises(HTTPException) as exc:
         await verify_android_purchase(
+            _req(),
             AndroidVerifyIn(purchase_token="bad", product_id=PRO),
             current_user=_user(),
             subscription_service=_SubService(),
@@ -185,6 +201,7 @@ async def test_verify_rejects_token_owned_by_another_account(monkeypatch):
     sub = _SubService()
     with pytest.raises(HTTPException) as exc:
         await verify_android_purchase(
+            _req(),
             AndroidVerifyIn(purchase_token="shared", product_id=PRO),
             current_user=_user(),
             subscription_service=sub,
@@ -200,6 +217,7 @@ async def test_verify_inactive_subscription_does_not_grant_pro(monkeypatch):
     monkeypatch.setattr(android, "_verifier", _Verifier(_result(is_active=False)))
     sub = _SubService()
     out = await verify_android_purchase(
+        _req(),
         AndroidVerifyIn(purchase_token="t", product_id=PRO),
         current_user=_user(),
         subscription_service=sub,
@@ -218,6 +236,7 @@ async def test_verify_active_grants_pro_with_google_expiry(monkeypatch):
     monkeypatch.setattr(android, "_verifier", _Verifier(_result(expires_at=expiry)))
     sub = _SubService()
     out = await verify_android_purchase(
+        _req(),
         AndroidVerifyIn(purchase_token="fresh", product_id=PRO),
         current_user=_user(),
         subscription_service=sub,
@@ -237,6 +256,7 @@ async def test_verify_same_owner_reverify_is_allowed(monkeypatch):
     same_owner = SimpleNamespace(user_id=str(user.id))
     sub = _SubService()
     out = await verify_android_purchase(
+        _req(),
         AndroidVerifyIn(purchase_token="t", product_id=PRO),
         current_user=user,
         subscription_service=sub,
@@ -380,3 +400,141 @@ def test_freedompay_rejected_response_is_not_success():
     assert "<pg_status>ok</pg_status>" not in body  # must NOT ack as success
     # sanity: the success helper really does say ok, so the assertion is meaningful
     assert "<pg_status>ok</pg_status>" in success.body.decode()
+
+
+# --------------------------------------------------------------------------- #
+# Hardening fixes — product substitution, sandbox gate, RTDN fallback + dedup
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+async def test_verify_rejects_when_google_returns_other_product(monkeypatch):
+    """S6 — client claims the allowed product but the TOKEN is for another
+    product Google returns. Must reject (product substitution)."""
+    bad = AndroidVerifyResult(
+        is_valid=True,
+        is_active_subscription=True,
+        product_id="kz.aima.aima.other.cheap",  # not allow-listed
+        expires_at=None,
+        environment="Production",
+    )
+    monkeypatch.setattr(android, "_verifier", _Verifier(bad))
+    sub = _SubService()
+    with pytest.raises(HTTPException) as exc:
+        await verify_android_purchase(
+            _req(),
+            AndroidVerifyIn(purchase_token="t", product_id=PRO),
+            current_user=_user(),
+            subscription_service=sub,
+            db_session=_Session(),
+            plan_service=MagicMock(),
+        )
+    assert exc.value.status_code == 400
+    assert sub.activated == []  # cheaper SKU never unlocks PRO
+
+
+@pytest.mark.asyncio
+async def test_verify_sandbox_blocked_for_non_tester(monkeypatch):
+    """S3 — a Sandbox/test purchase grants NO PRO unless the user is allow-listed."""
+    monkeypatch.delenv("SANDBOX_IAP_TESTER_USER_IDS", raising=False)
+    monkeypatch.setattr(android, "_verifier", _Verifier(_result(env="Sandbox")))
+    sub = _SubService()
+    out = await verify_android_purchase(
+        _req(),
+        AndroidVerifyIn(purchase_token="t", product_id=PRO),
+        current_user=_user(),
+        subscription_service=sub,
+        db_session=_Session(),
+        plan_service=MagicMock(),
+    )
+    assert out.is_active is False
+    assert sub.activated == []  # free PRO via license-tester blocked
+
+
+@pytest.mark.asyncio
+async def test_verify_sandbox_allowed_for_listed_tester(monkeypatch):
+    """S3 — an allow-listed tester DOES get PRO from a sandbox purchase."""
+    user = _user()
+    monkeypatch.setenv("SANDBOX_IAP_TESTER_USER_IDS", f"someone-else,{user.id}")
+    monkeypatch.setattr(android, "_verifier", _Verifier(_result(env="Sandbox")))
+    sub = _SubService()
+    out = await verify_android_purchase(
+        _req(),
+        AndroidVerifyIn(purchase_token="t", product_id=PRO),
+        current_user=user,
+        subscription_service=sub,
+        db_session=_Session(existing=None),
+        plan_service=MagicMock(),
+    )
+    assert out.is_active is True
+    assert len(sub.activated) == 1
+
+
+@pytest.mark.asyncio
+async def test_rtdn_renewal_recovers_user_via_obfuscated_account_id(monkeypatch):
+    """C1 — money-in RTDN with NO prior /verify Payment row still grants PRO by
+    recovering the user from Google's obfuscatedExternalAccountId."""
+    uid = str(uuid4())
+    res = AndroidVerifyResult(
+        is_valid=True,
+        is_active_subscription=True,
+        product_id=PRO,
+        expires_at=None,
+        environment="Production",
+        obfuscated_account_id=uid,
+    )
+    monkeypatch.setenv("GOOGLE_RTDN_SECRET", "s3cret")
+    monkeypatch.setattr(android, "_verifier", _Verifier(res))
+    sub = _SubService()
+    notif = {
+        "subscriptionNotification": {
+            "notificationType": 2,  # RENEWED
+            "purchaseToken": "T",
+            "subscriptionId": PRO,
+        }
+    }
+    await google_rtdn(
+        _Req(notif),
+        token="",
+        x_rtdn_secret="s3cret",
+        db_session=_Session(existing=None),  # no Payment row maps the token
+        plan_service=MagicMock(),
+        subscription_service=sub,
+        users=_Users(_user()),
+    )
+    assert len(sub.activated) == 1  # paying user still got PRO
+
+
+@pytest.mark.asyncio
+async def test_rtdn_duplicate_message_id_is_skipped(monkeypatch):
+    """S2 — a redelivered RTDN (same Pub/Sub messageId) is deduped and NOT
+    re-processed (no double revoke / double extend)."""
+    monkeypatch.setenv("GOOGLE_RTDN_SECRET", "s3cret")
+    monkeypatch.setattr(android, "_verifier", _Verifier(_result()))
+    # Simulate the dedup table already holding this messageId.
+    monkeypatch.setattr(android, "record_google_notification", lambda *a, **k: False)
+    sub = _SubService()
+    notif = {
+        "subscriptionNotification": {
+            "notificationType": 12,  # REVOKED — would strip PRO if processed
+            "purchaseToken": "T",
+            "subscriptionId": PRO,
+        }
+    }
+
+    class _ReqWithMsgId:
+        async def json(self):
+            data = base64.b64encode(json.dumps(notif).encode()).decode()
+            return {"message": {"data": data, "messageId": "m-123"}}
+
+    out = await google_rtdn(
+        _ReqWithMsgId(),
+        token="",
+        x_rtdn_secret="s3cret",
+        db_session=_Session(existing=SimpleNamespace(user_id=str(uuid4()))),
+        plan_service=MagicMock(),
+        subscription_service=sub,
+        users=_Users(_user()),
+    )
+    assert out == {"ok": True}
+    assert sub.revoked == []  # duplicate skipped — no re-processing

@@ -133,7 +133,17 @@ class LoggingContextMiddleware(BaseHTTPMiddleware):
             "method": request.method,
             "endpoint": request.url.path,
             # "user_agent": request.headers.get("user-agent", ""),
-            "query_params": dict(request.query_params),
+            # Redact secrets that may travel in the query string (e.g. the RTDN
+            # shared secret accepted as ?token= for Pub/Sub push) so they never
+            # land in logs / proxies.
+            "query_params": {
+                k: (
+                    "[redacted]"
+                    if k.lower() in {"token", "secret", "password", "api_key", "access_token"}
+                    else v
+                )
+                for k, v in request.query_params.items()
+            },
         }
 
         if request.method not in ["GET", "OPTIONS"] or request.url.path.startswith("/api/"):

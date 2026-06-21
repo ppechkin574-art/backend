@@ -61,6 +61,11 @@ def _blocks_text(link: TextBlockLink | None) -> str:
     return "\n".join(p.strip() for p in parts).strip()
 
 
+def _pick_sample(ids: list[int], sample: int, limit: int) -> list[int]:
+    """Every `sample`-th id (1 = all), capped at `limit` (hard max 200)."""
+    return ids[:: max(1, sample)][: min(200, max(1, limit))]
+
+
 # ─────────────────────────── coverage ───────────────────────────
 
 
@@ -245,7 +250,7 @@ def preview_translations(
         .all()
     ]
     total = len(ids)
-    picked = ids[::sample][: min(200, max(1, limit))]
+    picked = _pick_sample(ids, sample, limit)
     if not picked:
         return {"items": [], "total": total, "shown": 0, "sample": sample}
 

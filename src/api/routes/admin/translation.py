@@ -126,6 +126,18 @@ def queue_subject(subject_id: int, session: Session = Depends(get_db_session)):
     return {"queued": n}
 
 
+@router.post("/requeue")
+def requeue_question(question_id: int, session: Session = Depends(get_db_session)):
+    """Operator «Перевести заново» — put one already-translated question back into
+    the queue so the worker re-translates it (its kk fields get overwritten)."""
+    q = session.query(Question).filter(Question.id == question_id).first()
+    if q is None:
+        raise HTTPException(status_code=404, detail="Question not found")
+    q.translation_status_kk = "queued"
+    session.commit()
+    return {"ok": True, "question_id": question_id, "status": "queued"}
+
+
 @router.get("/queued-subjects")
 def queued_subjects(session: Session = Depends(get_db_session)):
     """Subjects with questions waiting for translation — polled by the worker."""

@@ -329,6 +329,11 @@ def get_user(
 ) -> UserDTO:
     try:
         user = service.get_user_from_token(token)
+        # Reject disabled/banned accounts (admin disable, stolen-account kick).
+        # Only on an explicit False so users whose is_active is unset aren't
+        # locked out. Effective within the profile-cache TTL (~60s).
+        if getattr(user, "is_active", None) is False:
+            raise AuthAccessInvalidTokenError
         # user = subscription_service.refresh_subscription_status(user)
         try:
             attendance_info = attendance_service.get_attendance_info(user.id)

@@ -1599,6 +1599,14 @@ class AuthService:
             self._users.change_password(user_id, new_password)
             logger.info("Password successfully changed for %s", user_id)
 
+            # Security hygiene: a password change ends ALL sessions (kick a thief
+            # / log out other devices). Mirrors the forgot-password reset flow.
+            try:
+                self._users.logout_all_sessions(user_id)
+                logger.info("Revoked all sessions after password change: %s", user_id)
+            except Exception:
+                logger.warning("Could not revoke sessions after password change: %s", user_id)
+
         except UserNotFoundError:
             raise AuthUserNotFoundError("User not found")
         except Exception as e:

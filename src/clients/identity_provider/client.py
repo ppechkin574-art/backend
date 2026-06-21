@@ -1000,7 +1000,7 @@ class IdentityProviderClientKeycloak:
         """
         logger.info("Creating OAuth tokens for user: %s", user_id)
         try:
-            temp_password = self._generate_oauth_password()
+            temp_password = self._oauth_password_for(user_id)
 
             self.set_password(user_id, temp_password)
 
@@ -1027,6 +1027,37 @@ class IdentityProviderClientKeycloak:
     def _generate_oauth_password(self) -> str:
         alphabet = string.ascii_letters + string.digits
         return "".join(secrets.choice(alphabet) for i in range(32))
+
+    def _oauth_password_for(self, user_id: UUID) -> str:
+        """Deterministic per-user password for the OAuth token grant.
+
+        STABLE across logins, so an OAuth (Google/Apple) login no longer rewrites
+        the account password on every call — the previous random-per-login
+        behaviour silently changed the password each time and broke
+        password-login / the other device for the same account.
+
+        Derived via HMAC(OAUTH_PASSWORD_SECRET, user_id) so it's never guessable
+        and never stored. If OAUTH_PASSWORD_SECRET is unset, fall back to the old
+        random one-off (no security regression — the bug just isn't fixed until
+        the secret is configured). The first OAuth login after the secret is set
+        migrates the user from the old random password to the stable one.
+        """
+        import hashlib
+        import hmac as _hmac
+        import os as _os
+
+        secret = _os.getenv("OAUTH_PASSWORD_SECRET")
+        if not secret:
+            logger.warning(
+                "OAUTH_PASSWORD_SECRET not set — OAuth uses a random per-login "
+                "password (account password keeps changing). Set it to stabilise."
+            )
+            return self._generate_oauth_password()
+        digest = _hmac.new(
+            secret.encode(), str(user_id).encode(), hashlib.sha256
+        ).hexdigest()
+        # Prefix guarantees upper+lower+digit+special for any Keycloak policy.
+        return "Oa1!" + digest[:28]
 
     def _resolve_username(self, login: str) -> str:
         """

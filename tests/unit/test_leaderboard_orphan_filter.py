@@ -44,6 +44,27 @@ from api.routes.user.leaderboard import (
 from clients.identity_provider import IdentityNotFound
 
 
+class _FakeDisplayRepo:
+    """user_display snapshot is always EMPTY here, so the route falls through to
+    the Keycloak path these orphan/oversample tests exercise; upsert is a no-op."""
+
+    def __init__(self, *_a, **_k):
+        pass
+
+    def bulk_get(self, _ids):
+        return {}
+
+    def upsert(self, *_a, **_k):
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _patch_user_display(monkeypatch):
+    import api.routes.user.leaderboard as lb
+
+    monkeypatch.setattr(lb, "UserDisplayRepository", lambda session: _FakeDisplayRepo())
+
+
 # ─────────────────────────── PII-safe display name ────────────────────
 
 

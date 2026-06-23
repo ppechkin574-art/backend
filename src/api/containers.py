@@ -1,6 +1,7 @@
 from dependency_injector import containers, providers
 from redis import Redis
 
+from auth.login_alert_service import LoginAlertService
 from auth.oauth_helper import OAuthHelper
 from auth.repositories import ConfirmationCodeRepositoryRedis, UserRepositoryKeycloak
 from auth.services import AuthService
@@ -130,6 +131,12 @@ class Container(containers.DeclarativeContainer):
         users_repository=user_repository,
     )
 
+    login_alert_service = providers.Singleton(
+        LoginAlertService,
+        database=database,
+        firebase_client=firebase_client,
+    )
+
     auth_service = providers.Singleton(
         AuthService,
         users=user_repository,
@@ -144,6 +151,7 @@ class Container(containers.DeclarativeContainer):
         apple_client=apple_oauth_client,
         oauth_helper=oauth_helper,
         identity_provider=identity_provider_client,
+        login_alert=login_alert_service,
     )
 
     unit_of_work_tests = providers.Singleton(

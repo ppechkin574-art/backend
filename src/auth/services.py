@@ -53,6 +53,7 @@ from auth.exceptions import (
     UserNotVerifiedError,
     UserPhoneExistsError,
 )
+from auth.login_alert_service import LoginAlertService
 from auth.oauth_helper import OAuthHelper
 from auth.repositories import (
     ConfirmationCodeRepositoryInterface,
@@ -431,6 +432,7 @@ class AuthService:
         apple_client: AppleOAuthClient,
         oauth_helper: OAuthHelper,
         identity_provider: IdentityProviderClientKeycloak,
+        login_alert: LoginAlertService | None = None,
     ):
         self._users = users
         self._confirmation_codes = confirmation_codes
@@ -449,6 +451,7 @@ class AuthService:
         self.apple_client = apple_client
         self.oauth_helper = oauth_helper
         self.identity_provider = identity_provider
+        self._login_alert = login_alert
 
         self.CODE_EXPIRATION_SECONDS = 10 * 60
         self.MAX_ATTEMPTS = 3
@@ -1456,7 +1459,9 @@ class AuthService:
             logger.warning("auth.login.failed reason=not_verified login=%s", params.login)
             raise AuthNotVerifiedError
 
-        return to_auth_session_dto(tokens)
+        session_dto = to_auth_session_dto(tokens)
+        self._send_login_alert(session_dto.access_token)
+        return session_dto
 
     def refresh_token(self, refresh_token: str) -> AuthSessionDTO:
         logger.info("Refreshing token")
@@ -1563,11 +1568,25 @@ class AuthService:
             tokens = self.oauth_helper.handle_oauth_user(email, name, provider)
             logger.info("auth.login.oauth.success provider=%s email=%s", provider, email)
 
-            return to_auth_session_dto(tokens)
+            session_dto = to_auth_session_dto(tokens)
+            self._send_login_alert(session_dto.access_token)
+            return session_dto
 
         except Exception as e:
             logger.exception("auth.login.oauth.failed provider=%s error=%s", provider, str(e))
             self._handle_oauth_error(e, provider)
+
+    def _send_login_alert(self, access_token: str) -> None:
+        """Fire the new-login security push. Wrapped so neither sub-resolution
+        nor push delivery can ever break authentication. No-op while Firebase
+        is disabled (see LoginAlertService)."""
+        try:
+            if self._login_alert is None or not self._login_alert.enabled:
+                return
+            user_id = self.identity_provider.get_user_sub_from_token(access_token)
+            self._login_alert.notify_new_login(user_id)
+        except Exception:
+            logger.warning("auth.login.alert: skipped (could not resolve user)", exc_info=True)
 
     def _handle_oauth_error(self, error: Exception, provider: str):
         error_msg = str(error).lower()

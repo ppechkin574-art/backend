@@ -54,6 +54,14 @@ class LoginAlertService:
         try:
             tokens = self._fetch_tokens(user_id)
             if not tokens:
+                # Logged (not silent) so "push didn't arrive" is diagnosable:
+                # the account simply has no FCM token registered yet — typically
+                # an app build that predates token registration / the current
+                # Firebase project, or notifications denied on the device.
+                logger.info(
+                    "auth.login.alert user=%s requested=0 (no registered device tokens)",
+                    user_id,
+                )
                 return
             result = self._firebase_client.send_multicast(
                 tokens,

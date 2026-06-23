@@ -1,4 +1,5 @@
 import re
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -14,6 +15,7 @@ from api.dependencies import (
 from auth.dtos.users import UserDTO
 from clients.identity_provider import IdentityNotFound
 from clients.identity_provider.client import IdentityProviderClientKeycloak
+from quiz.repositories.user_display import UserDisplayRepository
 from quiz.repositories.user_points import UserPointsRepository
 from utils.cache import CacheService, CacheStrategy
 from utils.file_service import FileService
@@ -181,6 +183,57 @@ def _cached_display_pair(
     return pair
 
 
+# Denormalized snapshot (Postgres `user_display`): the leaderboard reads
+# names/avatars from one bulk SQL query instead of N Keycloak calls. A snapshot
+# older than this is re-validated against Keycloak so name/avatar changes
+# propagate without a per-profile-update hook.
+_DISPLAY_FRESH = timedelta(hours=6)
+
+
+def _is_fresh(updated_at) -> bool:
+    if updated_at is None:
+        return False
+    if updated_at.tzinfo is None:
+        updated_at = updated_at.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - updated_at < _DISPLAY_FRESH
+
+
+def _resolve_display(
+    user_id: str,
+    snapshots: dict,
+    idp: IdentityProviderClientKeycloak,
+    cache: CacheService,
+    display_repo: UserDisplayRepository,
+) -> tuple[tuple[str, str | None] | None, bool]:
+    """Resolve a user's (name, avatar) for the leaderboard.
+
+    Reads the bulk-fetched Postgres snapshot first — a FRESH hit means zero
+    Keycloak calls. On a miss or a stale row, falls back to the Redis-cached
+    Keycloak lookup and persists the result so the next render is pure SQL.
+    Returns ``(pair_or_None, did_write)``. Orphans (deleted users) and the
+    transient-outage placeholder are never persisted.
+    """
+    snap = snapshots.get(user_id)
+    if snap is not None and _is_fresh(snap[2]):
+        return (snap[0], snap[1]), False
+
+    pair = _cached_display_pair(idp, cache, user_id)
+    if pair is None:
+        return None, False
+    if pair == ("Пользователь", None):
+        return pair, False
+    display_repo.upsert(user_id, pair[0], pair[1])
+    return pair, True
+
+
+def _commit_backfill(session) -> None:
+    """Persist lazy back-fill writes; a failure must never break the read."""
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+
+
 @router.get(
     "",
     response_model=list[LeaderboardEntry],
@@ -215,15 +268,23 @@ async def get_leaderboard(
     if not top:
         return []
 
+    display_repo = UserDisplayRepository(session)
+    # ONE query for all candidate names/avatars; Keycloak is touched only for
+    # users missing from / stale in the snapshot, which are then back-filled.
+    snapshots = display_repo.bulk_get([str(uid) for uid, _ in top])
+    dirty = False
+
     result: list[LeaderboardEntry] = []
     rank_counter = 0
     for user_id, points in top:
         if rank_counter >= limit:
             # We've collected enough valid entries — stop iterating
-            # so we don't waste Keycloak round-trips on the tail of
-            # the oversampled fetch.
+            # so we don't waste lookups on the tail of the oversample.
             break
-        display = _cached_display_pair(idp, cache, str(user_id))
+        display, wrote = _resolve_display(
+            str(user_id), snapshots, idp, cache, display_repo
+        )
+        dirty = dirty or wrote
         if display is None:
             # Orphan — user was deleted from Keycloak but their
             # points rows remain in Postgres. Skip the row entirely
@@ -242,6 +303,8 @@ async def get_leaderboard(
                 total_points=points,
             )
         )
+    if dirty:
+        _commit_backfill(session)
     return result
 
 
@@ -272,27 +335,40 @@ async def get_my_rank(
     endpoint so this is bounded.
     """
     points_repo = UserPointsRepository(session)
+    display_repo = UserDisplayRepository(session)
     total = points_repo.get_total_points(user.id)
-    name, raw_avatar = _cached_display_pair(idp, cache, str(user.id))
+
+    # Bulk-fetch the snapshot once for the caller + the whole oversample, so the
+    # orphan-filtered rank loop reads names from one SQL query instead of up to
+    # 200 serial Keycloak calls.
+    ranked = points_repo.get_all_ranked(200) if total > 0 else []
+    snapshots = display_repo.bulk_get([str(user.id)] + [str(u) for u, _ in ranked])
+    dirty = False
+
+    own, wrote = _resolve_display(str(user.id), snapshots, idp, cache, display_repo)
+    dirty = dirty or wrote
+    name, raw_avatar = own if own is not None else ("Пользователь", None)
 
     if total <= 0:
         rank = 0
     else:
-        # Iterate the same oversample / orphan-filter as /leaderboard
-        # and find this user. Fall back to the raw rank if the user
-        # somehow isn't in the first 200 — unlikely with current
-        # scale but keeps the route resilient.
         target_id_str = str(user.id)
-        raw_rank = points_repo.get_user_rank(user.id)
-        rank = raw_rank
+        rank = points_repo.get_user_rank(user.id)
         visible_rank = 0
-        for u_id, _points in points_repo.get_all_ranked(200):
-            if _cached_display_pair(idp, cache, str(u_id)) is None:
+        for u_id, _points in ranked:
+            disp, wrote = _resolve_display(
+                str(u_id), snapshots, idp, cache, display_repo
+            )
+            dirty = dirty or wrote
+            if disp is None:
                 continue
             visible_rank += 1
             if str(u_id) == target_id_str:
                 rank = visible_rank
                 break
+
+    if dirty:
+        _commit_backfill(session)
 
     return MyRankEntry(
         rank=rank,

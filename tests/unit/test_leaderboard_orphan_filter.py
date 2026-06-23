@@ -262,6 +262,14 @@ def _make_file_service() -> MagicMock:
     return fs
 
 
+def _make_cache() -> MagicMock:
+    """Cache mock that always MISSES, so _cached_display_pair falls through to
+    the real Keycloak lookup these tests exercise; set() is a no-op."""
+    cache = MagicMock()
+    cache.get.return_value = None
+    return cache
+
+
 @pytest.mark.asyncio
 async def test_leaderboard_skips_orphan_rows():
     """Real users + orphans interleaved — only real users in the
@@ -288,6 +296,7 @@ async def test_leaderboard_skips_orphan_rows():
         session=MagicMock(),
         idp=_make_idp({real_a, real_b}),
         file_service=_make_file_service(),
+        cache=_make_cache(),
     )
 
     user_ids_returned = [entry.user_id for entry in response]
@@ -322,6 +331,7 @@ async def test_leaderboard_ranks_are_gap_free_after_filtering():
         session=MagicMock(),
         idp=_make_idp({real_a, real_b, real_c}),
         file_service=_make_file_service(),
+        cache=_make_cache(),
     )
 
     ranks = [entry.rank for entry in response]
@@ -351,6 +361,7 @@ async def test_leaderboard_all_orphans_returns_empty_list():
         session=MagicMock(),
         idp=_make_idp(set()),  # no real users
         file_service=_make_file_service(),
+        cache=_make_cache(),
     )
 
     assert response == []
@@ -368,6 +379,7 @@ async def test_leaderboard_empty_db_returns_empty_list():
         session=MagicMock(),
         idp=_make_idp(set()),
         file_service=_make_file_service(),
+        cache=_make_cache(),
     )
 
     assert response == []
@@ -394,6 +406,7 @@ async def test_leaderboard_keeps_users_during_keycloak_outage():
         session=MagicMock(),
         idp=flaky_idp,
         file_service=_make_file_service(),
+        cache=_make_cache(),
     )
 
     assert len(response) == 2  # not zero — keep showing
@@ -454,6 +467,7 @@ async def test_leaderboard_oversamples_to_survive_orphan_heavy_top():
         session=MagicMock(),
         idp=_make_idp({real_a, real_b, real_c}),
         file_service=_make_file_service(),
+        cache=_make_cache(),
     )
 
     # Oversample contract: SQL was asked for 5 × 3 = 15 rows.
@@ -485,6 +499,7 @@ async def test_leaderboard_oversample_capped_at_200():
         session=MagicMock(),
         idp=_make_idp(set()),
         file_service=_make_file_service(),
+        cache=_make_cache(),
     )
 
     assert spy.last_limit == 200
@@ -520,6 +535,7 @@ async def test_leaderboard_stops_iterating_once_limit_filled():
         session=MagicMock(),
         idp=idp,
         file_service=_make_file_service(),
+        cache=_make_cache(),
     )
 
     # Visible: first 5 users.

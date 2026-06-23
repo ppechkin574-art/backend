@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from api.dependencies import (
+    get_cache_service,
     get_db_session,
     get_file_service,
     get_identity_provider_client_keycloak,
@@ -14,6 +15,7 @@ from auth.dtos.users import UserDTO
 from clients.identity_provider import IdentityNotFound
 from clients.identity_provider.client import IdentityProviderClientKeycloak
 from quiz.repositories.user_points import UserPointsRepository
+from utils.cache import CacheService, CacheStrategy
 from utils.file_service import FileService
 
 # Heuristics for spotting the Keycloak fallback (raw username / phone / email)
@@ -146,6 +148,39 @@ def _user_display_pair(
     return (_safe_display_name(name, user_id), avatar)
 
 
+_LB_DISPLAY_TTL = 900  # 15 min — name/avatar freshness vs Keycloak round-trips
+
+
+def _cached_display_pair(
+    idp: IdentityProviderClientKeycloak,
+    cache: CacheService,
+    user_id: str,
+) -> tuple[str, str | None] | None:
+    """Redis-cached wrapper over `_user_display_pair`.
+
+    Leaderboard renders enrich every row from Keycloak (one Admin-API call per
+    user — /me did up to 200 serial calls). Caching (name, avatar) per user makes
+    repeat renders skip Keycloak entirely. The orphan (deleted-user) result is
+    negative-cached too. The transient Keycloak-outage placeholder ("Пользователь"
+    without "#XXXX") is NOT cached, so it refreshes to the real name on recovery.
+    """
+    key = cache.make_key(CacheStrategy.GLOBAL, resource="lb_display", params=user_id)
+    hit = cache.get(key)
+    if hit is not None:
+        if hit.get("orphan"):
+            return None
+        return (hit["name"], hit.get("avatar"))
+
+    pair = _user_display_pair(idp, user_id)
+    if pair is None:
+        cache.set(key, {"orphan": True}, ttl=_LB_DISPLAY_TTL)
+        return None
+    if pair == ("Пользователь", None):
+        return pair  # transient outage — don't cache the placeholder
+    cache.set(key, {"name": pair[0], "avatar": pair[1]}, ttl=_LB_DISPLAY_TTL)
+    return pair
+
+
 @router.get(
     "",
     response_model=list[LeaderboardEntry],
@@ -156,6 +191,7 @@ async def get_leaderboard(
     session: Session = Depends(get_db_session),
     idp: IdentityProviderClientKeycloak = Depends(get_identity_provider_client_keycloak),
     file_service: FileService = Depends(get_file_service),
+    cache: CacheService = Depends(get_cache_service),
 ):
     points_repo = UserPointsRepository(session)
     # Oversample at the SQL layer so orphan rows don't starve the
@@ -187,7 +223,7 @@ async def get_leaderboard(
             # so we don't waste Keycloak round-trips on the tail of
             # the oversampled fetch.
             break
-        display = _user_display_pair(idp, str(user_id))
+        display = _cached_display_pair(idp, cache, str(user_id))
         if display is None:
             # Orphan — user was deleted from Keycloak but their
             # points rows remain in Postgres. Skip the row entirely
@@ -219,6 +255,7 @@ async def get_my_rank(
     session: Session = Depends(get_db_session),
     idp: IdentityProviderClientKeycloak = Depends(get_identity_provider_client_keycloak),
     file_service: FileService = Depends(get_file_service),
+    cache: CacheService = Depends(get_cache_service),
 ):
     """User's visible position on the leaderboard.
 
@@ -236,7 +273,7 @@ async def get_my_rank(
     """
     points_repo = UserPointsRepository(session)
     total = points_repo.get_total_points(user.id)
-    name, raw_avatar = _user_display_pair(idp, str(user.id))
+    name, raw_avatar = _cached_display_pair(idp, cache, str(user.id))
 
     if total <= 0:
         rank = 0
@@ -250,7 +287,7 @@ async def get_my_rank(
         rank = raw_rank
         visible_rank = 0
         for u_id, _points in points_repo.get_all_ranked(200):
-            if _user_display_pair(idp, str(u_id)) is None:
+            if _cached_display_pair(idp, cache, str(u_id)) is None:
                 continue
             visible_rank += 1
             if str(u_id) == target_id_str:

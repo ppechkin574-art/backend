@@ -506,6 +506,43 @@ def approve_translations(
     return {"approved": updated}
 
 
+@router.post("/approve-all")
+def approve_all(
+    subject_id: int,
+    filter: str = "all",  # all | flagged | clean
+    session: Session = Depends(get_db_session),
+):
+    """Approve ALL draft translations for a subject in one shot."""
+    from sqlalchemy import or_
+
+    if filter not in {"all", "flagged", "clean"}:
+        raise HTTPException(status_code=400, detail="filter must be all|flagged|clean")
+
+    q = session.query(Question).filter(
+        Question.subject_id == subject_id,
+        Question.translation_status_kk == "draft",
+    )
+    if filter == "flagged":
+        q = q.filter(
+            Question.quality_flags_kk.isnot(None),
+            func.jsonb_array_length(Question.quality_flags_kk) > 0,
+        )
+    elif filter == "clean":
+        q = q.filter(
+            or_(
+                Question.quality_flags_kk.is_(None),
+                func.jsonb_array_length(Question.quality_flags_kk) == 0,
+            )
+        )
+
+    updated = q.update(
+        {Question.translation_status_kk: "done", Question.quality_flags_kk: None},
+        synchronize_session=False,
+    )
+    session.commit()
+    return {"approved": updated}
+
+
 # ─────────────────────────── review (draft list with flags) ───────────────────────────
 
 

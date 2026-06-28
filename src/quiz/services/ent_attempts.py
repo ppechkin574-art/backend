@@ -836,10 +836,10 @@ class EntAttemptService:
         if not question_ids:
             return
 
-        # 1) Question + hint kk splice
+        # 1) Question + hint kk splice — only 'done' translations are served
         q_stmt = text(
             "SELECT id, question_text_kk, hint_text_kk "
-            "FROM questions WHERE id IN :ids"
+            "FROM questions WHERE id IN :ids AND translation_status_kk = 'done'"
         ).bindparams(bindparam("ids", expanding=True))
         q_rows = self._uow.session.execute(
             q_stmt, {"ids": question_ids}
@@ -1592,30 +1592,32 @@ class EntAttemptService:
             # requests across subjects whose data hasn't been imported.
             question_blocks = question_dto.blocks
             if locale == "kk":
-                question_text_kk = getattr(question_obj, "question_text_kk", None)
-                if question_text_kk is None and hasattr(question_obj, "question"):
-                    # `question_obj` is a join wrapper (e.g. EntOptionQuestion)
-                    # — peek at the inner `.question` row for the column.
-                    question_text_kk = getattr(
-                        question_obj.question, "question_text_kk", None
+                # Only serve KK text when the translation is approved ('done').
+                _inner = question_obj.question if hasattr(question_obj, "question") else question_obj
+                _status = getattr(_inner, "translation_status_kk", None) or getattr(question_obj, "translation_status_kk", None)
+                if _status == "done":
+                    question_text_kk = getattr(question_obj, "question_text_kk", None)
+                    if question_text_kk is None and hasattr(question_obj, "question"):
+                        question_text_kk = getattr(
+                            question_obj.question, "question_text_kk", None
+                        )
+                    question_blocks = localize_blocks_with_kk_text(
+                        question_blocks, question_text_kk
                     )
-                question_blocks = localize_blocks_with_kk_text(
-                    question_blocks, question_text_kk
-                )
 
-                hint_text_kk = getattr(question_obj, "hint_text_kk", None)
-                if hint_text_kk is None and hasattr(question_obj, "question"):
-                    hint_text_kk = getattr(
-                        question_obj.question, "hint_text_kk", None
-                    )
-                if transformed_hint is not None and hint_text_kk:
-                    transformed_hint = transformed_hint.model_copy(
-                        update={
-                            "blocks": localize_hint_blocks_with_kk_text(
-                                transformed_hint.blocks, hint_text_kk
-                            )
-                        }
-                    )
+                    hint_text_kk = getattr(question_obj, "hint_text_kk", None)
+                    if hint_text_kk is None and hasattr(question_obj, "question"):
+                        hint_text_kk = getattr(
+                            question_obj.question, "hint_text_kk", None
+                        )
+                    if transformed_hint is not None and hint_text_kk:
+                        transformed_hint = transformed_hint.model_copy(
+                            update={
+                                "blocks": localize_hint_blocks_with_kk_text(
+                                    transformed_hint.blocks, hint_text_kk
+                                )
+                            }
+                        )
 
             questions_with_answers.append(
                 QuestionWithAnswerDTO(

@@ -545,6 +545,7 @@ class DailyTestService:
         with self._uow:
             q_stmt = text(
                 "SELECT id, question_text_kk, hint_text_kk FROM questions WHERE id IN :ids"
+                " AND translation_status_kk = 'done'"
             ).bindparams(bindparam("ids", expanding=True))
             q_kk: dict[int, tuple] = {
                 row[0]: (row[1], row[2])

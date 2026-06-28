@@ -1,7 +1,7 @@
 """Add admin action flags to user_risk_profiles: is_watchlisted, points_frozen, referral_disabled
 
-Revision ID: b2c3d4e5f6a7
-Revises: a1b2c3d4e5f6
+Revision ID: c2d3e4f5a6b7
+Revises: f0e1d2c3b4a5
 Create Date: 2026-06-28
 """
 
@@ -10,8 +10,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "b2c3d4e5f6a7"
-down_revision: Union[str, None] = "a1b2c3d4e5f6"
+revision: str = "c2d3e4f5a6b7"
+down_revision: Union[str, None] = "f0e1d2c3b4a5"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

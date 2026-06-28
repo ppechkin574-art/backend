@@ -1,4 +1,5 @@
 import logging
+from collections import Counter
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Protocol
 from uuid import UUID
@@ -568,6 +569,15 @@ class EntAttemptService:
                         method="POST",
                         metadata={"attempt_id": ent_attempt.id, "score": attempt_stat.score},
                     )
+            # Anti-fraud detectors (best-effort: never break the response)
+            try:
+                self._detect_bot_speed(attempt_stat, ent_attempt, student_guid)
+                self._detect_answer_patterns(answer, ent_attempt, student_guid)
+            except Exception:
+                logger.exception(
+                    "Anti-fraud detection failed for attempt %s (non-fatal)", ent_attempt.id
+                )
+
             self._uow.commit()
             self._cashback_service.check_and_update(student_guid)
 
@@ -1758,3 +1768,126 @@ class EntAttemptService:
             student_guid,
             deleted,
         )
+
+    # ------------------------------------------------------------------
+    # Anti-fraud detectors
+    # ------------------------------------------------------------------
+
+    # Minimum questions to trigger detection (avoid false positives on short tests)
+    _MIN_QUESTIONS_FOR_DETECTION = 10
+    # Speed threshold: < 2 sec/question → bot-like
+    _BOT_SPEED_THRESHOLD_SECONDS = 2
+    # Pattern threshold: same answer position in X% of questions → suspicious
+    _PATTERN_THRESHOLD_PERCENT = 0.80
+
+    def _detect_bot_speed(self, attempt_stat, ent_attempt, student_guid: UUID) -> None:
+        """Log bot_speed_answers if average answer time < 2 sec/question."""
+        total_q = attempt_stat.total_questions or 0
+        if total_q < self._MIN_QUESTIONS_FOR_DETECTION:
+            return
+        avg_speed = attempt_stat.spend_time / total_q
+        if avg_speed < self._BOT_SPEED_THRESHOLD_SECONDS:
+            self._uow.fraud_events.log_event(
+                event_type="bot_speed_answers",
+                risk_score=90,
+                user_id=student_guid,
+                reason=(
+                    f"Attempt {ent_attempt.id}: avg {avg_speed:.2f}s/question "
+                    f"({attempt_stat.spend_time}s for {total_q} questions) "
+                    f"< {self._BOT_SPEED_THRESHOLD_SECONDS}s threshold"
+                ),
+                endpoint="/user/ents/attempts/answer",
+                method="POST",
+                metadata={
+                    "attempt_id": ent_attempt.id,
+                    "spend_time": attempt_stat.spend_time,
+                    "total_questions": total_q,
+                    "avg_seconds_per_question": round(avg_speed, 2),
+                    "exam_type": ent_attempt.exam_type.value if ent_attempt.exam_type else None,
+                },
+            )
+            logger.warning(
+                "bot_speed_answers: attempt=%s user=%s avg=%.2fs/q",
+                ent_attempt.id, student_guid, avg_speed,
+            )
+
+    def _detect_answer_patterns(
+        self,
+        answer: "EntAttemptAnswerServiceDTO",
+        ent_attempt,
+        student_guid: UUID,
+    ) -> None:
+        """Log pattern_answers if user always picks the same variant position.
+
+        Variant display order = ascending variant.id (insertion order).
+        For each answered question we find the 0-based index of the selected
+        variant inside that question's sorted variant list. If one index
+        appears in >= 80% of answers → suspicious.
+        """
+        if not answer.questions:
+            return
+        answered = [q for q in answer.questions if q.variants]
+        if len(answered) < self._MIN_QUESTIONS_FOR_DETECTION:
+            return
+
+        from quiz.models.edu_content import Variant as VariantModel
+
+        question_ids = [q.question_id for q in answered]
+
+        # Single query: all variants for these questions, ordered by id (display order)
+        rows = (
+            self._uow.session
+            .query(VariantModel.id, VariantModel.question_id)
+            .filter(VariantModel.question_id.in_(question_ids))
+            .order_by(VariantModel.question_id, VariantModel.id)
+            .all()
+        )
+
+        # Build {question_id: [variant_id, ...]} ordered by id
+        variants_by_q: dict[int, list[int]] = {}
+        for var_id, q_id in rows:
+            variants_by_q.setdefault(q_id, []).append(var_id)
+
+        # Find which position each user selected
+        positions: list[int] = []
+        for q in answered:
+            q_variants = variants_by_q.get(q.question_id)
+            if not q_variants:
+                continue
+            selected = q.variants[0]  # first selected variant
+            if selected in q_variants:
+                positions.append(q_variants.index(selected))
+
+        if len(positions) < self._MIN_QUESTIONS_FOR_DETECTION:
+            return
+
+        counter = Counter(positions)
+        most_common_pos, most_common_count = counter.most_common(1)[0]
+        freq = most_common_count / len(positions)
+
+        if freq >= self._PATTERN_THRESHOLD_PERCENT:
+            self._uow.fraud_events.log_event(
+                event_type="pattern_answers",
+                risk_score=60,
+                user_id=student_guid,
+                reason=(
+                    f"Attempt {ent_attempt.id}: position {most_common_pos} selected "
+                    f"in {most_common_count}/{len(positions)} questions "
+                    f"({freq*100:.0f}% ≥ {self._PATTERN_THRESHOLD_PERCENT*100:.0f}% threshold)"
+                ),
+                endpoint="/user/ents/attempts/answer",
+                method="POST",
+                metadata={
+                    "attempt_id": ent_attempt.id,
+                    "dominant_position": most_common_pos,
+                    "dominant_count": most_common_count,
+                    "total_analyzed": len(positions),
+                    "frequency_percent": round(freq * 100, 1),
+                    "position_distribution": dict(counter),
+                    "exam_type": ent_attempt.exam_type.value if ent_attempt.exam_type else None,
+                },
+            )
+            logger.warning(
+                "pattern_answers: attempt=%s user=%s pos=%s freq=%.0f%%",
+                ent_attempt.id, student_guid, most_common_pos, freq * 100,
+            )

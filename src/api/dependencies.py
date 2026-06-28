@@ -631,8 +631,9 @@ def get_ent_attempts_service(
     uow: UnitOfWorkTests = Depends(get_unit_of_work_tests),
     cache_service: CacheService = Depends(get_cache_service),
     cashback_service: CashbackService = Depends(get_cashback_service),
+    app_settings: "AppSettingsService" = Depends(get_app_settings_service),
 ) -> EntAttemptServiceInterface:
-    return EntAttemptService(uow, cache_service, cashback_service)
+    return EntAttemptService(uow, cache_service, cashback_service, app_settings)
 
 
 def get_import_service(

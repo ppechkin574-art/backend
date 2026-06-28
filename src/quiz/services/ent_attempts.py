@@ -30,6 +30,7 @@ from quiz.exceptions import (
     TrainerAttemptNotExist,
     WrongStudent,
 )
+from app_config.service import AppSettingsService
 from quiz.services.cashback import CashbackService
 from quiz.uows.uows import UnitOfWorkTests
 from quiz.utils.hint_transform import transform_video_hint
@@ -82,10 +83,12 @@ class EntAttemptService:
         uow: UnitOfWorkTests,
         cache_service: CacheService,
         cashback_service: CashbackService,
+        app_settings: AppSettingsService | None = None,
     ):
         self._uow = uow
         self._cache_service = cache_service
         self._cashback_service = cashback_service
+        self._app_settings = app_settings
 
     def create(
         self,
@@ -586,6 +589,9 @@ class EntAttemptService:
             try:
                 self._detect_bot_speed(attempt_stat, ent_attempt, student_guid)
                 self._detect_answer_patterns(answer, ent_attempt, student_guid)
+                if ent_attempt.exam_type == ExamType.full_exam:
+                    self._detect_rapid_attempts(student_guid)
+                    self._detect_score_spike(student_guid, attempt_stat.score)
             except Exception:
                 logger.exception(
                     "Anti-fraud detection failed for attempt %s (non-fatal)", ent_attempt.id
@@ -1904,3 +1910,112 @@ class EntAttemptService:
                 "pattern_answers: attempt=%s user=%s pos=%s freq=%.0f%%",
                 ent_attempt.id, student_guid, most_common_pos, freq * 100,
             )
+
+    _RAPID_ATTEMPTS_THRESHOLD = 10
+    _RAPID_ATTEMPTS_WINDOW_SEC = 3600
+
+    def _detect_rapid_attempts(self, student_guid: UUID) -> None:
+        """Fire rapid_attempts if user completes ≥10 full_exam attempts in 1 hour."""
+        try:
+            redis = self._cache_service.redis
+        except AttributeError:
+            return
+
+        key = f"rapid:full_exam:{student_guid}"
+        count = redis.incr(key)
+        if count == 1:
+            redis.expire(key, self._RAPID_ATTEMPTS_WINDOW_SEC)
+
+        if count == self._RAPID_ATTEMPTS_THRESHOLD:
+            dedup_key = f"rapid:alerted:{student_guid}"
+            if not redis.exists(dedup_key):
+                redis.setex(dedup_key, self._RAPID_ATTEMPTS_WINDOW_SEC, "1")
+                self._uow.fraud_events.log_event(
+                    event_type="rapid_attempts",
+                    risk_score=70,
+                    user_id=student_guid,
+                    reason=(
+                        f"User completed {count} full ENT exams within 1 hour "
+                        f"(threshold: {self._RAPID_ATTEMPTS_THRESHOLD})"
+                    ),
+                    endpoint="/user/ents/attempts/answer",
+                    method="POST",
+                    metadata={
+                        "attempts_in_window": count,
+                        "window_seconds": self._RAPID_ATTEMPTS_WINDOW_SEC,
+                        "threshold": self._RAPID_ATTEMPTS_THRESHOLD,
+                    },
+                )
+                logger.warning(
+                    "rapid_attempts: user=%s count=%d in %ds window",
+                    student_guid, count, self._RAPID_ATTEMPTS_WINDOW_SEC,
+                )
+
+    _SCORE_SPIKE_DEFAULT_LIMIT = 10_000
+    _SCORE_SPIKE_WINDOW_SEC = 24 * 3600
+
+    def _detect_score_spike(self, student_guid: UUID, points_just_awarded: int) -> None:
+        """Fire score_spike if user gains more points than the daily limit (default 10 000).
+
+        Limit is admin-editable via app_settings key `score_spike_daily_limit`.
+        Uses PointsAuditLog SUM(points_delta) for the last 24h — no Redis needed.
+        Dedup: fires once per 24h window per user (Redis key).
+        """
+        if not points_just_awarded:
+            return
+
+        from datetime import UTC, datetime, timedelta
+
+        from sqlalchemy import func
+
+        from security.models import PointsAuditLog
+
+        since = datetime.now(UTC) - timedelta(seconds=self._SCORE_SPIKE_WINDOW_SEC)
+        daily_total = (
+            self._uow.session.query(func.coalesce(func.sum(PointsAuditLog.points_delta), 0))
+            .filter(
+                PointsAuditLog.user_id == student_guid,
+                PointsAuditLog.created_at >= since,
+            )
+            .scalar()
+        ) or 0
+
+        daily_limit = self._SCORE_SPIKE_DEFAULT_LIMIT
+        if self._app_settings is not None:
+            daily_limit = self._app_settings.get_int(
+                "score_spike_daily_limit", self._SCORE_SPIKE_DEFAULT_LIMIT
+            )
+
+        if daily_total < daily_limit:
+            return
+
+        try:
+            redis = self._cache_service.redis
+            dedup_key = f"score_spike:alerted:{student_guid}"
+            if redis.exists(dedup_key):
+                return
+            redis.setex(dedup_key, self._SCORE_SPIKE_WINDOW_SEC, "1")
+        except Exception:
+            pass
+
+        self._uow.fraud_events.log_event(
+            event_type="score_spike",
+            risk_score=75,
+            user_id=student_guid,
+            reason=(
+                f"User accumulated {daily_total} points in 24h "
+                f"(limit: {daily_limit}, just awarded: {points_just_awarded})"
+            ),
+            endpoint="/user/ents/attempts/answer",
+            method="POST",
+            metadata={
+                "daily_total": daily_total,
+                "daily_limit": daily_limit,
+                "just_awarded": points_just_awarded,
+                "window_seconds": self._SCORE_SPIKE_WINDOW_SEC,
+            },
+        )
+        logger.warning(
+            "score_spike: user=%s daily_total=%d limit=%d",
+            student_guid, daily_total, daily_limit,
+        )

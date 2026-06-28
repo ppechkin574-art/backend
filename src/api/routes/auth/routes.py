@@ -708,6 +708,7 @@ def login(
             ip=client_ip,
             user_agent=user_agent,
             success=True,
+            device_id=getattr(request.state, "device_id", None),
         )
     except Exception:
         logger.exception("Login trial reconcile failed (non-fatal)")

@@ -7,6 +7,7 @@ to the login response.
 Detectors wired here:
 - brute_force: 20 failed logins in 10 min from same IP or same login identifier
 - suspicious_login: successful login from a different city than last known
+- multi_account_device: ≥3 distinct user_ids from same device_id in 30 days
 """
 
 import logging
@@ -18,9 +19,18 @@ from security.repository import FraudEventRepository
 
 logger = logging.getLogger(__name__)
 
-_BRUTE_WINDOW_SEC = 600       # 10 minutes
-_BRUTE_THRESHOLD  = 20        # attempts before alert
-_CITY_TTL_SEC     = 30 * 24 * 3600  # 30 days
+_BRUTE_WINDOW_SEC     = 600             # 10 minutes
+_BRUTE_THRESHOLD      = 20             # attempts before alert
+_CITY_TTL_SEC         = 30 * 24 * 3600  # 30 days
+_MULTI_ACCT_WINDOW_SEC    = 30 * 24 * 3600  # 30 days
+_MULTI_ACCT_THRESHOLD     = 3              # distinct user_ids per device_id
+_MULTI_ACCT_DEDUP_SEC     = 24 * 3600      # alert once per day per device
+_MULTI_IP_WINDOW_SEC      = 24 * 3600      # 24 hours
+_MULTI_IP_THRESHOLD       = 5              # distinct user_ids per IP
+_MULTI_IP_DEDUP_SEC       = 24 * 3600      # alert once per day per IP
+_REFERRAL_FARM_WINDOW_SEC = 30 * 24 * 3600  # 30 days
+_REFERRAL_FARM_THRESHOLD  = 3              # referrals from same device_id
+_REFERRAL_FARM_DEDUP_SEC  = 24 * 3600      # alert once per day per device
 
 
 class LoginEventLogger:
@@ -36,6 +46,7 @@ class LoginEventLogger:
         ip: str | None,
         user_agent: str | None,
         success: bool = True,
+        device_id: str | None = None,
     ) -> None:
         """Best-effort: must NEVER raise. Called from a background task."""
         try:
@@ -46,6 +57,7 @@ class LoginEventLogger:
                 city=city,
                 user_agent=user_agent,
                 success=success,
+                device_id=device_id,
             )
             logger.info(
                 "security.login_event user=%s ip=%s city=%s success=%s",
@@ -86,6 +98,7 @@ class LoginEventLogger:
         success: bool,
         reason: str | None = None,
         login_identifier: str | None = None,
+        device_id: str | None = None,
     ) -> None:
         session = self._database.session
         try:
@@ -100,10 +113,12 @@ class LoginEventLogger:
                 method="POST",
                 ip_address=ip,
                 user_agent=user_agent,
+                device_id=device_id,
                 metadata={
                     "city": city,
                     "ip": ip,
                     "success": success,
+                    "device_id": device_id,
                 },
             )
 
@@ -114,6 +129,18 @@ class LoginEventLogger:
             # Suspicious-city detector (successful logins only)
             if success and user_id and self._redis:
                 self._detect_suspicious_city(repo, user_id, ip, city)
+
+            # Multi-account detector (successful login with known device_id)
+            if success and user_id and device_id and self._redis:
+                self._detect_multi_account(repo, session, user_id, device_id)
+
+            # Missing device_id on authenticated login (likely a script/bot)
+            if success and user_id and not device_id:
+                self._detect_missing_device_id(repo, user_id)
+
+            # Multi-account from same IP (successful logins only)
+            if success and user_id and ip and self._redis:
+                self._detect_multi_account_ip(repo, session, user_id, ip)
 
             session.commit()
         finally:
@@ -193,3 +220,238 @@ class LoginEventLogger:
                 )
         except Exception:
             logger.warning("suspicious_login detector error", exc_info=True)
+
+    def _detect_multi_account(
+        self,
+        repo: FraudEventRepository,
+        session,
+        user_id: UUID,
+        device_id: str,
+    ) -> None:
+        """Fire multi_account_device if ≥3 distinct user_ids used the same device_id in 30 days."""
+        try:
+            from datetime import UTC, datetime, timedelta
+
+            from sqlalchemy import func
+
+            from security.models import FraudEvent
+
+            since = datetime.now(UTC) - timedelta(seconds=_MULTI_ACCT_WINDOW_SEC)
+            distinct_users = (
+                session.query(func.count(func.distinct(FraudEvent.user_id)))
+                .filter(
+                    FraudEvent.device_id == device_id,
+                    FraudEvent.user_id.isnot(None),
+                    FraudEvent.created_at >= since,
+                )
+                .scalar()
+            ) or 0
+
+            if distinct_users < _MULTI_ACCT_THRESHOLD:
+                return
+
+            dedup_key = f"multi_acct:alerted:{device_id}"
+            if self._redis.exists(dedup_key):
+                return
+            self._redis.setex(dedup_key, _MULTI_ACCT_DEDUP_SEC, "1")
+
+            repo.log_event(
+                event_type="multi_account_device",
+                risk_score=70,
+                user_id=user_id,
+                device_id=device_id,
+                reason=(
+                    f"Device {device_id[:16]}… used by {distinct_users} different accounts "
+                    f"in the last 30 days (threshold: {_MULTI_ACCT_THRESHOLD})"
+                ),
+                metadata={
+                    "device_id": device_id,
+                    "distinct_users": distinct_users,
+                    "threshold": _MULTI_ACCT_THRESHOLD,
+                    "window_days": 30,
+                },
+            )
+            logger.warning(
+                "multi_account_device: device=%s distinct_users=%d",
+                device_id[:16], distinct_users,
+            )
+        except Exception:
+            logger.warning("multi_account_device detector error", exc_info=True)
+
+    def _detect_missing_device_id(
+        self,
+        repo: FraudEventRepository,
+        user_id: UUID,
+    ) -> None:
+        """Fire missing_device_id when a user logs in without X-Device-Id header.
+        Legitimate app clients always send this header (DeviceIdInterceptor).
+        Missing header suggests a script or non-app client. Low risk (45) —
+        could be old app version. Fires once per user per 24h."""
+        try:
+            if self._redis:
+                dedup_key = f"missing_did:alerted:{user_id}"
+                if self._redis.exists(dedup_key):
+                    return
+                self._redis.setex(dedup_key, 24 * 3600, "1")
+            repo.log_event(
+                event_type="missing_device_id",
+                risk_score=45,
+                user_id=user_id,
+                reason=(
+                    "Login without X-Device-Id header — may indicate script/API access "
+                    "rather than the official app client"
+                ),
+                endpoint="/auth/login",
+                method="POST",
+                metadata={"has_device_id": False},
+            )
+        except Exception:
+            logger.warning("missing_device_id detector error", exc_info=True)
+
+    def _detect_multi_account_ip(
+        self,
+        repo: FraudEventRepository,
+        session,
+        user_id: UUID,
+        ip: str,
+    ) -> None:
+        """Fire multi_account_ip if ≥5 distinct user_ids logged in from same IP in 24h."""
+        try:
+            from datetime import UTC, datetime, timedelta
+
+            from sqlalchemy import func
+
+            from security.models import FraudEvent
+
+            since = datetime.now(UTC) - timedelta(seconds=_MULTI_IP_WINDOW_SEC)
+            distinct_users = (
+                session.query(func.count(func.distinct(FraudEvent.user_id)))
+                .filter(
+                    FraudEvent.ip_address == ip,
+                    FraudEvent.user_id.isnot(None),
+                    FraudEvent.created_at >= since,
+                )
+                .scalar()
+            ) or 0
+
+            if distinct_users < _MULTI_IP_THRESHOLD:
+                return
+
+            dedup_key = f"multi_ip:alerted:{ip}"
+            if self._redis.exists(dedup_key):
+                return
+            self._redis.setex(dedup_key, _MULTI_IP_DEDUP_SEC, "1")
+
+            repo.log_event(
+                event_type="multi_account_ip",
+                risk_score=60,
+                user_id=user_id,
+                ip_address=ip,
+                reason=(
+                    f"IP {ip} used by {distinct_users} different accounts "
+                    f"in the last 24h (threshold: {_MULTI_IP_THRESHOLD})"
+                ),
+                metadata={
+                    "ip": ip,
+                    "distinct_users": distinct_users,
+                    "threshold": _MULTI_IP_THRESHOLD,
+                    "window_hours": 24,
+                },
+            )
+            logger.warning(
+                "multi_account_ip: ip=%s distinct_users=%d", ip, distinct_users,
+            )
+        except Exception:
+            logger.warning("multi_account_ip detector error", exc_info=True)
+
+    def log_referral_redeem(
+        self,
+        invitee_id: UUID,
+        inviter_id: UUID,
+        device_id: str | None,
+        ip: str | None = None,
+    ) -> None:
+        """Called after a successful referral code redemption.
+        Detects device_id farming (same device used for ≥3 different referrals).
+        Best-effort: must NEVER raise."""
+        if not device_id:
+            return
+        try:
+            session = self._database.session
+            try:
+                repo = FraudEventRepository(session)
+                self._detect_referral_device_farm(
+                    repo, session, invitee_id, inviter_id, device_id, ip
+                )
+                session.commit()
+            finally:
+                session.close()
+        except Exception:
+            logger.warning(
+                "log_referral_redeem failed for invitee=%s", invitee_id, exc_info=True
+            )
+
+    def _detect_referral_device_farm(
+        self,
+        repo: FraudEventRepository,
+        session,
+        invitee_id: UUID,
+        inviter_id: UUID,
+        device_id: str,
+        ip: str | None,
+    ) -> None:
+        """Fire referral_device_farm if ≥3 different users redeemed referrals from same device_id."""
+        try:
+            from datetime import UTC, datetime, timedelta
+
+            from sqlalchemy import func
+
+            from security.models import FraudEvent
+
+            since = datetime.now(UTC) - timedelta(seconds=_REFERRAL_FARM_WINDOW_SEC)
+            # Count distinct invitees from this device in fraud events (login_success)
+            distinct_users = (
+                session.query(func.count(func.distinct(FraudEvent.user_id)))
+                .filter(
+                    FraudEvent.device_id == device_id,
+                    FraudEvent.user_id.isnot(None),
+                    FraudEvent.created_at >= since,
+                )
+                .scalar()
+            ) or 0
+
+            if distinct_users < _REFERRAL_FARM_THRESHOLD:
+                return
+
+            dedup_key = f"referral_farm:alerted:{device_id}"
+            if self._redis and self._redis.exists(dedup_key):
+                return
+            if self._redis:
+                self._redis.setex(dedup_key, _REFERRAL_FARM_DEDUP_SEC, "1")
+
+            repo.log_event(
+                event_type="referral_device_farm",
+                risk_score=75,
+                user_id=inviter_id,
+                device_id=device_id,
+                ip_address=ip,
+                reason=(
+                    f"Device {device_id[:16]}… linked to {distinct_users} accounts "
+                    f"that redeemed referral codes in 30 days "
+                    f"(invitee: {invitee_id})"
+                ),
+                metadata={
+                    "device_id": device_id,
+                    "distinct_users": distinct_users,
+                    "threshold": _REFERRAL_FARM_THRESHOLD,
+                    "invitee_id": str(invitee_id),
+                    "inviter_id": str(inviter_id),
+                    "window_days": 30,
+                },
+            )
+            logger.warning(
+                "referral_device_farm: device=%s distinct_users=%d inviter=%s",
+                device_id[:16], distinct_users, inviter_id,
+            )
+        except Exception:
+            logger.warning("referral_device_farm detector error", exc_info=True)

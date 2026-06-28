@@ -155,6 +155,29 @@ class PromocodeService:
                 .first()
             )
             if already:
+                # Log fraud event — repeated bypass attempt (best-effort, never blocks)
+                try:
+                    from security.repository import FraudEventRepository
+                    fraud_repo = FraudEventRepository(self.db_session)
+                    fraud_repo.log_event(
+                        event_type="promo_bypass",
+                        risk_score=65,
+                        user_id=user.id,
+                        reason=(
+                            f"User attempted to activate promo code '{code}' "
+                            f"again (already used, promocode_id={promocode.id})"
+                        ),
+                        endpoint="/user/promocodes/activate",
+                        method="POST",
+                        metadata={
+                            "promocode_id": promocode.id,
+                            "code": code,
+                            "activated_at": str(already.created_at) if already.created_at else None,
+                        },
+                    )
+                except Exception:
+                    logger.warning("promo_bypass fraud log failed (non-fatal)", exc_info=True)
+
                 # Откатить инкремент — юзер уже использовал.
                 self.db_session.execute(
                     update(Promocode)

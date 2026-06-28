@@ -10,9 +10,9 @@ the code so the UI can render «получишь +N звёзд» without a secon
 roundtrip. Admin tunes those via /admin/app-settings.
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends, Request
 
-from api.dependencies import get_referral_service, get_user
+from api.dependencies import get_login_event_logger, get_referral_service, get_user
 from auth.dtos.users import UserDTO
 from referrals.dtos import (
     InviteeStatusDTO,
@@ -52,15 +52,26 @@ def get_policy(
 
 @router.post("/redeem", response_model=RedemptionResultDTO)
 def redeem(
+    request: Request,
     body: RedeemRequestDTO,
+    background_tasks: BackgroundTasks,
     user: UserDTO = Depends(get_user),
     service: ReferralService = Depends(get_referral_service),
+    event_logger=Depends(get_login_event_logger),
 ):
     """Принимает чужой реферальный код. Возможен только 1 раз за всю
     историю аккаунта (DB-уровневая уникальность по invitee_id).
     Бизнес-правила (свой код, формат, повтор) бросают 4xx с понятным
     русским detail, который клиент показывает как текст ошибки."""
-    return service.redeem(invitee_id=user.id, code=body.code)
+    result = service.redeem(invitee_id=user.id, code=body.code)
+    background_tasks.add_task(
+        event_logger.log_referral_redeem,
+        invitee_id=user.id,
+        inviter_id=result.inviter_id,
+        device_id=getattr(request.state, "device_id", None),
+        ip=getattr(request.state, "client_ip", None),
+    )
+    return result
 
 
 @router.get("/invitees", response_model=list[InviteeStatusDTO])

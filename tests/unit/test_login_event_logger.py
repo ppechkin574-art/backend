@@ -104,7 +104,12 @@ def test_log_login_writes_fraud_event():
     with patch("security.login_event_logger.lookup_city", return_value="Almaty, Kazakhstan"), \
          patch("security.login_event_logger.FraudEventRepository") as MockRepo:
         mock_repo = MockRepo.return_value
-        logger.log_login(user_id=user_id, ip="91.185.22.1", user_agent="TestAgent/1.0")
+        # Pass device_id to suppress the missing_device_id detector so only
+        # the login_success event is created in this test.
+        logger.log_login(
+            user_id=user_id, ip="91.185.22.1", user_agent="TestAgent/1.0",
+            device_id="test-device-001",
+        )
 
     MockRepo.assert_called_once_with(session)
     mock_repo.log_event.assert_called_once()

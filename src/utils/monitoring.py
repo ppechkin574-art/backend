@@ -125,6 +125,8 @@ class LoggingContextMiddleware(BaseHTTPMiddleware):
                 logging.debug("Failed to get user from token: %s", e)
 
         request.state.user_data = user_data
+        request.state.device_id = request.headers.get("x-device-id")
+        request.state.user_agent = request.headers.get("user-agent", "")
 
         base_context = {
             "request_id": request_id,

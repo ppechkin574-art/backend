@@ -15,8 +15,9 @@ from settings import Settings
 
 logger = logging.getLogger(__name__)
 
-_DELETION_EXECUTOR_INTERVAL_SECONDS = 3600  # run every hour
-_PAYMENT_WATCHDOG_INTERVAL_SECONDS = 86400  # daily
+_DELETION_EXECUTOR_INTERVAL_SECONDS = 3600   # run every hour
+_PAYMENT_WATCHDOG_INTERVAL_SECONDS  = 86400  # daily
+_SUSPICIOUS_SUB_INTERVAL_SECONDS    = 3600   # every hour
 
 
 async def _execute_scheduled_deletions(db_settings: DatabaseSettings, app: FastAPI) -> None:
@@ -118,6 +119,80 @@ async def _payment_health_watchdog(
             logger.exception("[payment-watchdog] cycle error")
 
 
+async def _suspicious_subscription_checker(db_settings: DatabaseSettings) -> None:
+    """Hourly: find active PRO subscriptions with no payment and no promo code."""
+    from database.database import Database
+    from payments.models import Payment
+    from promocodes.models import PromocodeUsage
+    from security.models import FraudEvent
+    from security.repository import FraudEventRepository
+    from subscription.models import Subscription
+
+    db = Database(db_settings)
+    while True:
+        await asyncio.sleep(_SUSPICIOUS_SUB_INTERVAL_SECONDS)
+        try:
+            from datetime import UTC, datetime, timedelta
+
+            from sqlalchemy import exists
+
+            session = db.session
+            try:
+                now = datetime.now(UTC)
+                suspects = (
+                    session.query(Subscription.user_id)
+                    .filter(
+                        Subscription.plan == "PRO",
+                        Subscription.status == "active",
+                        Subscription.expires_at > now,
+                        Subscription.payment_id.is_(None),
+                        Subscription.promocode_usage_id.is_(None),
+                        ~exists().where(
+                            (Payment.user_id == Subscription.user_id)
+                            & (Payment.status == "completed")
+                        ),
+                        ~exists().where(
+                            PromocodeUsage.student_guid == Subscription.user_id
+                        ),
+                        # Skip users already alerted in the last 24h
+                        ~exists().where(
+                            (FraudEvent.user_id == Subscription.user_id)
+                            & (FraudEvent.event_type == "pro_without_payment")
+                            & (FraudEvent.created_at > (now - timedelta(hours=24)))
+                        ),
+                    )
+                    .limit(50)
+                    .all()
+                )
+                if suspects:
+                    repo = FraudEventRepository(session)
+                    for (user_id,) in suspects:
+                        try:
+                            import uuid
+                            repo.log_event(
+                                event_type="pro_without_payment",
+                                risk_score=80,
+                                user_id=uuid.UUID(str(user_id)),
+                                reason=(
+                                    "Active PRO subscription with no completed payment "
+                                    "and no promo code redemption on record"
+                                ),
+                                metadata={"user_id": str(user_id), "detected_at": now.isoformat()},
+                            )
+                        except Exception:
+                            logger.exception(
+                                "pro_without_payment log failed for user=%s", user_id
+                            )
+                    session.commit()
+                    logger.info(
+                        "[suspicious-sub-check] flagged %d users", len(suspects)
+                    )
+            finally:
+                session.close()
+        except Exception:
+            logger.exception("[suspicious-sub-check] cycle error")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
@@ -145,11 +220,15 @@ async def lifespan(app: FastAPI):
     payment_watchdog_task = asyncio.create_task(
         _payment_health_watchdog(db_settings, settings, app)
     )
+    suspicious_sub_task = asyncio.create_task(
+        _suspicious_subscription_checker(db_settings)
+    )
 
     yield
 
     deletion_task.cancel()
     payment_watchdog_task.cancel()
+    suspicious_sub_task.cancel()
     stop_poller_on_app(app)
     await manager.stop_heartbeat()
     await notification_scheduler.stop()

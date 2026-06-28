@@ -90,8 +90,10 @@ def _setup_redeem_queries(db_mock, owner, prior=None, rewarded_count=0,
       1. ReferralCode lookup (.first)            → owner
       2. already-redeemed pre-check (.first)     → prior
       3. anti-farm cap COUNT (.count)            → rewarded_count
-      4. _has_ever_paid Payment lookup (.first)  → payment row or None
+      4. UserRiskProfile check (.first)          → None (no fraud flag)
          (only reached when reward_inviter=True, i.e. rewarded_count < cap)
+      5. _has_ever_paid Payment lookup (.first)  → payment row or None
+         (only reached when reward_inviter=True)
     Pass cap= matching the value used in _make_service(cap=) so the
     reward_inviter calculation stays in sync.
     """
@@ -101,13 +103,16 @@ def _setup_redeem_queries(db_mock, owner, prior=None, rewarded_count=0,
     prior_chain.filter.return_value.first.return_value = prior
     cap_chain = MagicMock()
     cap_chain.filter.return_value.count.return_value = rewarded_count
+    risk_chain = MagicMock()
+    risk_chain.filter.return_value.first.return_value = None  # no fraud profile = not disabled
     payment_chain = MagicMock()
     payment_chain.filter.return_value.first.return_value = (
         SimpleNamespace(id=1) if inviter_paid else None
     )
     side_effects = [code_chain, prior_chain, cap_chain]
-    # Payment query only reached when reward_inviter=True (rewarded_count < cap)
+    # These queries only reached when reward_inviter=True (rewarded_count < cap)
     if rewarded_count < cap:
+        side_effects.append(risk_chain)
         side_effects.append(payment_chain)
     db_mock.query.side_effect = side_effects
 

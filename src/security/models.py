@@ -38,6 +38,9 @@ class UserRiskProfile(Base):
     restricted_until = Column(DateTime(timezone=True), nullable=True)
     blocked_at = Column(DateTime(timezone=True), nullable=True)
     restriction_reason = Column(String(500), nullable=True)
+    is_watchlisted = Column(Boolean, default=False, nullable=False, server_default="false")
+    points_frozen = Column(Boolean, default=False, nullable=False, server_default="false")
+    referral_disabled = Column(Boolean, default=False, nullable=False, server_default="false")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(
         DateTime(timezone=True),

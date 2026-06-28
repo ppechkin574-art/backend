@@ -36,6 +36,14 @@ class BlockUserRequest(BaseModel):
     reason: str
 
 
+class AdminActionRequest(BaseModel):
+    admin_username: str
+
+
+class FalsePositiveRequest(BaseModel):
+    reviewed_by: str
+
+
 # ------------------------------------------------------------------
 # Overview
 # ------------------------------------------------------------------
@@ -187,6 +195,77 @@ def unrestrict_user(
     identity_provider: IdentityProviderClientKeycloak = Depends(get_identity_provider_client_keycloak),
 ):
     SecurityService(session=session, identity_provider=identity_provider).unrestrict_user(user_id=user_id)
+    return {"ok": True}
+
+
+@router.post("/users/{user_id}/watchlist", summary="Добавить/убрать из watchlist")
+def set_watchlist(
+    user_id: UUID,
+    body: AdminActionRequest,
+    watchlisted: bool = True,
+    session: Session = Depends(get_db_session),
+):
+    SecurityService(session=session).set_watchlist(
+        user_id=user_id,
+        watchlisted=watchlisted,
+        admin_username=body.admin_username,
+    )
+    return {"ok": True}
+
+
+@router.post("/users/{user_id}/freeze-points", summary="Заморозить/разморозить очки")
+def set_points_frozen(
+    user_id: UUID,
+    body: AdminActionRequest,
+    frozen: bool = True,
+    session: Session = Depends(get_db_session),
+):
+    SecurityService(session=session).set_points_frozen(
+        user_id=user_id,
+        frozen=frozen,
+        admin_username=body.admin_username,
+    )
+    return {"ok": True}
+
+
+@router.post("/users/{user_id}/referral", summary="Включить/отключить реферальные вознаграждения")
+def set_referral_disabled(
+    user_id: UUID,
+    body: AdminActionRequest,
+    disabled: bool = True,
+    session: Session = Depends(get_db_session),
+):
+    SecurityService(session=session).set_referral_disabled(
+        user_id=user_id,
+        disabled=disabled,
+        admin_username=body.admin_username,
+    )
+    return {"ok": True}
+
+
+@router.post("/users/{user_id}/reset-risk", summary="Сбросить risk score пользователя")
+def reset_risk_score(
+    user_id: UUID,
+    body: AdminActionRequest,
+    session: Session = Depends(get_db_session),
+):
+    SecurityService(session=session).reset_risk_score(
+        user_id=user_id,
+        admin_username=body.admin_username,
+    )
+    return {"ok": True}
+
+
+@router.post("/events/{event_id}/mark-false-positive", summary="Отметить событие как ложное срабатывание")
+def mark_event_false_positive(
+    event_id: int,
+    body: FalsePositiveRequest,
+    session: Session = Depends(get_db_session),
+):
+    SecurityService(session=session).mark_event_false_positive(
+        event_id=event_id,
+        reviewed_by=body.reviewed_by,
+    )
     return {"ok": True}
 
 

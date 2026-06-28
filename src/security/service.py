@@ -281,9 +281,62 @@ class SecurityService:
             except Exception:
                 logger.exception("Failed to re-enable Keycloak account for user %s", user_id)
 
+    def set_watchlist(self, user_id: UUID, watchlisted: bool, admin_username: str) -> None:
+        profile = self._get_or_create_profile(user_id)
+        profile.is_watchlisted = watchlisted
+        profile.updated_at = datetime.now(tz=UTC)
+        action = "watchlist_add" if watchlisted else "watchlist_remove"
+        self._log_admin_action(user_id, action, admin_username)
+        self.session.commit()
+
+    def set_points_frozen(self, user_id: UUID, frozen: bool, admin_username: str) -> None:
+        profile = self._get_or_create_profile(user_id)
+        profile.points_frozen = frozen
+        profile.updated_at = datetime.now(tz=UTC)
+        action = "points_freeze" if frozen else "points_unfreeze"
+        self._log_admin_action(user_id, action, admin_username)
+        self.session.commit()
+
+    def set_referral_disabled(self, user_id: UUID, disabled: bool, admin_username: str) -> None:
+        profile = self._get_or_create_profile(user_id)
+        profile.referral_disabled = disabled
+        profile.updated_at = datetime.now(tz=UTC)
+        action = "referral_disable" if disabled else "referral_enable"
+        self._log_admin_action(user_id, action, admin_username)
+        self.session.commit()
+
+    def reset_risk_score(self, user_id: UUID, admin_username: str) -> None:
+        profile = self._get_or_create_profile(user_id)
+        profile.current_risk_score = 0
+        profile.total_suspicious_events = 0
+        profile.updated_at = datetime.now(tz=UTC)
+        self._log_admin_action(user_id, "reset_risk_score", admin_username)
+        self.session.commit()
+
+    def mark_event_false_positive(self, event_id: int, reviewed_by: str) -> None:
+        event = self.session.query(FraudEvent).filter(FraudEvent.id == event_id).first()
+        if event is not None:
+            event.status = "false_positive"
+            event.reviewed_at = datetime.now(tz=UTC)
+            event.reviewed_by = reviewed_by
+            self.session.commit()
+
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _log_admin_action(self, user_id: UUID, action: str, admin_username: str) -> None:
+        event = FraudEvent(
+            user_id=user_id,
+            event_type="admin_action",
+            risk_score=0,
+            reason=f"Admin action: {action} by {admin_username}",
+            status="reviewed",
+            reviewed_at=datetime.now(tz=UTC),
+            reviewed_by=admin_username,
+            event_metadata={"action": action, "admin": admin_username},
+        )
+        self.session.add(event)
 
     def _get_or_create_profile(self, user_id: UUID) -> UserRiskProfile:
         profile = (
@@ -335,6 +388,9 @@ class SecurityService:
             ),
             "blocked_at": profile.blocked_at.isoformat() if profile.blocked_at else None,
             "restriction_reason": profile.restriction_reason,
+            "is_watchlisted": profile.is_watchlisted,
+            "points_frozen": profile.points_frozen,
+            "referral_disabled": profile.referral_disabled,
             "created_at": profile.created_at.isoformat() if profile.created_at else None,
             "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
         }

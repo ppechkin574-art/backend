@@ -53,6 +53,7 @@ from referrals.dtos import (
     RedemptionResultDTO,
 )
 from referrals.models import ReferralCode, ReferralRedemption
+from security.models import UserRiskProfile
 from utils.file_service import FileService
 
 logger = logging.getLogger(__name__)
@@ -234,6 +235,20 @@ class ReferralService:
             .count()
         )
         reward_inviter = rewarded_invitees < cap
+
+        # Admin can disable referral rewards for a specific inviter.
+        if reward_inviter:
+            inviter_risk = (
+                self.db.query(UserRiskProfile)
+                .filter(UserRiskProfile.user_id == owner.user_id)
+                .first()
+            )
+            if inviter_risk and inviter_risk.referral_disabled:
+                reward_inviter = False
+                logger.info(
+                    "Referral rewards disabled for inviter %s — skipping inviter bonus",
+                    owner.user_id,
+                )
 
         # Inviter reward: only if inviter has at least one real paid subscription
         # (trial does not count). If inviter has never paid — they get 0.

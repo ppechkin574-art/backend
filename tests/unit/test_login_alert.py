@@ -43,8 +43,8 @@ def test_sends_one_multicast_with_correct_payload_to_registered_tokens():
     args, kwargs = firebase.send_multicast.call_args
     assert args[0] == ["tokA", "tokB"]  # tokens passed positionally
     assert kwargs["title"] == LoginAlertService._TITLE
-    assert kwargs["body"] == LoginAlertService._BODY
-    assert kwargs["data"] == {"type": "new_login"}
+    assert kwargs["body"] == LoginAlertService._BODY_DEFAULT
+    assert kwargs["data"]["type"] == "new_login"
 
 
 def test_no_registered_tokens_does_not_send():

@@ -80,6 +80,9 @@ def _fake_profile(
     restricted_until: datetime | None = None,
     blocked_at: datetime | None = None,
     restriction_reason: str | None = None,
+    is_watchlisted: bool = False,
+    points_frozen: bool = False,
+    referral_disabled: bool = False,
     created_at: datetime | None = None,
     updated_at: datetime | None = None,
 ) -> SimpleNamespace:
@@ -93,6 +96,9 @@ def _fake_profile(
         restricted_until=restricted_until,
         blocked_at=blocked_at,
         restriction_reason=restriction_reason,
+        is_watchlisted=is_watchlisted,
+        points_frozen=points_frozen,
+        referral_disabled=referral_disabled,
         created_at=created_at or _now(),
         updated_at=updated_at or _now(),
     )

@@ -42,6 +42,7 @@ from quiz.utils.init import (
     TimeNormalizerService,
     VariantValidator,
 )
+from security.models import UserRiskProfile
 from utils.cache import CacheService, CacheStrategy, cached
 
 logger = logging.getLogger(__name__)
@@ -526,12 +527,24 @@ class EntAttemptService:
             # award both from repeated submissions and from concurrent race conditions.
             if attempt_stat.score > 0 and ent_attempt.exam_type == ExamType.full_exam:
                 if self._uow.ent_attempts.award_points_once(ent_attempt.id):
-                    self._uow.user_points.add_points(
-                        student_guid,
-                        attempt_stat.score,
-                        source_type="ent_attempt",
-                        source_id=str(ent_attempt.id),
+                    risk_profile = (
+                        self._uow.session.query(UserRiskProfile)
+                        .filter(UserRiskProfile.user_id == student_guid)
+                        .first()
                     )
+                    if risk_profile and risk_profile.points_frozen:
+                        logger.info(
+                            "Points frozen for user %s — skipping award for attempt %s",
+                            student_guid,
+                            ent_attempt.id,
+                        )
+                    else:
+                        self._uow.user_points.add_points(
+                            student_guid,
+                            attempt_stat.score,
+                            source_type="ent_attempt",
+                            source_id=str(ent_attempt.id),
+                        )
                     # Detect suspiciously fast completion: < 5 sec/question
                     total_q = attempt_stat.total_questions or 1
                     min_reasonable_seconds = 5 * total_q

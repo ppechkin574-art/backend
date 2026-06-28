@@ -748,3 +748,438 @@ class TestPromoBypas:
                 pass
 
         MockFraud.return_value.log_event.assert_not_called()
+
+
+# ===========================================================================
+# LoginEventLogger._detect_brute_force
+# ===========================================================================
+
+class TestBruteForceDetector:
+    """Fires 'brute_force' (risk=90) when ip_count OR login_count >= 20 in 10 min."""
+
+    _THRESHOLD = 20
+
+    def _call(self, ip_count, login_count=0, dedup_exists=False, login_identifier="+77001234567"):
+        redis = MagicMock()
+        # incr() called: first for IP key, then (if login_identifier) for login key
+        redis.incr.side_effect = [ip_count, login_count] if login_identifier else [ip_count]
+        redis.exists.return_value = 1 if dedup_exists else 0
+        redis.expire.return_value = True
+        redis.setex.return_value = True
+        logger = _make_login_logger(redis)
+        repo = MagicMock()
+        logger._detect_brute_force(repo, "1.2.3.4", login_identifier)
+        return repo, redis
+
+    def test_below_threshold_no_alert(self):
+        repo, _ = self._call(ip_count=19, login_count=0, login_identifier=None)
+        repo.log_event.assert_not_called()
+
+    def test_ip_count_at_threshold_fires(self):
+        repo, _ = self._call(ip_count=20, login_count=1)
+        repo.log_event.assert_called_once()
+        kw = repo.log_event.call_args[1]
+        assert kw["event_type"] == "brute_force"
+        assert kw["risk_score"] == 90
+        assert kw["ip_address"] == "1.2.3.4"
+
+    def test_ip_count_above_threshold_fires(self):
+        repo, _ = self._call(ip_count=35, login_count=1)
+        repo.log_event.assert_called_once()
+
+    def test_login_count_at_threshold_fires_even_if_ip_low(self):
+        repo, _ = self._call(ip_count=1, login_count=20)
+        repo.log_event.assert_called_once()
+        kw = repo.log_event.call_args[1]
+        assert kw["event_type"] == "brute_force"
+
+    def test_both_counts_below_no_alert(self):
+        repo, _ = self._call(ip_count=19, login_count=19)
+        repo.log_event.assert_not_called()
+
+    def test_dedup_prevents_second_alert(self):
+        repo, _ = self._call(ip_count=20, login_count=1, dedup_exists=True)
+        repo.log_event.assert_not_called()
+
+    def test_first_ip_incr_sets_ttl(self):
+        _, redis = self._call(ip_count=1, login_count=1)
+        # expire called at least once (ip key and login key both hit count==1)
+        assert redis.expire.call_count >= 1
+        keys_expired = [c[0][0] for c in redis.expire.call_args_list]
+        assert any("1.2.3.4" in k for k in keys_expired)
+
+    def test_no_login_identifier_skips_login_key(self):
+        _, redis = self._call(ip_count=5, login_count=0, login_identifier=None)
+        # incr called only once (ip key only)
+        assert redis.incr.call_count == 1
+
+    def test_metadata_contains_both_counts_and_identifier(self):
+        repo, _ = self._call(ip_count=20, login_count=5)
+        meta = repo.log_event.call_args[1]["metadata"]
+        assert meta["ip_count"] == 20
+        assert meta["login_count"] == 5
+        assert meta["login_identifier"] == "+77001234567"
+
+    def test_exception_in_redis_swallowed(self):
+        redis = MagicMock()
+        redis.incr.side_effect = Exception("Redis down")
+        logger = _make_login_logger(redis)
+        logger._detect_brute_force(MagicMock(), "1.2.3.4", "+77001234567")  # must not raise
+
+
+# ===========================================================================
+# LoginEventLogger._detect_suspicious_city
+# ===========================================================================
+
+class TestSuspiciousCityDetector:
+    """Fires 'suspicious_login' (risk=65) when user's city changed since last login."""
+
+    def _call(self, last_city_raw, current_city, ip="1.2.3.4"):
+        """
+        last_city_raw: bytes (e.g. b"Almaty") or None (first login).
+        current_city:  str city name or None.
+        """
+        redis = MagicMock()
+        redis.get.return_value = last_city_raw
+        logger = _make_login_logger(redis)
+        repo = MagicMock()
+        user_id = uuid4()
+        logger._detect_suspicious_city(repo, user_id, ip, current_city)
+        return repo, redis, user_id
+
+    def test_city_none_returns_early(self):
+        repo, redis, _ = self._call(b"Almaty", None)
+        repo.log_event.assert_not_called()
+        redis.get.assert_not_called()  # returns before touching Redis
+
+    def test_first_login_no_last_city_no_alert(self):
+        repo, redis, _ = self._call(None, "Almaty")
+        repo.log_event.assert_not_called()
+
+    def test_first_login_stores_city(self):
+        _, redis, user_id = self._call(None, "Almaty")
+        redis.setex.assert_called_once()
+        key, _, value = redis.setex.call_args[0]
+        assert str(user_id) in key
+        assert value == "Almaty"
+
+    def test_same_city_no_alert(self):
+        repo, _, _ = self._call(b"Almaty", "Almaty")
+        repo.log_event.assert_not_called()
+
+    def test_city_changed_fires_alert(self):
+        repo, _, user_id = self._call(b"Almaty", "Astana", ip="5.6.7.8")
+        repo.log_event.assert_called_once()
+        kw = repo.log_event.call_args[1]
+        assert kw["event_type"] == "suspicious_login"
+        assert kw["risk_score"] == 65
+        assert kw["user_id"] == user_id
+        assert kw["ip_address"] == "5.6.7.8"
+
+    def test_city_changed_metadata(self):
+        repo, _, _ = self._call(b"Almaty", "Astana", ip="5.6.7.8")
+        meta = repo.log_event.call_args[1]["metadata"]
+        assert meta["prev_city"] == "Almaty"
+        assert meta["new_city"] == "Astana"
+        assert meta["ip"] == "5.6.7.8"
+
+    def test_city_always_updated_in_redis_on_change(self):
+        _, redis, _ = self._call(b"Almaty", "Astana")
+        redis.setex.assert_called_once()
+        _, _, stored = redis.setex.call_args[0]
+        assert stored == "Astana"
+
+    def test_city_always_updated_even_when_same(self):
+        _, redis, _ = self._call(b"Almaty", "Almaty")
+        redis.setex.assert_called_once()
+
+    def test_exception_in_redis_swallowed(self):
+        redis = MagicMock()
+        redis.get.side_effect = Exception("Redis down")
+        logger = _make_login_logger(redis)
+        logger._detect_suspicious_city(MagicMock(), uuid4(), "1.2.3.4", "Almaty")  # must not raise
+
+
+# ===========================================================================
+# _suspicious_subscription_checker (lifespan background task)
+# ===========================================================================
+
+class TestSuspiciousSubscriptionChecker:
+    """Hourly task: flag PRO subs with no payment and no promo code."""
+
+    async def _run_one_cycle(self, suspects):
+        """Run the checker for exactly one cycle, return the mock FraudEventRepository."""
+        import asyncio as _asyncio
+        from api.lifespan import _suspicious_subscription_checker
+
+        mock_session = MagicMock()
+        q = MagicMock()
+        mock_session.query.return_value = q
+        q.filter.return_value = q
+        q.limit.return_value = q
+        q.all.return_value = suspects
+
+        mock_db = MagicMock()
+        mock_db.session = mock_session
+
+        mock_repo = MagicMock()
+
+        sleep_call = 0
+
+        async def one_shot(n):
+            nonlocal sleep_call
+            sleep_call += 1
+            if sleep_call >= 2:
+                raise _asyncio.CancelledError()
+
+        with patch("database.database.Database", return_value=mock_db), \
+             patch("security.repository.FraudEventRepository", return_value=mock_repo), \
+             patch("api.lifespan.asyncio.sleep", side_effect=one_shot):
+            try:
+                await _suspicious_subscription_checker(MagicMock())
+            except _asyncio.CancelledError:
+                pass
+
+        return mock_repo, mock_session
+
+    @pytest.mark.asyncio
+    async def test_no_suspects_no_log_event(self):
+        repo, _ = await self._run_one_cycle(suspects=[])
+        repo.log_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_one_suspect_logs_pro_without_payment(self):
+        uid = uuid4()
+        repo, _ = await self._run_one_cycle(suspects=[(uid,)])
+        repo.log_event.assert_called_once()
+        kw = repo.log_event.call_args[1]
+        assert kw["event_type"] == "pro_without_payment"
+        assert kw["risk_score"] == 80
+        assert str(kw["user_id"]) == str(uid)
+
+    @pytest.mark.asyncio
+    async def test_multiple_suspects_all_logged(self):
+        uids = [uuid4(), uuid4(), uuid4()]
+        repo, _ = await self._run_one_cycle(suspects=[(u,) for u in uids])
+        assert repo.log_event.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_session_committed_after_logging(self):
+        uid = uuid4()
+        _, session = await self._run_one_cycle(suspects=[(uid,)])
+        session.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_session_closed_in_finally(self):
+        # Even with empty suspects, session must be closed
+        _, session = await self._run_one_cycle(suspects=[])
+        session.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_metadata_contains_user_id(self):
+        uid = uuid4()
+        repo, _ = await self._run_one_cycle(suspects=[(uid,)])
+        meta = repo.log_event.call_args[1]["metadata"]
+        assert meta["user_id"] == str(uid)
+
+
+# ===========================================================================
+# LoginEventLogger._write_event — detector dispatch integration
+# ===========================================================================
+
+class TestWriteEventDetectorDispatch:
+    """Verify that _write_event calls the right detectors under the right conditions."""
+
+    def _write(self, success=True, user_id=None, ip="1.2.3.4",
+               device_id=None, city=None):
+        uid = user_id or uuid4()
+        logger = _make_login_logger(redis_mock=MagicMock())
+        with patch.object(logger, "_detect_brute_force") as mock_bf, \
+             patch.object(logger, "_detect_suspicious_city") as mock_sc, \
+             patch.object(logger, "_detect_multi_account") as mock_ma, \
+             patch.object(logger, "_detect_missing_device_id") as mock_md, \
+             patch.object(logger, "_detect_multi_account_ip") as mock_ip, \
+             patch("security.login_event_logger.FraudEventRepository"):
+            logger._write_event(
+                user_id=uid, ip=ip, city=city, user_agent=None,
+                success=success, device_id=device_id,
+            )
+            return {
+                "bf": mock_bf, "sc": mock_sc, "ma": mock_ma,
+                "md": mock_md, "ip": mock_ip,
+            }, uid
+
+    def test_successful_login_with_device_id_calls_multi_account_and_city(self):
+        mocks, _ = self._write(success=True, device_id="dev-1", city="Almaty")
+        mocks["ma"].assert_called_once()
+        mocks["sc"].assert_called_once()
+        mocks["md"].assert_not_called()   # has device_id → skip missing_device_id
+        mocks["bf"].assert_not_called()   # success → skip brute_force
+
+    def test_successful_login_without_device_id_calls_missing_device_id(self):
+        mocks, _ = self._write(success=True, device_id=None)
+        mocks["md"].assert_called_once()
+        mocks["ma"].assert_not_called()   # no device_id → skip multi_account
+
+    def test_successful_login_calls_multi_ip_when_ip_present(self):
+        mocks, _ = self._write(success=True, device_id="dev-1", ip="1.2.3.4")
+        mocks["ip"].assert_called_once()
+
+    def test_failed_login_calls_brute_force_skips_city_and_multi(self):
+        mocks, _ = self._write(success=False, ip="1.2.3.4")
+        mocks["bf"].assert_called_once()
+        mocks["sc"].assert_not_called()
+        mocks["ma"].assert_not_called()
+        mocks["md"].assert_not_called()
+
+    def test_failed_login_no_ip_skips_brute_force(self):
+        mocks, _ = self._write(success=False, ip=None)
+        mocks["bf"].assert_not_called()
+
+    def test_no_redis_skips_brute_force(self):
+        uid = uuid4()
+        logger = LoginEventLogger(database=MagicMock(), redis=None)
+        with patch.object(logger, "_detect_brute_force") as mock_bf, \
+             patch("security.login_event_logger.FraudEventRepository"):
+            logger._write_event(
+                user_id=uid, ip="1.2.3.4", city=None,
+                user_agent=None, success=False,
+            )
+        mock_bf.assert_not_called()
+
+    def test_no_redis_skips_suspicious_city(self):
+        uid = uuid4()
+        logger = LoginEventLogger(database=MagicMock(), redis=None)
+        with patch.object(logger, "_detect_suspicious_city") as mock_sc, \
+             patch("security.login_event_logger.FraudEventRepository"):
+            logger._write_event(
+                user_id=uid, ip="1.2.3.4", city="Almaty",
+                user_agent=None, success=True, device_id="dev-1",
+            )
+        mock_sc.assert_not_called()
+
+
+# ===========================================================================
+# Edge-cases
+# ===========================================================================
+
+class TestEdgeCases:
+    """Miscellaneous edge-cases that don't fit a single detector class."""
+
+    # --- score_spike: Redis down → event still written (dedup try/except pass) ---
+
+    def test_score_spike_redis_down_still_logs_event(self):
+        """If redis.exists() throws, the except: pass means log_event is still called."""
+        redis = MagicMock()
+        redis.exists.side_effect = Exception("Redis timeout")
+        app_settings = MagicMock()
+        app_settings.get_int.return_value = 10_000
+        svc = _make_ent_service_with_redis(redis, app_settings)
+        _mock_session_count(svc._uow.session, 20_000)
+        svc._detect_score_spike(uuid4(), points_just_awarded=100)
+        # Despite Redis failure, event must be logged
+        svc._uow.fraud_events.log_event.assert_called_once()
+        assert svc._uow.fraud_events.log_event.call_args[1]["event_type"] == "score_spike"
+
+    # --- rapid_attempts error doesn't prevent score_spike (called sequentially) ---
+
+    def test_rapid_attempts_failure_does_not_block_score_spike(self):
+        """
+        In ent_attempts.py both detectors run back-to-back. Verify that if
+        rapid_attempts raises internally, score_spike still executes.
+        (Each detector wraps its own logic in try/except at the Redis access point.)
+        """
+        redis = _make_redis(incr_return=10, exists_return=False)
+        app_settings = MagicMock()
+        app_settings.get_int.return_value = 10_000
+        svc = _make_ent_service_with_redis(redis, app_settings)
+        _mock_session_count(svc._uow.session, 20_000)
+
+        # Make rapid_attempts' log_event raise to simulate internal error
+        call_count = 0
+        original_log_event = svc._uow.fraud_events.log_event
+
+        def patched_log(*, event_type, **kw):
+            nonlocal call_count
+            call_count += 1
+            if event_type == "rapid_attempts":
+                raise RuntimeError("DB flake")
+            return original_log_event(event_type=event_type, **kw)
+
+        svc._uow.fraud_events.log_event = MagicMock(side_effect=patched_log)
+
+        # rapid_attempts does NOT swallow log_event errors (it's outside try/except)
+        # so it propagates; score_spike must be called independently by the caller
+        # (ent_attempts.py calls both detectors in sequence, each catches at redis level)
+        # We test each detector independently here — they are separate try blocks.
+        try:
+            svc._detect_rapid_attempts(uuid4())
+        except RuntimeError:
+            pass  # expected
+
+        svc._uow.fraud_events.log_event.reset_mock()
+        svc._detect_score_spike(uuid4(), points_just_awarded=100)
+        svc._uow.fraud_events.log_event.assert_called_once()
+        assert svc._uow.fraud_events.log_event.call_args[1]["event_type"] == "score_spike"
+
+    # --- referral_farm dedup key contains device_id ---
+
+    def test_referral_farm_dedup_key_contains_device_id(self):
+        redis = _make_redis(exists_return=False)
+        logger = _make_login_logger(redis)
+        session = MagicMock()
+        _mock_session_count(session, 4)  # above threshold
+        logger._database.session = session
+        device_id = "unique-device-xyz-99"
+        with patch("security.login_event_logger.FraudEventRepository"):
+            logger.log_referral_redeem(
+                invitee_id=uuid4(), inviter_id=uuid4(), device_id=device_id
+            )
+        redis.setex.assert_called_once()
+        key = redis.setex.call_args[0][0]
+        assert device_id in key
+
+    # --- promo_bypass FraudRepo error doesn't prevent 400 response ---
+
+    @pytest.mark.asyncio
+    async def test_promo_bypass_fraud_log_error_does_not_block_400(self):
+        """The try/except around fraud logging must not suppress the 400 HTTPException."""
+        from fastapi import HTTPException
+        from promocodes.models import Promocode, PromocodeUsage
+        from promocodes.service import PromocodeService
+
+        db = MagicMock()
+        svc = PromocodeService(db_session=db, subscription_service=MagicMock())
+
+        exec_result = MagicMock()
+        exec_result.rowcount = 1
+        db.execute.return_value = exec_result
+
+        promo = MagicMock(spec=Promocode)
+        promo.id = 7
+        promo.code = "CODE"
+        promo.is_reusable = False
+        promo.duration_days = 30
+        promo.plan_type = "PRO"
+        promo.is_trial = False
+        promo.expires_at = None
+
+        existing = MagicMock(spec=PromocodeUsage)
+        existing.created_at = None
+
+        q = MagicMock()
+        db.query.return_value = q
+        q.filter.return_value = q
+        q.first.side_effect = [promo, existing]
+
+        user = MagicMock()
+        user.id = uuid4()
+
+        # Make FraudEventRepository.log_event raise
+        with patch("security.repository.FraudEventRepository") as MockFraud:
+            MockFraud.return_value.log_event.side_effect = Exception("DB error in fraud log")
+            with pytest.raises(HTTPException) as exc:
+                await svc.activate_promocode(user, "CODE")
+
+        # 400 must still be raised despite fraud log failure
+        assert exc.value.status_code == 400

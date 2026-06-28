@@ -2,6 +2,7 @@ from dependency_injector import containers, providers
 from redis import Redis
 
 from auth.login_alert_service import LoginAlertService
+from security.login_event_logger import LoginEventLogger
 from auth.oauth_helper import OAuthHelper
 from auth.repositories import ConfirmationCodeRepositoryRedis, UserRepositoryKeycloak
 from auth.services import AuthService
@@ -135,6 +136,11 @@ class Container(containers.DeclarativeContainer):
         LoginAlertService,
         database=database,
         firebase_client=firebase_client,
+    )
+
+    login_event_logger = providers.Singleton(
+        LoginEventLogger,
+        database=database,
     )
 
     auth_service = providers.Singleton(

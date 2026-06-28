@@ -27,11 +27,13 @@ logger = logging.getLogger(__name__)
 
 
 class LoginAlertService:
-    # Inline defaults for now; can later move to a DB-editable template like
-    # StreakPushTemplate if the wording needs to change without a deploy.
     _TITLE = "Вход в аккаунт"
-    _BODY = (
+    _BODY_DEFAULT = (
         "Выполнен вход в ваш аккаунт на другом устройстве. "
+        "Если это были не вы — срочно смените пароль."
+    )
+    _BODY_WITH_CITY = (
+        "Выполнен вход с {city}. "
         "Если это были не вы — срочно смените пароль."
     )
 
@@ -47,7 +49,12 @@ class LoginAlertService:
     def enabled(self) -> bool:
         return self._firebase_client.enabled
 
-    def notify_new_login(self, user_id: UUID) -> None:
+    def notify_new_login(
+        self,
+        user_id: UUID,
+        city: str | None = None,
+        ip: str | None = None,
+    ) -> None:
         """Best-effort: must NEVER raise into the login flow."""
         if not self.enabled:
             return
@@ -63,15 +70,21 @@ class LoginAlertService:
                     user_id,
                 )
                 return
+            body = (
+                self._BODY_WITH_CITY.format(city=city)
+                if city
+                else self._BODY_DEFAULT
+            )
             result = self._firebase_client.send_multicast(
                 tokens,
                 title=self._TITLE,
-                body=self._BODY,
-                data={"type": "new_login"},
+                body=body,
+                data={"type": "new_login", "ip": ip or "", "city": city or ""},
             )
             logger.info(
-                "auth.login.alert user=%s requested=%s delivered=%s",
+                "auth.login.alert user=%s city=%s requested=%s delivered=%s",
                 user_id,
+                city or "unknown",
                 result.requested,
                 result.success,
             )

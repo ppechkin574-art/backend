@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     File,
     Form,
@@ -25,11 +26,13 @@ from api.dependencies import (
     get_auth_service,
     get_db_session,
     get_file_service,
+    get_login_event_logger,
     get_notification_client_email,
     get_redis,
     get_subscription_service,
     get_user,
 )
+from security.geo_service import get_client_ip
 from auth.deletion_models import DELETION_GRACE_DAYS, AccountDeletionRequest
 from payments.models import Payment
 from subscription.service import SubscriptionService
@@ -674,11 +677,16 @@ def refresh_token(
 def login(
     request: Request,
     login_params: LoginParamsDTO,
+    background_tasks: BackgroundTasks,
     service: AuthServiceInterface = Depends(get_auth_service),
     subscription_service: SubscriptionService = Depends(get_subscription_service),
     app_settings: AppSettingsService = Depends(get_app_settings_service),
+    event_logger=Depends(get_login_event_logger),
 ):
     """Authenticate user with credentials"""
+    client_ip = get_client_ip(dict(request.headers), request.client.host if request.client else None)
+    user_agent = request.headers.get("user-agent")
+
     log_info(
         "Login request",
         user_id=login_params.login,
@@ -693,6 +701,14 @@ def login(
         trial_days = app_settings.get_int("trial_duration_days", 1)
         logged_in_user = service.get_user_from_token(tokens.access_token)
         subscription_service.reconcile_login_trial(logged_in_user, trial_days)
+        # Log security event in background — never blocks the response
+        background_tasks.add_task(
+            event_logger.log_login,
+            user_id=logged_in_user.id,
+            ip=client_ip,
+            user_agent=user_agent,
+            success=True,
+        )
     except Exception:
         logger.exception("Login trial reconcile failed (non-fatal)")
     return tokens

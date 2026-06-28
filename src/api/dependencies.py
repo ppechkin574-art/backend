@@ -948,6 +948,13 @@ def get_leaderboard_hidden_service(
     return LeaderboardHiddenService(LeaderboardHiddenRepository(db))
 
 
+@inject
+def get_login_event_logger(
+    logger: "LoginEventLogger" = Depends(Provide[Container.login_event_logger]),
+) -> "LoginEventLogger":
+    return logger
+
+
 def require_not_restricted(
     user: UserDTO = Depends(get_user),
     session: Session = Depends(get_db_session),

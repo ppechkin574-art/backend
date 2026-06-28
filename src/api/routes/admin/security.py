@@ -7,7 +7,8 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from api.dependencies import allow_only_admins, get_db_session
+from api.dependencies import allow_only_admins, get_db_session, get_identity_provider_client_keycloak
+from clients.identity_provider.client import IdentityProviderClientKeycloak
 from security.service import SecurityService
 
 router = APIRouter(
@@ -170,8 +171,9 @@ def block_user(
     user_id: UUID,
     body: BlockUserRequest,
     session: Session = Depends(get_db_session),
+    identity_provider: IdentityProviderClientKeycloak = Depends(get_identity_provider_client_keycloak),
 ):
-    SecurityService(session=session).block_user(
+    SecurityService(session=session, identity_provider=identity_provider).block_user(
         user_id=user_id,
         reason=body.reason,
     )
@@ -182,6 +184,7 @@ def block_user(
 def unrestrict_user(
     user_id: UUID,
     session: Session = Depends(get_db_session),
+    identity_provider: IdentityProviderClientKeycloak = Depends(get_identity_provider_client_keycloak),
 ):
-    SecurityService(session=session).unrestrict_user(user_id=user_id)
+    SecurityService(session=session, identity_provider=identity_provider).unrestrict_user(user_id=user_id)
     return {"ok": True}

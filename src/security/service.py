@@ -1,4 +1,8 @@
+from __future__ import annotations
+
+import logging
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import Text, cast, func
@@ -6,10 +10,20 @@ from sqlalchemy.orm import Session
 
 from security.models import FraudEvent, PointsAuditLog, UserRiskProfile
 
+if TYPE_CHECKING:
+    from clients.identity_provider.client import IdentityProviderClientKeycloak
+
+logger = logging.getLogger(__name__)
+
 
 class SecurityService:
-    def __init__(self, session: Session) -> None:
+    def __init__(
+        self,
+        session: Session,
+        identity_provider: IdentityProviderClientKeycloak | None = None,
+    ) -> None:
         self.session = session
+        self._identity_provider = identity_provider
 
     # ------------------------------------------------------------------
     # Overview / dashboard
@@ -247,14 +261,25 @@ class SecurityService:
         profile.restriction_reason = reason
         profile.updated_at = datetime.now(tz=UTC)
         self.session.commit()
+        if self._identity_provider is not None:
+            try:
+                self._identity_provider.set_active(user_id, False)
+            except Exception:
+                logger.exception("Failed to disable Keycloak account for user %s", user_id)
 
     def unrestrict_user(self, user_id: UUID) -> None:
         profile = self._get_or_create_profile(user_id)
+        was_blocked = profile.status == "blocked"
         profile.status = "normal"
         profile.restricted_until = None
         profile.restriction_reason = None
         profile.updated_at = datetime.now(tz=UTC)
         self.session.commit()
+        if was_blocked and self._identity_provider is not None:
+            try:
+                self._identity_provider.set_active(user_id, True)
+            except Exception:
+                logger.exception("Failed to re-enable Keycloak account for user %s", user_id)
 
     # ------------------------------------------------------------------
     # Private helpers

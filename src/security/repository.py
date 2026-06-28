@@ -39,11 +39,15 @@ class FraudEventRepository:
         self._session.flush()
 
         if user_id is not None:
-            self._bump_risk_profile(user_id, risk_score)
+            # Prevent recursive alert: critical_risk_alert must not trigger itself
+            skip_alert = event_type == "critical_risk_alert"
+            self._bump_risk_profile(user_id, risk_score, skip_alert=skip_alert)
 
         return event
 
-    def _bump_risk_profile(self, user_id: UUID, risk_score: int) -> None:
+    def _bump_risk_profile(
+        self, user_id: UUID, risk_score: int, skip_alert: bool = False
+    ) -> None:
         profile = (
             self._session.query(UserRiskProfile)
             .filter(UserRiskProfile.user_id == user_id)
@@ -55,11 +59,30 @@ class FraudEventRepository:
             self._session.flush()
 
         now = datetime.now(tz=UTC)
+        old_score = profile.current_risk_score or 0
+        # Each event contributes risk_score // 10 points (min 1), capped at 100
+        new_score = min(100, old_score + max(1, risk_score // 10))
+
         profile.total_suspicious_events = (profile.total_suspicious_events or 0) + 1
         profile.last_suspicious_activity_at = now
-        # Each event contributes risk_score // 10 points (min 1), capped at 100
-        profile.current_risk_score = min(
-            100,
-            (profile.current_risk_score or 0) + max(1, risk_score // 10),
-        )
+        profile.current_risk_score = new_score
         profile.updated_at = now
+
+        # Auto-watchlist: when risk crosses critical threshold for the first time
+        if new_score >= 80 and not profile.is_watchlisted:
+            profile.is_watchlisted = True
+
+            if not skip_alert:
+                # Create an in-app critical alert visible in Уведомления tab
+                alert = FraudEvent(
+                    user_id=user_id,
+                    event_type="critical_risk_alert",
+                    risk_score=100,
+                    reason=(
+                        f"Risk score reached critical level: {new_score}/100 — "
+                        "requires admin review"
+                    ),
+                    status="open",
+                    event_metadata={"auto_watchlisted": True, "threshold": 80},
+                )
+                self._session.add(alert)

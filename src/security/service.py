@@ -309,6 +309,7 @@ class SecurityService:
         profile = self._get_or_create_profile(user_id)
         profile.current_risk_score = 0
         profile.total_suspicious_events = 0
+        profile.is_watchlisted = False  # auto-watchlist cleared on manual risk reset
         profile.updated_at = datetime.now(tz=UTC)
         self._log_admin_action(user_id, "reset_risk_score", admin_username)
         self.session.commit()

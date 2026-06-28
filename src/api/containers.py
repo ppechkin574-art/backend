@@ -141,6 +141,7 @@ class Container(containers.DeclarativeContainer):
     login_event_logger = providers.Singleton(
         LoginEventLogger,
         database=database,
+        redis=redis,
     )
 
     auth_service = providers.Singleton(

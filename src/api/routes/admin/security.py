@@ -188,3 +188,17 @@ def unrestrict_user(
 ):
     SecurityService(session=session, identity_provider=identity_provider).unrestrict_user(user_id=user_id)
     return {"ok": True}
+
+
+@router.get("/users/{user_id}/brute-force", summary="Статус Keycloak brute-force для пользователя")
+def get_brute_force_status(
+    user_id: UUID,
+    identity_provider: IdentityProviderClientKeycloak = Depends(get_identity_provider_client_keycloak),
+):
+    """Возвращает статус brute-force блокировки из Keycloak.
+
+    Поля: numFailures, disabled, lastIPFailure, lastFailure.
+    Пустой объект {} — brute-force protection выключен или попыток не было.
+    """
+    status = identity_provider.get_brute_force_status(user_id)
+    return {"user_id": str(user_id), "keycloak_brute_force": status}

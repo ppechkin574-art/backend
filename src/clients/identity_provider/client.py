@@ -1458,6 +1458,19 @@ class IdentityProviderClientKeycloak:
 
     #     return None
 
+    def get_brute_force_status(self, user_id: UUID) -> dict:
+        """Return Keycloak brute-force detection status for this user.
+
+        Returns a dict with keys: numFailures, disabled, lastIPFailure,
+        lastFailure. Returns {} if brute-force detection is not enabled
+        on the realm or the user has no recorded failures.
+        """
+        try:
+            return self._keycloak_admin.get_bruteforce_detection_status(str(user_id)) or {}
+        except Exception as exc:
+            logger.warning("get_brute_force_status failed for %s: %s", user_id, exc)
+            return {}
+
     def add_realm_role(self, user_id: UUID, role_name: str) -> None:
         """Добавить роль пользователю."""
         try:

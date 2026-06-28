@@ -7,6 +7,7 @@ from api.dependencies import (
     get_trainer_attempt_service,
     get_user,
     require_active_subscription,
+    require_not_restricted,
 )
 from api.middlewares.locale import get_locale
 from api.exceptions.documentation import get_common_responses, get_error_responses
@@ -181,6 +182,7 @@ async def create_trainer_attempt(
     service: TrainerAttemptServiceInterface = Depends(get_trainer_attempt_service),
     locale: str = Depends(get_locale),
     _=Depends(require_active_subscription()),
+    __=Depends(require_not_restricted),
 ):
     log_info(
         "Trainer attempt creation request",

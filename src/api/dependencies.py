@@ -948,6 +948,33 @@ def get_leaderboard_hidden_service(
     return LeaderboardHiddenService(LeaderboardHiddenRepository(db))
 
 
+def require_not_restricted(
+    user: UserDTO = Depends(get_user),
+    session: Session = Depends(get_db_session),
+) -> None:
+    """Raises 403 if the user has a restricted or blocked risk profile.
+
+    Attach as `_=Depends(require_not_restricted)` on any route that should be
+    unavailable to restricted users (starting new attempts, submitting answers).
+    Blocked users are already rejected at the Keycloak level (set_active=False),
+    but we keep the DB check as a belt-and-suspenders fallback.
+    """
+    from security.models import UserRiskProfile
+
+    profile = (
+        session.query(UserRiskProfile)
+        .filter(UserRiskProfile.user_id == user.id)
+        .first()
+    )
+    if profile is None:
+        return
+    if profile.status in ("restricted", "blocked"):
+        raise HTTPException(
+            status_code=HTTP_403_FORBIDDEN,
+            detail="Your account is restricted. Contact support.",
+        )
+
+
 def get_referral_service(
     db: Session = Depends(get_db_session),
     app_settings=Depends(get_app_settings_service),

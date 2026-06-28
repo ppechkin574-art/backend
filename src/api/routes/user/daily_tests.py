@@ -6,6 +6,7 @@ from api.dependencies import (
     get_student,
     get_user,
     require_active_subscription,
+    require_not_restricted,
 )
 from api.middlewares.locale import get_locale
 from api.exceptions.documentation import get_common_responses, get_daily_test_responses
@@ -213,6 +214,7 @@ async def submit_daily_test_answers(
     student: StudentDTO = Depends(get_student),
     service: DailyTestService = Depends(get_daily_test_service),
     _=Depends(require_active_subscription()),
+    __=Depends(require_not_restricted),
 ):
     log_info(
         "Submit daily test answers request",

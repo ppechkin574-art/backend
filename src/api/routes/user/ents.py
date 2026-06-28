@@ -10,6 +10,7 @@ from api.dependencies import (
     get_subject_combination_service,
     get_user,
     require_active_subscription,
+    require_not_restricted,
 )
 from api.middlewares.locale import get_locale
 from api.exceptions.documentation import (
@@ -138,6 +139,7 @@ async def create_ent_attempt(
     service: EntAttemptServiceInterface = Depends(get_ent_attempts_service),
     locale: str = Depends(get_locale),
     _=Depends(require_active_subscription()),
+    __=Depends(require_not_restricted),
 ):
     log_info(
         "ENT attempt creation request",
@@ -210,6 +212,7 @@ async def create_full_exam_attempt(
     service: EntAttemptServiceInterface = Depends(get_ent_attempts_service),
     locale: str = Depends(get_locale),
     _=Depends(require_active_subscription()),
+    __=Depends(require_not_restricted),
 ):
     from datetime import datetime
 

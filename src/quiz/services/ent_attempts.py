@@ -531,6 +531,30 @@ class EntAttemptService:
                         source_type="ent_attempt",
                         source_id=str(ent_attempt.id),
                     )
+                    # Detect suspiciously fast completion: < 5 sec/question
+                    total_q = attempt_stat.total_questions or 1
+                    min_reasonable_seconds = 5 * total_q
+                    if attempt_stat.spend_time < min_reasonable_seconds:
+                        self._uow.fraud_events.log_event(
+                            event_type="rapid_points_farm",
+                            risk_score=85,
+                            user_id=student_guid,
+                            reason=(
+                                f"Attempt {ent_attempt.id}: completed {total_q} questions "
+                                f"in {attempt_stat.spend_time}s "
+                                f"({attempt_stat.spend_time / total_q:.1f}s/q < 5s/q threshold), "
+                                f"score={attempt_stat.score}"
+                            ),
+                            endpoint="/user/ents/attempts/answer",
+                            method="POST",
+                            metadata={
+                                "attempt_id": ent_attempt.id,
+                                "score": attempt_stat.score,
+                                "spend_time": attempt_stat.spend_time,
+                                "total_questions": total_q,
+                                "seconds_per_question": round(attempt_stat.spend_time / total_q, 1),
+                            },
+                        )
                 else:
                     self._uow.fraud_events.log_event(
                         event_type="repeated_attempt",

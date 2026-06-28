@@ -41,19 +41,9 @@
 - **Решение:** Добавить `X-Device-ID` header в Flutter Dio interceptor → принимать в backend middleware и прокидывать в fraud events.
 - **Статус:** В работе
 
-#### TD-002 — Keycloak Brute Force Protection не верифицирован
-- **Проблема:** Неизвестно, включена ли встроенная защита от перебора паролей в Keycloak realm `lumi`.
-- **Решение:** Проверить вручную в Keycloak Admin Console → Realm Settings → Security Defenses → Brute Force Detection. Включить если выключено.
-- **Инструкция:**
-  1. Открыть `https://<keycloak-host>/auth/admin/` → realm `lumi`
-  2. Realm Settings → вкладка **Security Defenses**
-  3. **Brute Force Detection** → включить:
-     - Max Login Failures: `5`
-     - Wait Increment: `30` сек
-     - Max Wait: `900` сек (15 мин)
-     - Failure Reset Time: `3600` сек (1 час)
-  4. Save
-- **Статус:** ⏳ Ожидает ручной проверки
+#### TD-002 — Keycloak Brute Force Protection ✅ ЗАКРЫТ
+- **Статус:** Включён. Настройки: Mode=Lockout temporarily, Max failures=5, Wait increment=30s, Max wait=15min, Failure reset=12h.
+- Данные о блокировках отображаются в admin → Security → User Detail → карточка «Keycloak — Brute Force Detection».
 
 #### TD-003 — Login security events не логируются
 - **Проблема:** При входе пользователя не создаётся запись в `fraud_events`. IP, user-agent и device не сохраняются в БД.

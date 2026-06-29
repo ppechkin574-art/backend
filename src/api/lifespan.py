@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 
 from fastapi import FastAPI
@@ -194,7 +193,6 @@ async def _suspicious_subscription_checker(db_settings: DatabaseSettings) -> Non
             logger.exception("[suspicious-sub-check] cycle error")
 
 
-@asynccontextmanager
 async def _cleanup_old_activity_events(db_settings: DatabaseSettings) -> None:
     """Daily: delete user_activity_events older than 90 days to keep the table small."""
     from sqlalchemy import text as _text

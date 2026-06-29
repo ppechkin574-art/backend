@@ -67,7 +67,7 @@ class AdminUserService:
             streak_map = {str(r[0]): (r[1], r[2]) for r in streak_rows}
 
             points_rows = self._session.execute(
-                text(f"SELECT id, rating FROM students WHERE id IN ({id_list})")
+                text(f"SELECT user_id, total_points FROM user_points WHERE user_id IN ({id_list})")
             ).fetchall()
             points_map = {str(r[0]): r[1] for r in points_rows}
         except Exception:

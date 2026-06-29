@@ -663,7 +663,17 @@ class AuthService:
         # Bypass contacts skip the block entirely (the gate above already
         # short-circuits to ttl=0; this keeps the Redis state clean too).
         if sent_ok and not is_rate_limit_bypass:
-            self._confirmation_codes._redis.setex(block_key, 60, "1")
+            # Exponential backoff per contact: track how many SMS have been
+            # sent to this number. First request = no wait; subsequent
+            # requests are gated by increasing delays so a single number
+            # can't be flooded even when the attacker rotates IPs.
+            # Schedule (seconds): attempt 1→60s, 2→600s, 3→3600s, 4+→86400s
+            _BACKOFF = {1: 60, 2: 600, 3: 3_600, 4: 86_400}
+            count_key = f"block:contact:attempts:{contact}"
+            attempts = self._confirmation_codes._redis.incr(count_key)
+            self._confirmation_codes._redis.expire(count_key, 86_400)
+            backoff = _BACKOFF.get(int(attempts), 86_400)
+            self._confirmation_codes._redis.setex(block_key, backoff, "1")
 
         logger.info(
             "Code %s requested for contact: %s, verification_id: %s, sent_ok: %s, channel: %s",

@@ -66,6 +66,10 @@ def _is_reviewer_test_contact(contact: str) -> bool:
     return any(entry.strip() == contact for entry in raw.split(","))
 
 
+def _phone_counter_key(phone: str, day: str) -> str:
+    return f"sms:phone:daily:{phone}:{day}"
+
+
 def _global_counter_key(day: str) -> str:
     return f"sms:daily:total:{day}"
 
@@ -106,6 +110,28 @@ def check_sms_quota(
 
     day = _today_utc()
     ip = _real_client_ip(request)
+
+    # ─── per-phone daily block (5 SMS / 24h per phone number) ───
+    phone_daily_limit = app_settings.get_int("sms_phone_daily_limit", 5)
+    try:
+        phone_count_raw = redis.get(_phone_counter_key(contact, day))
+        phone_count = int(phone_count_raw) if phone_count_raw else 0
+    except Exception as e:
+        logger.warning("[sms_quota] redis get phone counter failed: %s — fail-open", e)
+        phone_count = 0
+
+    if phone_count >= phone_daily_limit:
+        logger.warning(
+            "[sms_quota] phone %s blocked (count=%d threshold=%d)",
+            contact,
+            phone_count,
+            phone_daily_limit,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Превышен лимит SMS на этот номер. Попробуйте завтра.",
+            headers={"Retry-After": "86400"},
+        )
 
     # ─── per-IP daily block ───
     ip_block_threshold = app_settings.get_int("sms_ip_daily_block", 20)
@@ -183,6 +209,9 @@ def record_sms_request(
         # on first hit, no separate check needed.
         new_ip_count = redis.zincrby(_ip_zset_key(day), 1, ip)
         redis.expire(_ip_zset_key(day), _COUNTER_TTL_SECONDS)
+
+        redis.incr(_phone_counter_key(contact, day))
+        redis.expire(_phone_counter_key(contact, day), _COUNTER_TTL_SECONDS)
 
         new_total = redis.incr(_global_counter_key(day))
         redis.expire(_global_counter_key(day), _COUNTER_TTL_SECONDS)

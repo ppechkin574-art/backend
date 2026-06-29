@@ -162,6 +162,7 @@ def swagger_login(
 #     to ~10 SMS per hour per IP regardless of phone-number rotation.
 @public_router.post("/code/request", response_model=CodeRequestResponse)
 @limiter.limit("10/hour")
+@limiter.limit("3 per 10 minutes")
 @limiter.limit("1/minute")
 async def request_code(
     request: Request,
@@ -252,7 +253,7 @@ async def request_code(
             error_type="AuthUserExistsError",
             error_message=str(e),
         )
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except Exception as e:
         log_error(
             "Code request failed",

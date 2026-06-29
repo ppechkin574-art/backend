@@ -1,8 +1,8 @@
-"""add user_activity_events table
+"""merge multiple heads and add user_activity_events table
 
-Revision ID: a1b2c3d4e5f6
-Revises: fc858cd71edc
-Create Date: 2026-06-29 00:00:00.000000
+Revision ID: b9c8d7e6f5a4
+Revises: 2a5acb79a88d, a1f0e7e3b4c2, d3e4f5a6b7c8
+Create Date: 2026-06-29 01:00:00.000000
 
 """
 
@@ -12,8 +12,12 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "a1b2c3d4e5f6"
-down_revision: Union[str, None] = "fc858cd71edc"
+revision: str = "b9c8d7e6f5a4"
+down_revision: Union[str, Sequence[str], None] = (
+    "2a5acb79a88d",
+    "a1f0e7e3b4c2",
+    "d3e4f5a6b7c8",
+)
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

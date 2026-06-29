@@ -1,14 +1,18 @@
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 
 from api.dependencies import (
     allow_only_admins,
     get_admin_user_service,
     get_cache_service,
+    get_database,
     get_unit_of_work_tests,
 )
+from database import Database
 from auth.admin_service import AdminUserService
 from auth.dtos.admin import (
     AdminUserCreateDTO,
@@ -205,4 +209,92 @@ async def seed_streak(
         user_id=user_id,
         days_added=len(seeded_dates),
         seeded_dates_kz=seeded_dates,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Activity stats: active hours + avg session length per user
+# ---------------------------------------------------------------------------
+
+class ActivityHourSlot(BaseModel):
+    hour: int      # 0-23 (Almaty time)
+    count: int     # number of app-opens in this hour
+
+
+class UserActivityStatsDTO(BaseModel):
+    active_hours: list[ActivityHourSlot]   # 24 slots, some may be 0
+    avg_session_minutes: float | None      # None if < 2 opens total
+    total_opens_30d: int
+    last_platform: str | None             # most recent recorded platform
+
+
+@router.get("/{user_id}/activity", response_model=UserActivityStatsDTO)
+async def get_user_activity(
+    user_id: UUID,
+    database: Database = Depends(get_database),
+):
+    """Return per-user activity statistics derived from app-open events.
+
+    active_hours — count of app-opens per hour of day (Almaty TZ) over last 30 days.
+    avg_session_minutes — Approach B: consecutive events within 30 min = one session.
+    """
+    since = datetime.now(UTC) - timedelta(days=30)
+
+    session = database.session
+    try:
+        rows = session.execute(
+            text(
+                "SELECT occurred_at, platform FROM user_activity_events "
+                "WHERE user_id = :uid AND occurred_at >= :since "
+                "ORDER BY occurred_at ASC"
+            ),
+            {"uid": str(user_id), "since": since},
+        ).fetchall()
+    finally:
+        session.close()
+
+    if not rows:
+        return UserActivityStatsDTO(
+            active_hours=[ActivityHourSlot(hour=h, count=0) for h in range(24)],
+            avg_session_minutes=None,
+            total_opens_30d=0,
+            last_platform=None,
+        )
+
+    from zoneinfo import ZoneInfo
+    almaty = ZoneInfo("Asia/Almaty")
+
+    # Active hours histogram
+    hour_counts: dict[int, int] = {h: 0 for h in range(24)}
+    for row in rows:
+        local_hour = row[0].astimezone(almaty).hour
+        hour_counts[local_hour] += 1
+
+    # Average session length — approach B: gap < 30 min → same session
+    SESSION_GAP = timedelta(minutes=30)
+    timestamps = [r[0] for r in rows]
+    sessions: list[timedelta] = []
+    sess_start = timestamps[0]
+    sess_last = timestamps[0]
+    for ts in timestamps[1:]:
+        if ts - sess_last < SESSION_GAP:
+            sess_last = ts
+        else:
+            sessions.append(sess_last - sess_start)
+            sess_start = ts
+            sess_last = ts
+    sessions.append(sess_last - sess_start)
+
+    avg_minutes: float | None = None
+    if sessions:
+        total_secs = sum(s.total_seconds() for s in sessions)
+        avg_minutes = round(total_secs / len(sessions) / 60, 1)
+
+    last_platform = rows[-1][1] if rows else None
+
+    return UserActivityStatsDTO(
+        active_hours=[ActivityHourSlot(hour=h, count=hour_counts[h]) for h in range(24)],
+        avg_session_minutes=avg_minutes,
+        total_opens_30d=len(rows),
+        last_platform=last_platform,
     )

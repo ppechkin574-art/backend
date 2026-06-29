@@ -1,13 +1,19 @@
+import logging
+
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from starlette import status
 
 from api.dependencies import (
     get_daily_test_service,
+    get_database,
     get_student,
     get_user,
     require_active_subscription,
     require_not_restricted,
 )
+from database import Database
+
+_activity_logger = logging.getLogger(__name__)
 from api.middlewares.locale import get_locale
 from api.exceptions.documentation import get_common_responses, get_daily_test_responses
 from quiz.dtos.daily_tests import (
@@ -117,6 +123,7 @@ async def register_device_token(
     data: RegisterDailyTestDeviceTokenDTO,
     student: StudentDTO = Depends(get_student),
     service: DailyTestService = Depends(get_daily_test_service),
+    database: Database = Depends(get_database),
 ):
     log_info(
         "Register daily test device token request",
@@ -145,6 +152,16 @@ async def register_device_token(
         resource="daily_test_device_tokens",
         token_suffix=result.token[-6:] if len(result.token) > 6 else result.token,
     )
+
+    # Record app-open event for activity statistics (best-effort, non-fatal).
+    try:
+        from quiz.models.daily_tests import UserActivityEvent
+        session = database.session
+        session.add(UserActivityEvent(user_id=student.id, platform=data.platform))
+        session.commit()
+    except Exception:
+        _activity_logger.debug("Activity event recording failed (non-fatal)", exc_info=True)
+
     return result
 
 

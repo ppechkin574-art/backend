@@ -45,6 +45,7 @@ class AdminUserService:
             ]
         if self._session and users:
             self._enrich_with_pg_stats(users)
+            self._enrich_with_device_info(users)
         return users
 
     def _enrich_with_pg_stats(self, users: list[UserDTO]) -> None:
@@ -80,6 +81,36 @@ class AdminUserService:
                 u.attendance_total_points = streak_map[uid][1] or 0
             if uid in points_map:
                 u.points = points_map[uid] or 0
+
+    def _enrich_with_device_info(self, users: list[UserDTO]) -> None:
+        """Fetch platform list and last_seen from daily_test_device_tokens.
+
+        One query for all users — no N+1. Users without any registered device
+        keep their default empty platforms list and None last_seen.
+        """
+        ids = [str(u.id) for u in users]
+        id_list = ", ".join(f"'{uid}'" for uid in ids)
+        try:
+            rows = self._session.execute(
+                text(
+                    f"SELECT student_guid, "
+                    f"ARRAY_AGG(DISTINCT platform) FILTER (WHERE platform IS NOT NULL) AS platforms, "
+                    f"MAX(updated_at) AS last_seen "
+                    f"FROM daily_test_device_tokens "
+                    f"WHERE student_guid IN ({id_list}) "
+                    f"GROUP BY student_guid"
+                )
+            ).fetchall()
+            device_map = {str(r[0]): {"platforms": r[1] or [], "last_seen": r[2]} for r in rows}
+        except Exception:
+            logger.exception("Failed to enrich user list with device info — returning defaults")
+            return
+
+        for u in users:
+            uid = str(u.id)
+            if uid in device_map:
+                u.platforms = device_map[uid]["platforms"]
+                u.last_seen = device_map[uid]["last_seen"]
 
     def create_user(self, data: AdminUserCreateDTO) -> AdminUserCreateResponseDTO:
         password = data.password

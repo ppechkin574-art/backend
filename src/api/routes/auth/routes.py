@@ -348,6 +348,19 @@ async def registration_complete(
                 "Trial reconcile failed (non-fatal) after registration"
             )
 
+        # Telegram admin-channel notification — best-effort, never breaks registration.
+        try:
+            from clients.telegram_registration import TelegramRegistrationNotifier
+            _tg = TelegramRegistrationNotifier()
+            if _tg.enabled:
+                _reg_user = service.get_user_from_token(tokens.access_token)
+                _tg.notify_new_user(
+                    name=_reg_user.name or request_data.name,
+                    phone=str(_reg_user.phone) if _reg_user.phone else None,
+                )
+        except Exception:
+            logger.debug("Telegram registration notify failed (non-fatal)", exc_info=True)
+
         log_info(
             "Registration completed successfully",
             user_id=tokens.user_id if hasattr(tokens, "user_id") else "unknown",

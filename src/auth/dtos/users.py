@@ -63,6 +63,11 @@ class UserDTO(BaseModel):
     points: int = 0
     rank: int | None = None
 
+    # Device / activity fields — populated only by admin endpoints via DB join.
+    # Empty / None for all other callers (e.g. /me, student endpoints).
+    platforms: list[str] = Field(default_factory=list)  # e.g. ["ios", "android"]
+    last_seen: datetime | None = None  # max FCM-token updated_at across all user devices
+
     @computed_field
     @property
     def role(self) -> str:

@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 _DELETION_EXECUTOR_INTERVAL_SECONDS = 3600   # run every hour
 _PAYMENT_WATCHDOG_INTERVAL_SECONDS  = 86400  # daily
 _SUSPICIOUS_SUB_INTERVAL_SECONDS    = 3600   # every hour
+_ACTIVITY_CLEANUP_INTERVAL_SECONDS  = 86400  # daily
 
 
 async def _execute_scheduled_deletions(db_settings: DatabaseSettings, app: FastAPI) -> None:
@@ -194,6 +195,28 @@ async def _suspicious_subscription_checker(db_settings: DatabaseSettings) -> Non
 
 
 @asynccontextmanager
+async def _cleanup_old_activity_events(db_settings: DatabaseSettings) -> None:
+    """Daily: delete user_activity_events older than 90 days to keep the table small."""
+    from sqlalchemy import text as _text
+
+    db = Database(db_settings)
+    while True:
+        await asyncio.sleep(_ACTIVITY_CLEANUP_INTERVAL_SECONDS)
+        try:
+            cutoff = datetime.now(UTC) - timedelta(days=90)
+            with db.session as session:
+                result = session.execute(
+                    _text("DELETE FROM user_activity_events WHERE occurred_at < :cutoff"),
+                    {"cutoff": cutoff},
+                )
+                session.commit()
+                deleted = result.rowcount
+            if deleted:
+                logger.info("Activity cleanup: deleted %d events older than 90 days", deleted)
+        except Exception:
+            logger.exception("Activity cleanup failed (non-fatal)")
+
+
 async def lifespan(app: FastAPI):
     # Startup
     settings = Settings()
@@ -223,12 +246,16 @@ async def lifespan(app: FastAPI):
     suspicious_sub_task = asyncio.create_task(
         _suspicious_subscription_checker(db_settings)
     )
+    activity_cleanup_task = asyncio.create_task(
+        _cleanup_old_activity_events(db_settings)
+    )
 
     yield
 
     deletion_task.cancel()
     payment_watchdog_task.cancel()
     suspicious_sub_task.cancel()
+    activity_cleanup_task.cancel()
     stop_poller_on_app(app)
     await manager.stop_heartbeat()
     await notification_scheduler.stop()

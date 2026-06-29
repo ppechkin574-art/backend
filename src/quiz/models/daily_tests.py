@@ -2,6 +2,7 @@ import uuid
 
 from sqlalchemy import (
     UUID,
+    BigInteger,
     Boolean,
     CheckConstraint,
     Column,
@@ -161,3 +162,22 @@ class DailyNotificationTemplate(Base):
         CheckConstraint("hour BETWEEN 0 AND 23", name="ck_daily_notification_template_hour"),
         CheckConstraint("minute BETWEEN 0 AND 59", name="ck_daily_notification_template_minute"),
     )
+
+
+class UserActivityEvent(Base):
+    """One row per app-open event (FCM token registration/refresh).
+
+    Used to compute per-user activity statistics (active hours of day,
+    average session length). Rows older than 90 days are pruned by the
+    _cleanup_old_activity_events background task so the table stays small.
+    """
+
+    __tablename__ = "user_activity_events"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    # No FK to students — avoids cascade issues; user_id is a Keycloak UUID.
+    user_id = Column(UUID(as_uuid=True), nullable=False)
+    platform = Column(String(50), nullable=True)
+    occurred_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    __table_args__ = (Index("idx_uae_user_time", "user_id", "occurred_at"),)

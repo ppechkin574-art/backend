@@ -13,7 +13,9 @@ subscribers, a new-iOS-build push can hit only iOS devices, etc.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Literal
+from uuid import UUID
 
 from dependency_injector.wiring import Provide, inject
 from fastapi import APIRouter, Depends, HTTPException
@@ -30,7 +32,9 @@ from api.exceptions.documentation import get_common_responses
 from clients.firebase import FirebaseNotificationClient
 from clients.firebase.settings import FirebaseSettings
 from clients.identity_provider.client import IdentityProviderClientKeycloak
+from clients.identity_provider.dtos import KeycloakUserQueryDTO
 from database import Database
+from quiz.models.daily_tests import DailyTestDeviceToken
 from quiz.services.admin_broadcast_notifications import (
     AdminBroadcastNotificationService,
     BroadcastTarget,
@@ -184,4 +188,131 @@ async def send_admin_broadcast(
         delivered=result.delivered,
         failed=result.failed,
         removed_tokens=result.removed_tokens,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Test-send: fire a push to the fixed reviewer/dev phone numbers only.
+# Used to preview how a notification looks before broadcasting to all users.
+# ---------------------------------------------------------------------------
+
+def _get_test_phones() -> list[str]:
+    """Return deduplicated list of phone numbers from REVIEWER_TEST_PHONE
+    and DEV_RATE_LIMIT_BYPASS_PHONES env vars."""
+    phones: list[str] = []
+    for env_name in ("REVIEWER_TEST_PHONE", "DEV_RATE_LIMIT_BYPASS_PHONES"):
+        raw = os.getenv(env_name, "")
+        for p in raw.split(","):
+            p = p.strip()
+            if p and p not in phones:
+                phones.append(p)
+    return phones
+
+
+class TestSendPhoneResult(BaseModel):
+    phone: str
+    user_found: bool
+    tokens_found: int
+    sent: int
+    failed: int
+
+
+class TestSendResponseDTO(BaseModel):
+    phones: list[TestSendPhoneResult]
+    total_sent: int
+    total_failed: int
+
+
+@router.post(
+    "/send-test",
+    response_model=TestSendResponseDTO,
+    summary="Тестовая отправка на номера ревьюеров/девелоперов",
+    description=(
+        "Отправляет пуш только на устройства, привязанные к тестовым номерам "
+        "(REVIEWER_TEST_PHONE + DEV_RATE_LIMIT_BYPASS_PHONES). "
+        "Используйте перед broadcast-рассылкой чтобы проверить как выглядит уведомление."
+    ),
+    responses={**get_common_responses("create")},
+)
+async def send_test_push(
+    request: SendNotificationRequestDTO,
+    database: Database = Depends(get_database),
+    firebase_client: FirebaseNotificationClient = Depends(get_firebase_client),
+    idp: IdentityProviderClientKeycloak = Depends(get_identity_provider_client_keycloak),
+):
+    if not firebase_client.enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="Firebase notifications are disabled. Configure firebase__enabled and credentials.",
+        )
+
+    test_phones = _get_test_phones()
+    if not test_phones:
+        raise HTTPException(
+            status_code=400,
+            detail="No test phones configured. Set REVIEWER_TEST_PHONE or DEV_RATE_LIMIT_BYPASS_PHONES.",
+        )
+
+    phone_results: list[TestSendPhoneResult] = []
+    all_tokens: list[str] = []
+    phone_token_map: dict[str, list[str]] = {}
+
+    session = database.session
+    try:
+        for phone in test_phones:
+            try:
+                user = idp.get(KeycloakUserQueryDTO(phone=phone))
+                user_id: UUID = user.id
+            except Exception:
+                phone_results.append(TestSendPhoneResult(
+                    phone=phone, user_found=False, tokens_found=0, sent=0, failed=0,
+                ))
+                continue
+
+            tokens_rows = (
+                session.query(DailyTestDeviceToken)
+                .filter(DailyTestDeviceToken.student_guid == user_id)
+                .all()
+            )
+            tokens = [row.token for row in tokens_rows if row.token]
+            phone_token_map[phone] = tokens
+            all_tokens.extend(tokens)
+            phone_results.append(TestSendPhoneResult(
+                phone=phone, user_found=True, tokens_found=len(tokens),
+                sent=0, failed=0,
+            ))
+    finally:
+        session.close()
+
+    if not all_tokens:
+        logger.warning("Test push: no FCM tokens found for phones %s", test_phones)
+        return TestSendResponseDTO(phones=phone_results, total_sent=0, total_failed=0)
+
+    send_result = firebase_client.broadcast(
+        all_tokens,
+        title=request.title,
+        body=request.body,
+        data={"type": "admin_test_push"},
+    )
+    logger.info(
+        "Test push sent: phones=%s tokens=%d success=%d failure=%d",
+        test_phones, len(all_tokens), send_result.success, send_result.failure,
+    )
+
+    # Distribute sent/failed counts back to per-phone results
+    tokens_per_phone = {
+        phone: len(toks) for phone, toks in phone_token_map.items()
+    }
+    total_tokens = len(all_tokens)
+    for r in phone_results:
+        if r.tokens_found == 0:
+            continue
+        share = r.tokens_found / total_tokens if total_tokens else 0
+        r.sent = round(send_result.success * share)
+        r.failed = r.tokens_found - r.sent
+
+    return TestSendResponseDTO(
+        phones=phone_results,
+        total_sent=send_result.success,
+        total_failed=send_result.failure,
     )

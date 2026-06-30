@@ -544,6 +544,44 @@ async def allow_only_admins(
                 detail="User roles not loaded",
             )
 
+        if "admin" not in user.roles and "manager" not in user.roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: only allowed for admins or managers",
+            )
+
+        return user
+
+    except AuthAccessInvalidTokenError as e:
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+        ) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Authentication system error in allow_only_admins: %s", e)
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="Authentication error",
+        ) from e
+
+
+async def allow_only_super_admins(
+    access_token: str = Depends(oauth2_scheme),
+    auth_service: AuthServiceInterface = Depends(get_auth_service),
+):
+    """Strict admin-only check. Used for sensitive settings that managers
+    must not access (e.g. /admin/app-settings)."""
+    try:
+        user = auth_service.get_user_from_token(access_token)
+
+        if not user.roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User roles not loaded",
+            )
+
         if "admin" not in user.roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -560,7 +598,7 @@ async def allow_only_admins(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Authentication system error in allow_only_admins: %s", e)
+        logger.exception("Authentication system error in allow_only_super_admins: %s", e)
         raise HTTPException(
             status_code=HTTP_401_UNAUTHORIZED,
             detail="Authentication error",
@@ -588,10 +626,10 @@ async def allow_admin_or_marketing(
                 detail="User roles not loaded",
             )
 
-        if "admin" not in user.roles and "marketing" not in user.roles:
+        if "admin" not in user.roles and "marketing" not in user.roles and "manager" not in user.roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied: only allowed for admins or marketing",
+                detail="Access denied: only allowed for admins, managers or marketing",
             )
 
         return user

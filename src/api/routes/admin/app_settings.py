@@ -15,14 +15,14 @@ replicas see the new value within milliseconds.
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from api.dependencies import allow_only_admins, get_app_settings_service
+from api.dependencies import allow_only_super_admins, get_app_settings_service
 from app_config.dtos import AppSettingDTO, AppSettingUpdateDTO
 from app_config.service import AppSettingsService
 
 router = APIRouter(
     prefix="/admin/app-settings",
     tags=["admin"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_only_super_admins)],
 )
 
 

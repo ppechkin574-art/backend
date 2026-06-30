@@ -316,3 +316,85 @@ async def send_test_push(
         total_sent=send_result.success,
         total_failed=send_result.failure,
     )
+
+
+# ---------------------------------------------------------------------------
+# Personal send: fire a push to a single user by their phone number.
+# ---------------------------------------------------------------------------
+
+class SendToPhoneRequestDTO(BaseModel):
+    phone: str = Field(..., min_length=5, max_length=20)
+    title: str = Field(..., min_length=1, max_length=100)
+    body: str = Field(..., min_length=1, max_length=500)
+
+
+class SendToPhoneResponseDTO(BaseModel):
+    phone: str
+    user_found: bool
+    tokens_found: int
+    sent: int
+    failed: int
+
+
+@router.post(
+    "/send-to-phone",
+    response_model=SendToPhoneResponseDTO,
+    summary="Личная отправка пуша по номеру телефона",
+    description="Отправляет push-уведомление конкретному пользователю по номеру телефона.",
+    responses={**get_common_responses("create")},
+)
+async def send_push_to_phone(
+    request: SendToPhoneRequestDTO,
+    database: Database = Depends(get_database),
+    firebase_client: FirebaseNotificationClient = Depends(get_firebase_client),
+    idp: IdentityProviderClientKeycloak = Depends(get_identity_provider_client_keycloak),
+):
+    if not firebase_client.enabled:
+        raise HTTPException(
+            status_code=503,
+            detail="Firebase notifications are disabled. Configure firebase__enabled and credentials.",
+        )
+
+    session = database.session
+    try:
+        try:
+            user = idp.get(KeycloakUserQueryDTO(phone=request.phone))
+            user_id: UUID = user.id
+        except Exception:
+            return SendToPhoneResponseDTO(
+                phone=request.phone, user_found=False, tokens_found=0, sent=0, failed=0,
+            )
+
+        tokens_rows = (
+            session.query(DailyTestDeviceToken)
+            .filter(DailyTestDeviceToken.student_guid == user_id)
+            .all()
+        )
+        tokens = [row.token for row in tokens_rows if row.token]
+    finally:
+        session.close()
+
+    if not tokens:
+        logger.warning("Personal push: no FCM tokens for phone %s (user %s)", request.phone, user_id)
+        return SendToPhoneResponseDTO(
+            phone=request.phone, user_found=True, tokens_found=0, sent=0, failed=0,
+        )
+
+    send_result = firebase_client.broadcast(
+        tokens,
+        title=request.title,
+        body=request.body,
+        data={"type": "admin_personal_push"},
+    )
+    logger.info(
+        "Personal push sent: phone=%s user=%s tokens=%d success=%d failure=%d",
+        request.phone, user_id, len(tokens), send_result.success, send_result.failure,
+    )
+
+    return SendToPhoneResponseDTO(
+        phone=request.phone,
+        user_found=True,
+        tokens_found=len(tokens),
+        sent=send_result.success,
+        failed=send_result.failure,
+    )

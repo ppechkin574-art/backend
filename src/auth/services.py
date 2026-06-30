@@ -800,6 +800,18 @@ class AuthService:
 
             user_create_dto = to_user_create_dto(register_dto, is_active=True)
 
+            # Auto-grant N days PRO to new registrants if the setting is enabled.
+            try:
+                raw = self._redis.get("app_settings:v1:new_user_pro_days")
+                n_days = int(raw.decode() if isinstance(raw, bytes) else raw) if raw else 0
+                if n_days > 0:
+                    user_create_dto = user_create_dto.model_copy(
+                        update={"subscription_end": datetime.now(UTC) + timedelta(days=n_days)}
+                    )
+                    logger.info("Auto-granting %d PRO days to new user", n_days)
+            except Exception:
+                pass  # fall through to default 1-day trial
+
             try:
                 user = self._users.create(user_create_dto)
                 logger.info("User created: %s", user.id)

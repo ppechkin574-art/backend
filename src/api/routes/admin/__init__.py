@@ -26,6 +26,7 @@ from .trainers import router as trainers_router
 from .users import router as users_router
 from .security import router as security_router
 from .translation import router as admin_translation_router
+from .events import router as events_router
 
 routers = [
     dashboard_router,
@@ -56,4 +57,5 @@ routers = [
     admin_payments_router,
     security_router,
     admin_translation_router,
+    events_router,
 ]

@@ -40,6 +40,8 @@ from content import models  # noqa: F401 — discover SubscriptionBenefit table 
 from app_config import models  # noqa: F401 — discover AppSetting table for autogen
 from security import models  # noqa: F401 — discover FraudEvent, UserRiskProfile, PointsAuditLog
 from security.models import *  # noqa: F401, F403
+from events import models  # noqa: F401 — discover Event table
+from events.models import *  # noqa: F401, F403
 
 target_metadata = Base.metadata
 settings = Settings()  # noqa

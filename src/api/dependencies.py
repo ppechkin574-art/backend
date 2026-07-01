@@ -1041,3 +1041,13 @@ def get_referral_service(
         user_points_repo=UserPointsRepository(db),
         file_service=file_service,
     )
+
+
+def get_event_service(
+    db: Session = Depends(get_db_session),
+):
+    """CRUD + public read для таблицы events (баннеры + карточки на Главная)."""
+    from events.repository import EventRepository
+    from events.service import EventService
+
+    return EventService(EventRepository(db))

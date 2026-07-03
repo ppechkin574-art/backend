@@ -1051,3 +1051,13 @@ def get_event_service(
     from events.service import EventService
 
     return EventService(EventRepository(db))
+
+
+def get_onboarding_service(
+    db: Session = Depends(get_db_session),
+):
+    """CRUD + public read для онбординг-рассказов."""
+    from onboarding.repository import OnboardingRepository
+    from onboarding.service import OnboardingService
+
+    return OnboardingService(OnboardingRepository(db))

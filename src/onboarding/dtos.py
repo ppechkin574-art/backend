@@ -1,0 +1,155 @@
+from datetime import datetime
+from typing import Optional
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+# ─── Step DTOs ───────────────────────────────────────────────────────────────
+
+class OnboardingStepDTO(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    story_id: int
+    step_order: int
+    mascot_image_url: Optional[str] = None
+    title_ru: str
+    title_kk: str
+    body_ru: str
+    body_kk: str
+    mascot_position: str
+    spotlight_element_key: Optional[str] = None
+    action_label_ru: Optional[str] = None
+    action_label_kk: Optional[str] = None
+    action_route: Optional[str] = None
+
+
+class OnboardingStepCreateDTO(BaseModel):
+    step_order: int = Field(ge=1)
+    mascot_image_url: Optional[str] = None
+    title_ru: str = Field(default="", max_length=300)
+    title_kk: str = Field(default="", max_length=300)
+    body_ru: str = Field(default="", max_length=1000)
+    body_kk: str = Field(default="", max_length=1000)
+    mascot_position: str = Field(default="bottom_left")
+    spotlight_element_key: Optional[str] = Field(default=None, max_length=100)
+    action_label_ru: Optional[str] = Field(default=None, max_length=200)
+    action_label_kk: Optional[str] = Field(default=None, max_length=200)
+    action_route: Optional[str] = Field(default=None, max_length=200)
+
+
+class OnboardingStepUpdateDTO(BaseModel):
+    step_order: Optional[int] = Field(default=None, ge=1)
+    mascot_image_url: Optional[str] = None
+    title_ru: Optional[str] = Field(default=None, max_length=300)
+    title_kk: Optional[str] = Field(default=None, max_length=300)
+    body_ru: Optional[str] = Field(default=None, max_length=1000)
+    body_kk: Optional[str] = Field(default=None, max_length=1000)
+    mascot_position: Optional[str] = None
+    spotlight_element_key: Optional[str] = Field(default=None, max_length=100)
+    action_label_ru: Optional[str] = Field(default=None, max_length=200)
+    action_label_kk: Optional[str] = Field(default=None, max_length=200)
+    action_route: Optional[str] = Field(default=None, max_length=200)
+
+
+# ─── Story DTOs ──────────────────────────────────────────────────────────────
+
+class OnboardingStoryDTO(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    priority: int
+    is_active: bool
+    is_mandatory: bool
+    skip_delay_seconds: int
+    target_audience: str
+    new_user_days: int
+    trigger: str
+    immediate_count: int
+    max_shows_per_user: int
+    start_screen: str
+    created_at: datetime
+    updated_at: datetime
+    steps: list[OnboardingStepDTO] = []
+
+
+class OnboardingStoryCreateDTO(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    priority: int = Field(default=0, ge=0)
+    is_active: bool = False
+    is_mandatory: bool = True
+    skip_delay_seconds: int = Field(default=3, ge=0, le=60)
+    target_audience: str = Field(default="ALL")
+    new_user_days: int = Field(default=7, ge=1)
+    trigger: str = Field(default="FIRST_OPEN")
+    immediate_count: int = Field(default=1, ge=1)
+    max_shows_per_user: int = Field(default=1, ge=1)
+    start_screen: str = Field(default="HOME")
+    steps: list[OnboardingStepCreateDTO] = []
+
+
+class OnboardingStoryUpdateDTO(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    priority: Optional[int] = Field(default=None, ge=0)
+    is_active: Optional[bool] = None
+    is_mandatory: Optional[bool] = None
+    skip_delay_seconds: Optional[int] = Field(default=None, ge=0, le=60)
+    target_audience: Optional[str] = None
+    new_user_days: Optional[int] = Field(default=None, ge=1)
+    trigger: Optional[str] = None
+    immediate_count: Optional[int] = Field(default=None, ge=1)
+    max_shows_per_user: Optional[int] = Field(default=None, ge=1)
+    start_screen: Optional[str] = None
+    steps: Optional[list[OnboardingStepCreateDTO]] = None
+
+
+# ─── App-facing DTOs (public) ────────────────────────────────────────────────
+
+class OnboardingStepPublicDTO(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    step_order: int
+    mascot_image_url: Optional[str] = None
+    title_ru: str
+    title_kk: str
+    body_ru: str
+    body_kk: str
+    mascot_position: str
+    spotlight_element_key: Optional[str] = None
+    action_label_ru: Optional[str] = None
+    action_label_kk: Optional[str] = None
+    action_route: Optional[str] = None
+
+
+class OnboardingStoryPublicDTO(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    priority: int
+    is_mandatory: bool
+    skip_delay_seconds: int
+    target_audience: str
+    new_user_days: int
+    trigger: str
+    immediate_count: int
+    max_shows_per_user: int
+    start_screen: str
+    steps: list[OnboardingStepPublicDTO] = []
+
+
+# ─── View tracking ───────────────────────────────────────────────────────────
+
+class OnboardingViewDTO(BaseModel):
+    story_id: int
+    skipped: bool = False
+
+
+class OnboardingViewResponseDTO(BaseModel):
+    story_id: int
+    view_count: int
+    completed_at: Optional[datetime] = None
+    skipped_at: Optional[datetime] = None

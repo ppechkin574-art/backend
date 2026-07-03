@@ -69,6 +69,7 @@ class FileService:
 
     AVATAR_PREFIX = "avatars"
     SUBJECT_PREFIX = "subjects"
+    MASCOT_PREFIX = "mascot"
     MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024
     THUMBNAIL_SIZE = (500, 500)
     JPEG_QUALITY = 85
@@ -123,6 +124,38 @@ class FileService:
     def delete_subject_image(self, filename: str) -> bool:
         """Удаляет картинку предмета по имени файла."""
         return self._delete_object(f"{self.SUBJECT_PREFIX}/{self._extract_filename(filename)}")
+
+    async def save_mascot_image(self, image_file: UploadFile) -> str:
+        """Загружает PNG маскота в S3. Сохраняет прозрачность. Возвращает имя файла."""
+        contents = await self._read_validated_image(image_file)
+        processed, ext = await self._process_image_keep_alpha(contents)
+
+        filename = f"mascot_{uuid.uuid4().hex}.{ext}"
+        object_name = f"{self.MASCOT_PREFIX}/{filename}"
+
+        try:
+            self._storage.save(object_name, io.BytesIO(processed))
+        except MediaStorageError as e:
+            logger.exception("Failed to save mascot image")
+            raise HTTPException(status_code=500, detail="Failed to save image") from e
+
+        logger.info("Mascot image saved: %s", object_name)
+        return filename
+
+    def get_mascot_image_url(self, filename: str) -> str:
+        """Presigned URL для маскота."""
+        if not filename:
+            return ""
+        if filename.startswith(("http://", "https://")):
+            return filename
+        try:
+            return self._storage.link(f"{self.MASCOT_PREFIX}/{self._extract_filename(filename)}")
+        except MediaStorageError as e:
+            logger.warning("Failed to build mascot image URL for %s: %s", filename, e)
+            return ""
+
+    def delete_mascot_image(self, filename: str) -> bool:
+        return self._delete_object(f"{self.MASCOT_PREFIX}/{self._extract_filename(filename)}")
 
     def get_avatar_url(self, filename: str) -> str:
         """Presigned URL для отдачи аватара клиенту.

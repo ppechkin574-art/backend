@@ -2,6 +2,9 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 
+# Phones allowed to see is_test=True stories. Normalise: digits only, no spaces.
+_TEST_PHONES: frozenset[str] = frozenset({"+77787943760"})
+
 from onboarding.dtos import (
     OnboardingStoryCreateDTO, OnboardingStoryUpdateDTO,
     OnboardingViewDTO, OnboardingViewResponseDTO,
@@ -19,8 +22,12 @@ class OnboardingService:
     def list_all(self) -> list[OnboardingStory]:
         return self.repo.list_all()
 
-    def list_active(self) -> list[OnboardingStory]:
-        return self.repo.list_active()
+    def list_active(self, user_phone: str | None = None) -> list[OnboardingStory]:
+        stories = self.repo.list_active()
+        # is_test stories are only visible to phones in ONBOARDING_TEST_PHONES
+        if user_phone not in _TEST_PHONES:
+            stories = [s for s in stories if not s.is_test]
+        return stories
 
     def get_story(self, story_id: int) -> OnboardingStory:
         story = self.repo.get_story(story_id)
@@ -37,6 +44,7 @@ class OnboardingService:
             priority=payload.priority,
             is_active=payload.is_active,
             is_mandatory=payload.is_mandatory,
+            is_test=payload.is_test,
             skip_delay_seconds=payload.skip_delay_seconds,
             target_audience=payload.target_audience,
             new_user_days=payload.new_user_days,

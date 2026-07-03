@@ -63,6 +63,7 @@ class OnboardingStoryDTO(BaseModel):
     priority: int
     is_active: bool
     is_mandatory: bool
+    is_test: bool
     skip_delay_seconds: int
     target_audience: str
     new_user_days: int
@@ -80,6 +81,7 @@ class OnboardingStoryCreateDTO(BaseModel):
     priority: int = Field(default=0, ge=0)
     is_active: bool = False
     is_mandatory: bool = True
+    is_test: bool = False
     skip_delay_seconds: int = Field(default=3, ge=0, le=60)
     target_audience: str = Field(default="ALL")
     new_user_days: int = Field(default=7, ge=1)
@@ -95,6 +97,7 @@ class OnboardingStoryUpdateDTO(BaseModel):
     priority: Optional[int] = Field(default=None, ge=0)
     is_active: Optional[bool] = None
     is_mandatory: Optional[bool] = None
+    is_test: Optional[bool] = None
     skip_delay_seconds: Optional[int] = Field(default=None, ge=0, le=60)
     target_audience: Optional[str] = None
     new_user_days: Optional[int] = Field(default=None, ge=1)

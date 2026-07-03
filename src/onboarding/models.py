@@ -27,6 +27,8 @@ class OnboardingStory(Base):
     max_shows_per_user = Column(Integer, nullable=False, server_default="1")
     # HOME | TRAINER | PROFILE | LEADERBOARD | SUBSCRIPTION
     start_screen = Column(String(50), nullable=False, server_default="HOME")
+    # When True, story is only shown to phones listed in ONBOARDING_TEST_PHONES
+    is_test = Column(Boolean, nullable=False, server_default="false")
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
         DateTime(timezone=True),

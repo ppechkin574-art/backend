@@ -19,8 +19,9 @@ def list_active_stories(
     service: OnboardingService = Depends(get_onboarding_service),
     user: UserDTO = Depends(get_user),
 ):
-    """Returns active stories. App filters by audience and view_count locally."""
-    return [OnboardingStoryPublicDTO.model_validate(s) for s in service.list_active()]
+    """Returns active stories visible to this user. is_test stories only appear for test phones."""
+    phone = str(user.phone) if user.phone else None
+    return [OnboardingStoryPublicDTO.model_validate(s) for s in service.list_active(phone)]
 
 
 @router.get("/stories/views", response_model=dict[int, int])

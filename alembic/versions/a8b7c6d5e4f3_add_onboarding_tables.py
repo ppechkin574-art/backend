@@ -1,6 +1,6 @@
 """add onboarding tables
 
-Revision ID: a1b2c3d4e5f6
+Revision ID: a8b7c6d5e4f3
 Revises: 316e8e84c074
 Create Date: 2026-07-03
 
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import UUID
 
-revision = "a1b2c3d4e5f6"
+revision = "a8b7c6d5e4f3"
 down_revision = "316e8e84c074"
 branch_labels = None
 depends_on = None

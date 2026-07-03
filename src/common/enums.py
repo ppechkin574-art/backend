@@ -4,7 +4,7 @@ from enum import StrEnum
 class PlanType(StrEnum):
     NONE = "NONE"
     FREE = "FREE"
-    # LITE = "LITE"
+    LITE = "LITE"
     # User-facing brand of this plan is **"Month"** (single monthly tier,
     # 4 990 ₸). The enum value stays "PRO" because it's persisted as a
     # Keycloak attribute on every existing user — renaming would require

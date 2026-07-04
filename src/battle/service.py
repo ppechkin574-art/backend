@@ -20,6 +20,7 @@ from battle.schemas import (
     JoinQueueResponse,
     SessionStatusResponse,
 )
+from quiz.dtos.enums import BlockType
 from quiz.models.edu_content import Question, Subject, Variant
 from quiz.models.text_blocks import TextBlock, TextBlockLink
 
@@ -52,7 +53,16 @@ def _get_text_from_blocks(link: TextBlockLink | None) -> str:
     if not link or not link.blocks:
         return ""
     blocks = sorted(link.blocks, key=lambda b: b.order)
-    return " ".join(b.value or "" for b in blocks if b.value).strip()
+    return " ".join(b.value or "" for b in blocks if b.value and b.type != BlockType.media).strip()
+
+
+def _get_image_url_from_blocks(link: TextBlockLink | None) -> str | None:
+    if not link or not link.blocks:
+        return None
+    for b in sorted(link.blocks, key=lambda b: b.order):
+        if b.type == BlockType.media and b.value:
+            return b.value
+    return None
 
 
 def _question_text(q: Question) -> str:
@@ -82,6 +92,7 @@ def _format_question(q: Question, subject_name: str) -> dict:
         "variants": variants,
         "correct_variant_id": correct_variant_id,
         "explanation": q.explanation_kk or q.explanation_ru,
+        "image_url": _get_image_url_from_blocks(q.link),
     }
 
 
@@ -137,6 +148,7 @@ def questions_for_client(questions: list[dict]) -> list[BattleQuestion]:
             text=q["text"],
             variants=[BattleVariant(id=v["id"], text=v["text"]) for v in q["variants"]],
             explanation=q.get("explanation"),
+            image_url=q.get("image_url"),
         ))
     return result
 

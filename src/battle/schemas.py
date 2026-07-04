@@ -36,6 +36,7 @@ class BattleQuestion(BaseModel):
     text: str
     variants: list[BattleVariant]
     explanation: str | None = None
+    image_url: str | None = None
 
 
 class BattleOpponent(BaseModel):

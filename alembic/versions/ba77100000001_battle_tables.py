@@ -1,8 +1,8 @@
 """battle_tables
 
-Revision ID: c1d2e3f4a5b6
-Revises: a1b2c3d4e5f6, 1338a104083a, 420aa383195e
-Create Date: 2026-07-03
+Revision ID: ba77100000001
+Revises: c1d2e3f4a5b6, d9e0f1a2b3c4
+Create Date: 2026-07-04
 
 """
 from collections.abc import Sequence
@@ -11,8 +11,8 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "c1d2e3f4a5b6"
-down_revision: tuple[str, ...] = ("a1b2c3d4e5f6", "1338a104083a", "420aa383195e")
+revision: str = "ba77100000001"
+down_revision: tuple[str, ...] = ("c1d2e3f4a5b6", "d9e0f1a2b3c4")
 branch_labels: Sequence[str] | None = None
 depends_on: Sequence[str] | None = None
 

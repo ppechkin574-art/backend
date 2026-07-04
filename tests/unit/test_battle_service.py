@@ -71,9 +71,16 @@ def _make_answer(player_id: str, question_id: int):
 # ---------------------------------------------------------------------------
 
 
+def _db_no_prior_answer():
+    """Return a MagicMock db where filter_by(...).first() returns None (no duplicate)."""
+    db = MagicMock()
+    db.query.return_value.filter_by.return_value.first.return_value = None
+    return db
+
+
 class TestRecordAnswer:
     def test_correct_answer_by_player1_increments_player1_score(self):
-        db = MagicMock()
+        db = _db_no_prior_answer()
         session = _make_session()
         svc = _make_svc(db=db)
 
@@ -85,7 +92,7 @@ class TestRecordAnswer:
         assert session.player2_score == 0
 
     def test_correct_answer_by_player2_increments_player2_score(self):
-        db = MagicMock()
+        db = _db_no_prior_answer()
         session = _make_session()
         svc = _make_svc(db=db)
 
@@ -96,7 +103,7 @@ class TestRecordAnswer:
         assert session.player1_score == 0
 
     def test_wrong_answer_does_not_change_score(self):
-        db = MagicMock()
+        db = _db_no_prior_answer()
         session = _make_session()
         svc = _make_svc(db=db)
 
@@ -107,7 +114,7 @@ class TestRecordAnswer:
         assert session.player1_score == 0
 
     def test_unknown_question_id_treated_as_wrong(self):
-        db = MagicMock()
+        db = _db_no_prior_answer()
         session = _make_session()
         svc = _make_svc(db=db)
 
@@ -117,7 +124,7 @@ class TestRecordAnswer:
         assert correct_vid == 0
 
     def test_none_variant_id_is_wrong(self):
-        db = MagicMock()
+        db = _db_no_prior_answer()
         session = _make_session()
         svc = _make_svc(db=db)
 
@@ -127,7 +134,7 @@ class TestRecordAnswer:
         assert session.player1_score == 0
 
     def test_adds_answer_to_db_and_commits(self):
-        db = MagicMock()
+        db = _db_no_prior_answer()
         session = _make_session()
         svc = _make_svc(db=db)
 

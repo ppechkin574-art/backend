@@ -42,6 +42,8 @@ from security import models  # noqa: F401 — discover FraudEvent, UserRiskProfi
 from security.models import *  # noqa: F401, F403
 from events import models  # noqa: F401 — discover Event table
 from events.models import *  # noqa: F401, F403
+from battle import models  # noqa: F401 — discover BattleSession, BattleAnswer
+from battle.models import *  # noqa: F401, F403
 
 target_metadata = Base.metadata
 settings = Settings()  # noqa

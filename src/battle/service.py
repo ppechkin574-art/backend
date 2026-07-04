@@ -65,33 +65,27 @@ def _get_image_url_from_blocks(link: TextBlockLink | None) -> str | None:
     return None
 
 
-def _question_text(q: Question) -> str:
-    if q.question_text_kk:
-        return q.question_text_kk
-    return _get_text_from_blocks(q.link) if q.link else ""
-
-
-def _variant_text(v: Variant) -> str:
-    if v.variant_text_kk:
-        return v.variant_text_kk
-    return _get_text_from_blocks(v.link) if v.link else ""
-
-
 def _format_question(q: Question, subject_name: str) -> dict:
     correct_variant_id = None
     variants = []
+    text_ru = _get_text_from_blocks(q.link) if q.link else ""
+    text_kk = q.question_text_kk or text_ru
     for v in q.variants or []:
-        variants.append({"id": v.id, "text": _variant_text(v)})
+        vru = _get_text_from_blocks(v.link) if v.link else ""
+        vkk = v.variant_text_kk or vru
+        variants.append({"id": v.id, "text_ru": vru, "text_kk": vkk})
         if v.is_correct:
             correct_variant_id = v.id
     return {
         "id": q.id,
         "subject_id": q.subject_id,
         "subject_name": subject_name,
-        "text": _question_text(q),
+        "text_ru": text_ru,
+        "text_kk": text_kk,
         "variants": variants,
         "correct_variant_id": correct_variant_id,
-        "explanation": q.explanation_kk or q.explanation_ru,
+        "explanation_ru": q.explanation_ru or q.explanation_kk,
+        "explanation_kk": q.explanation_kk or q.explanation_ru,
         "image_url": _get_image_url_from_blocks(q.link),
     }
 
@@ -137,17 +131,22 @@ def build_correct_answers(questions: list[dict]) -> dict[str, int]:
     return {str(q["id"]): q["correct_variant_id"] for q in questions if q.get("correct_variant_id")}
 
 
-def questions_for_client(questions: list[dict]) -> list[BattleQuestion]:
-    """Strip correct_variant_id before sending to client."""
+def questions_for_client(questions: list[dict], lang: str = "ru") -> list[BattleQuestion]:
+    """Strip correct_variant_id before sending to client. lang: 'ru' or 'kk'."""
     result = []
     for q in questions:
+        text = q.get(f"text_{lang}") or q.get("text_ru") or q.get("text") or ""
+        expl = q.get(f"explanation_{lang}") or q.get("explanation_ru") or q.get("explanation")
         result.append(BattleQuestion(
             id=q["id"],
             subject_id=q["subject_id"],
             subject_name=q["subject_name"],
-            text=q["text"],
-            variants=[BattleVariant(id=v["id"], text=v["text"]) for v in q["variants"]],
-            explanation=q.get("explanation"),
+            text=text,
+            variants=[
+                BattleVariant(id=v["id"], text=v.get(f"text_{lang}") or v.get("text_ru") or v.get("text") or "")
+                for v in q["variants"]
+            ],
+            explanation=expl,
             image_url=q.get("image_url"),
         ))
     return result

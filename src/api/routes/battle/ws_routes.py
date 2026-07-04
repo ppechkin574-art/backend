@@ -209,7 +209,8 @@ async def battle_ws(websocket: WebSocket, session_id: str):
             return
 
     questions = session.question_data.get("questions", [])
-    client_questions = questions_for_client(questions)
+    lang = websocket.query_params.get("lang", "ru")
+    client_questions = questions_for_client(questions, lang=lang)
 
     # Reset scores so every WS game starts from 0-0 regardless of prior state.
     session.player1_score = 0

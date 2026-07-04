@@ -60,30 +60,36 @@ def get_session(
     redis: Redis = Depends(get_redis),
 ):
     """Poll this endpoint to check when battle session becomes active."""
-    svc = BattleService(db, redis)
-    session = svc.get_session(session_id, user.id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+    try:
+        svc = BattleService(db, redis)
+        session = svc.get_session(session_id, user.id)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found")
 
-    # Auto-activate bot session after 5 seconds of searching
-    if session.is_bot and session.status == "searching":
-        created = session.created_at
-        if created.tzinfo is None:
-            created = created.replace(tzinfo=UTC)
-        elapsed = (datetime.now(UTC) - created).total_seconds()
-        if elapsed >= 5:
-            activated = svc.activate_bot_session(session_id)
-            if activated:
-                session = activated
+        # Auto-activate bot session after 5 seconds of searching
+        if session.is_bot and session.status == "searching":
+            created = session.created_at
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=UTC)
+            elapsed = (datetime.now(UTC) - created).total_seconds()
+            if elapsed >= 5:
+                activated = svc.activate_bot_session(session_id)
+                if activated:
+                    session = activated
 
-    opponent_name = session.bot_name
-    return SessionStatusResponse(
-        session_id=str(session.id),
-        status=session.status,
-        opponent_name=opponent_name,
-        is_bot=session.is_bot,
-        started_at=session.started_at,
-    )
+        opponent_name = session.bot_name
+        return SessionStatusResponse(
+            session_id=str(session.id),
+            status=session.status,
+            opponent_name=opponent_name,
+            is_bot=session.is_bot,
+            started_at=session.started_at,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("get_session 500: %s: %s", type(exc).__name__, exc, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}")
 
 
 @router.delete("/session/{session_id}")

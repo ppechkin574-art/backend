@@ -70,9 +70,13 @@ class AppSettingsService:
         row = self.repo.update_value(key, value)
         if row is None:
             return None
-        # Bust the cache so the next caller sees the new value within
-        # millis, not at the end of the TTL window.
-        self._cache_delete(key)
+        # Write-through: keep the key alive with the new value (24-hour TTL).
+        # auth/services.py reads Redis directly and has no DB fallback, so
+        # deleting the key would silently break auto-subscription on registration.
+        try:
+            self.redis.setex(self._cache_key(key), 86_400, value)
+        except RedisError as e:
+            logger.warning("[app_settings] write-through failed for %r: %s", key, e)
         return AppSettingDTO.model_validate(row)
 
     # ─────── cache helpers ───────

@@ -211,6 +211,11 @@ async def battle_ws(websocket: WebSocket, session_id: str):
     questions = session.question_data.get("questions", [])
     client_questions = questions_for_client(questions)
 
+    # Reset scores so every WS game starts from 0-0 regardless of prior state.
+    session.player1_score = 0
+    session.player2_score = 0
+    db.commit()
+
     await battle_manager.send_to(session_id, user_id, {
         "type": "battle_start",
         "session_id": session_id,
@@ -220,8 +225,8 @@ async def battle_ws(websocket: WebSocket, session_id: str):
             "name": session.bot_name or "Соперник",
             "is_bot": False,
         },
-        "my_score": session.player1_score,
-        "opponent_score": session.player2_score,
+        "my_score": 0,
+        "opponent_score": 0,
     })
 
     bot_task = None

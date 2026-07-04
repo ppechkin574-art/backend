@@ -302,6 +302,16 @@ class BattleService:
         """
         correct_answers: dict = session.question_data.get("correct_answers", {})
         correct_variant_id = correct_answers.get(str(question_id))
+
+        # Deduplicate: if this player already answered this question, skip scoring.
+        existing = self.db.query(BattleAnswer).filter_by(
+            session_id=session.id,
+            player_id=player_id,
+            question_id=question_id,
+        ).first()
+        if existing:
+            return existing.is_correct, correct_variant_id or 0
+
         is_correct = variant_id is not None and variant_id == correct_variant_id
 
         answer = BattleAnswer(

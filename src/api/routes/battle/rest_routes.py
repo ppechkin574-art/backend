@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from redis import Redis
@@ -63,6 +64,17 @@ def get_session(
     session = svc.get_session(session_id, user.id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    # Auto-activate bot session after 5 seconds of searching
+    if session.is_bot and session.status == "searching":
+        created = session.created_at
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=UTC)
+        elapsed = (datetime.now(UTC) - created).total_seconds()
+        if elapsed >= 5:
+            activated = svc.activate_bot_session(session_id)
+            if activated:
+                session = activated
 
     opponent_name = session.bot_name
     return SessionStatusResponse(

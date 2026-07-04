@@ -286,7 +286,7 @@ class BattleService:
             return None
         return self.db.query(BattleSession).filter(
             BattleSession.id == sid,
-            BattleSession.player1_id == user_id,
+            BattleSession.player1_id == str(user_id),
         ).first()
 
     def record_answer(

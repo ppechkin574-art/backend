@@ -11,7 +11,7 @@ class PlanType(StrEnum):
     # a one-time migration. Treat `PRO` as the internal identifier and
     # always render "Month" / "Подписка Month" in user-visible strings.
     PRO = "PRO"
-    # PREMIUM = "PREMIUM"
+    PREMIUM = "PREMIUM"
 
 
 class SubscriptionStatus(StrEnum):

@@ -436,10 +436,14 @@ class BattleService:
         if points <= 0:
             return
         try:
+            player_uuid = uuid.UUID(player_id)
+        except ValueError:
+            return  # bot player_id is not a UUID
+        try:
             with self.db.begin_nested():
                 repo = UserPointsRepository(self.db)
                 repo.add_points(
-                    user_id=player_id,
+                    user_id=player_uuid,
                     points=points,
                     source_type="battle",
                     source_id=source_id,

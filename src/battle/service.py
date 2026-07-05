@@ -161,6 +161,7 @@ class BattleService:
         return ":".join(str(s) for s in sorted(subject_ids))
 
     def join_or_create(self, user_id: str, subject_ids: list[int]) -> JoinQueueResponse:
+        user_id = str(user_id)  # caller may pass UUID object; normalize to str
         # Check if user already in an active session
         existing_key = f"{USER_SESSION_KEY_PREFIX}{user_id}"
         existing_session_id = self.redis.get(existing_key)
@@ -501,6 +502,7 @@ class BattleService:
         return {"date": day_key, "entries": entries, "my_entry": my_entry}
 
     def forfeit(self, session: BattleSession, user_id: str) -> None:
+        user_id = str(user_id)  # normalize UUID → str
         if session.status != "active":
             return
         # Opponent wins

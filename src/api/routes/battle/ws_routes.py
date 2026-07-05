@@ -49,7 +49,9 @@ async def _run_bot_task(
 ) -> None:
     """Background task simulating the bot answering all questions."""
     for q in questions:
-        delay = random.uniform(1.5, 8.0)
+        # Simulate a player with the same 15s-per-question budget.
+        # Answer somewhere between 5s and 14s so it feels human.
+        delay = random.uniform(5.0, 14.0)
         await asyncio.sleep(delay)
 
         db = _make_db_session()

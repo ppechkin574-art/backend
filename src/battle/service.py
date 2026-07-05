@@ -32,9 +32,16 @@ BATTLE_STARS_DRAW = 25
 BATTLE_QUESTIONS_PER_SUBJECT = 5
 BATTLE_TIME_SECONDS = 300
 BOT_NAMES = [
+    # Kazakh names
     "Айгерім Н.", "Нұрлан Б.", "Дина С.", "Арман Қ.", "Зарина Т.",
     "Бекзат М.", "Гүлназ Е.", "Дәурен А.", "Меруерт О.", "Тимур Р.",
     "Ақнұр Ж.", "Сейткали Б.", "Аружан Д.", "Нұрбек С.", "Камила Ж.",
+    # Russian names
+    "Артём К.", "Дарья М.", "Максим Л.", "Алина С.", "Илья Р.",
+    "Кирилл П.", "Вика Н.", "Антон З.", "Полина Е.", "Денис Х.",
+    # Nicknames
+    "zhas1k", "mas1er", "ent_pro", "kz_stud", "top_ent",
+    "almaты99", "nur_sul", "q_stud", "bek007", "dims_kz",
 ]
 
 LEADERBOARD_KEY_PREFIX = "battle:leaderboard:"

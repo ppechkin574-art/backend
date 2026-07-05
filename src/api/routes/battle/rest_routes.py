@@ -153,6 +153,44 @@ def daily_leaderboard(
     )
 
 
+@router.get("/session/{session_id}/bot-questions")
+def get_bot_questions(
+    session_id: str,
+    lang: str = "ru",
+    user: UserDTO = Depends(get_user),
+    db: Session = Depends(get_db_session),
+    redis: Redis = Depends(get_redis),
+):
+    """Return questions with correct_variant_id for locally-simulated bot battles."""
+    svc = BattleService(db, redis)
+    session = svc.get_session(session_id, user.id)
+    if not session or not session.is_bot:
+        raise HTTPException(status_code=404, detail="Bot session not found")
+    if session.status not in ("active", "finished"):
+        raise HTTPException(status_code=400, detail="Session not active")
+
+    questions = []
+    for q in session.question_data.get("questions", []):
+        text = q.get(f"text_{lang}") or q.get("text_ru") or ""
+        if not text:
+            continue
+        expl = q.get(f"explanation_{lang}") or q.get("explanation_ru") or q.get("explanation") or ""
+        variants = [
+            {"id": v["id"], "text": v.get(f"text_{lang}") or v.get("text_ru") or ""}
+            for v in q.get("variants", [])
+        ]
+        questions.append({
+            "id": q["id"],
+            "subject_name": q.get("subject_name", ""),
+            "text": text,
+            "variants": variants,
+            "correct_variant_id": q.get("correct_variant_id"),
+            "explanation": expl,
+            "image_url": q.get("image_url"),
+        })
+    return {"questions": questions}
+
+
 @router.post("/bot-finish/{session_id}", response_model=BotFinishResponse)
 def finish_bot_session(
     session_id: str,

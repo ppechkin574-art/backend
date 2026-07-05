@@ -11,6 +11,8 @@ from api.dependencies import get_db_session, get_redis, get_user
 from auth.dtos import UserDTO
 from battle.models import BattleSession
 from battle.schemas import (
+    BotFinishRequest,
+    BotFinishResponse,
     DailyLeaderboardEntry,
     DailyLeaderboardResponse,
     JoinQueueRequest,
@@ -149,3 +151,26 @@ def daily_leaderboard(
         entries=entries,
         my_entry=my_entry,
     )
+
+
+@router.post("/bot-finish/{session_id}", response_model=BotFinishResponse)
+def finish_bot_session(
+    session_id: str,
+    body: BotFinishRequest,
+    user: UserDTO = Depends(get_user),
+    db: Session = Depends(get_db_session),
+    redis: Redis = Depends(get_redis),
+):
+    """Record result of a locally-simulated bot battle and credit stars."""
+    svc = BattleService(db, redis)
+    session = svc.get_session(session_id, user.id)
+    if not session or not session.is_bot:
+        raise HTTPException(status_code=404, detail="Bot session not found")
+    if session.status == "finished":
+        return BotFinishResponse(stars_earned=session.stars_player1)
+    if session.status != "active":
+        raise HTTPException(status_code=400, detail="Session not active")
+    session.player1_score = body.player1_score
+    session.player2_score = body.player2_score
+    svc.finish_session(session)
+    return BotFinishResponse(stars_earned=session.stars_player1)

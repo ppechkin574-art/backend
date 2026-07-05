@@ -110,3 +110,12 @@ class DailyLeaderboardResponse(BaseModel):
     date: str
     entries: list[DailyLeaderboardEntry]
     my_entry: DailyLeaderboardEntry | None = None
+
+
+class BotFinishRequest(BaseModel):
+    player1_score: int
+    player2_score: int
+
+
+class BotFinishResponse(BaseModel):
+    stars_earned: int

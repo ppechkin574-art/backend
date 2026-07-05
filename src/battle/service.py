@@ -23,6 +23,7 @@ from battle.schemas import (
 from quiz.dtos.enums import BlockType
 from quiz.models.edu_content import Question, Subject, Variant
 from quiz.models.text_blocks import TextBlock, TextBlockLink
+from quiz.repositories.user_points import UserPointsRepository
 
 logger = logging.getLogger(__name__)
 
@@ -430,6 +431,23 @@ class BattleService:
         except Exception:
             logger.exception("Failed to credit battle stars for player %s", player_id)
 
+    def _add_to_user_points(self, player_id: str, points: int, source_id: str, reason: str) -> None:
+        """Add battle stars to user_points — powers the main Рейтинг leaderboard."""
+        if points <= 0:
+            return
+        try:
+            with self.db.begin_nested():
+                repo = UserPointsRepository(self.db)
+                repo.add_points(
+                    user_id=player_id,
+                    points=points,
+                    source_type="battle",
+                    source_id=source_id,
+                    reason=reason,
+                )
+        except Exception:
+            logger.exception("Failed to add to user_points for player %s", player_id)
+
     def finish_session(self, session: BattleSession) -> None:
         """Compute winner, award stars, credit bank balance, update leaderboard."""
         p1 = session.player1_score
@@ -456,6 +474,9 @@ class BattleService:
 
         # Credit stars to player's bank account (same DB transaction as session update)
         self._credit_stars_to_bank(session.player1_id, session.stars_player1, bank_desc)
+
+        # Add to user_points — powers the main Рейтинг leaderboard & home widget
+        self._add_to_user_points(session.player1_id, session.stars_player1, str(session.id), bank_desc)
 
         self.db.commit()
 

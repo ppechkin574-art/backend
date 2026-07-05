@@ -567,6 +567,9 @@ class BattleService:
         session.finished_at = datetime.now(UTC)
         self.db.commit()
 
+        # Clear Redis session key so next joinQueue creates a fresh session.
+        self.redis.delete(f"{USER_SESSION_KEY_PREFIX}{session.player1_id}")
+
         self._update_leaderboard(
             user_id=session.player1_id,
             stars=session.stars_player1,

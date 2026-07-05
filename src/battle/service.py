@@ -166,12 +166,21 @@ class BattleService:
         existing_session_id = self.redis.get(existing_key)
         if existing_session_id:
             sid = existing_session_id.decode() if isinstance(existing_session_id, bytes) else existing_session_id
-            session = self.db.query(BattleSession).filter(
-                BattleSession.id == uuid.UUID(sid),
-                BattleSession.status.in_(["searching", "active"]),
-            ).first()
-            if session:
-                return JoinQueueResponse(session_id=sid, status=session.status)
+            try:
+                existing_uuid = uuid.UUID(sid)
+            except (ValueError, AttributeError):
+                # Corrupted Redis value — clear it and continue to create a fresh session
+                logger.warning("join_or_create: invalid UUID in Redis for user %s: %r — clearing", user_id, sid)
+                self.redis.delete(existing_key)
+                existing_uuid = None
+
+            if existing_uuid is not None:
+                session = self.db.query(BattleSession).filter(
+                    BattleSession.id == existing_uuid,
+                    BattleSession.status.in_(["searching", "active"]),
+                ).first()
+                if session:
+                    return JoinQueueResponse(session_id=sid, status=session.status)
 
         # Look for opponent in queue
         queue_key = f"{QUEUE_KEY_PREFIX}{self._subject_key(subject_ids)}"
@@ -180,7 +189,11 @@ class BattleService:
         opponent_session_id = None
 
         for entry_bytes in raw:
-            entry = json.loads(entry_bytes.decode() if isinstance(entry_bytes, bytes) else entry_bytes)
+            try:
+                entry = json.loads(entry_bytes.decode() if isinstance(entry_bytes, bytes) else entry_bytes)
+            except (ValueError, UnicodeDecodeError):
+                logger.warning("join_or_create: malformed queue entry — skipping")
+                continue
             if entry["user_id"] != user_id:
                 # Remove from queue
                 self.redis.lrem(queue_key, 1, entry_bytes)
@@ -190,10 +203,16 @@ class BattleService:
 
         if opponent_id and opponent_session_id:
             # Found real opponent — activate their session and create ours as linked
+            try:
+                opp_uuid = uuid.UUID(opponent_session_id)
+            except (ValueError, AttributeError):
+                logger.warning("join_or_create: invalid opponent session UUID %r — falling back to bot", opponent_session_id)
+                opp_uuid = None
+
             opp_session = self.db.query(BattleSession).filter(
-                BattleSession.id == uuid.UUID(opponent_session_id),
+                BattleSession.id == opp_uuid,
                 BattleSession.status == "searching",
-            ).first()
+            ).first() if opp_uuid is not None else None
 
             if opp_session:
                 # Use same questions for both
@@ -414,6 +433,10 @@ class BattleService:
         self._credit_stars_to_bank(session.player1_id, session.stars_player1, bank_desc)
 
         self.db.commit()
+
+        # Clear the Redis session key so the next joinQueue creates a fresh session
+        # immediately instead of waiting for the 2-hour TTL to expire.
+        self.redis.delete(f"{USER_SESSION_KEY_PREFIX}{session.player1_id}")
 
         # Update leaderboard for player1 (real user)
         self._update_leaderboard(

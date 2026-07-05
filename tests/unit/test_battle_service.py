@@ -387,13 +387,15 @@ class TestQuestionsForClient:
                 "id": 1,
                 "subject_id": 10,
                 "subject_name": "Математика",
-                "text": "Найдите производную f(x)=3x²",
+                "text_ru": "Найдите производную f(x)=3x²",
+                "text_kk": "f(x)=3x² туындысын табыңыз",
                 "variants": [
-                    {"id": 100, "text": "6x"},
-                    {"id": 101, "text": "3x"},
+                    {"id": 100, "text_ru": "6x", "text_kk": "6x"},
+                    {"id": 101, "text_ru": "3x", "text_kk": "3x"},
                 ],
                 "correct_variant_id": 100,
-                "explanation": "По правилу (xⁿ)′ = nxⁿ⁻¹.",
+                "explanation_ru": "По правилу (xⁿ)′ = nxⁿ⁻¹.",
+                "explanation_kk": "Ереже бойынша (xⁿ)′ = nxⁿ⁻¹.",
             }
         ]
 
@@ -410,12 +412,40 @@ class TestQuestionsForClient:
             "id": 2,
             "subject_id": 11,
             "subject_name": "Физика",
-            "text": "Скорость света?",
-            "variants": [{"id": 200, "text": "3×10⁸ м/с"}],
+            "text_ru": "Скорость света?",
+            "text_kk": "Жарық жылдамдығы?",
+            "variants": [{"id": 200, "text_ru": "3×10⁸ м/с", "text_kk": "3×10⁸ м/с"}],
             "correct_variant_id": 200,
         }
         result = questions_for_client([q])
         assert result[0].explanation is None
+
+    def test_skips_question_with_no_text_for_requested_lang(self):
+        q = {
+            "id": 3,
+            "subject_id": 10,
+            "subject_name": "Физика",
+            "text_ru": "",
+            "text_kk": "Тек қазақша мәтін",
+            "variants": [{"id": 300, "text_ru": "", "text_kk": "Жауап"}],
+            "correct_variant_id": 300,
+        }
+        result = questions_for_client([q], lang="ru")
+        assert result == []
+
+    def test_kk_questions_returned_for_kk_lang(self):
+        q = {
+            "id": 4,
+            "subject_id": 10,
+            "subject_name": "Физика",
+            "text_ru": "Русский текст",
+            "text_kk": "Қазақша мәтін",
+            "variants": [{"id": 400, "text_ru": "Ответ", "text_kk": "Жауап"}],
+            "correct_variant_id": 400,
+        }
+        result = questions_for_client([q], lang="kk")
+        assert result[0].text == "Қазақша мәтін"
+        assert result[0].variants[0].text == "Жауап"
 
     def test_variants_count_preserved(self):
         result = questions_for_client(self._questions())

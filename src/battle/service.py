@@ -135,15 +135,19 @@ def questions_for_client(questions: list[dict], lang: str = "ru") -> list[Battle
     """Strip correct_variant_id before sending to client. lang: 'ru' or 'kk'."""
     result = []
     for q in questions:
-        text = q.get(f"text_{lang}") or q.get("text_ru") or q.get("text") or ""
-        expl = q.get(f"explanation_{lang}") or q.get("explanation_ru") or q.get("explanation")
+        text = q.get(f"text_{lang}") or ""
+        # Skip questions with no text in the requested language to avoid showing
+        # Kazakh content to Russian users (blocks text may be in any language).
+        if not text:
+            continue
+        expl = q.get(f"explanation_{lang}") or q.get(f"explanation_ru") or q.get("explanation")
         result.append(BattleQuestion(
             id=q["id"],
             subject_id=q["subject_id"],
             subject_name=q["subject_name"],
             text=text,
             variants=[
-                BattleVariant(id=v["id"], text=v.get(f"text_{lang}") or v.get("text_ru") or v.get("text") or "")
+                BattleVariant(id=v["id"], text=v.get(f"text_{lang}") or v.get("text_ru") or "")
                 for v in q["variants"]
             ],
             explanation=expl,

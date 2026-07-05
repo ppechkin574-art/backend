@@ -49,13 +49,7 @@ def join_queue(
     _require_subscription(user)
 
     svc = BattleService(db, redis)
-    try:
-        return svc.join_or_create(user.id, body.subject_ids)
-    except Exception as exc:
-        import traceback
-        detail = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
-        logger.error("joinQueue 500: %s", detail)
-        raise HTTPException(status_code=500, detail=detail)
+    return svc.join_or_create(user.id, body.subject_ids)
 
 
 @router.get("/session/{session_id}", response_model=SessionStatusResponse)

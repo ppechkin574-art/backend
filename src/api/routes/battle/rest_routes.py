@@ -210,5 +210,11 @@ def finish_bot_session(
         raise HTTPException(status_code=400, detail="Session not active")
     session.player1_score = body.player1_score
     session.player2_score = body.player2_score
-    svc.finish_session(session)
+    try:
+        svc.finish_session(session)
+    except Exception:
+        logger.exception("finish_session failed for bot session %s", session_id)
+        raise HTTPException(status_code=500, detail="Failed to finish session")
+    logger.info("bot session %s finished: p1=%d p2=%d stars=%d",
+                session_id, body.player1_score, body.player2_score, session.stars_player1)
     return BotFinishResponse(stars_earned=session.stars_player1)

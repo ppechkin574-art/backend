@@ -405,22 +405,28 @@ class BattleService:
             player_uuid = uuid.UUID(player_id)
         except ValueError:
             return  # bot player_id is not a UUID
+        # Use a savepoint so a failure here doesn't corrupt the outer transaction.
         try:
-            acct = self.db.query(UserBankAccount).filter(
-                UserBankAccount.student_guid == player_uuid
-            ).first()
-            if acct is None:
-                logger.debug("No bank account for player %s, skipping stars credit", player_id)
-                return
-            acct.balance += stars
-            self.db.add(Transaction(
-                guid=uuid.uuid4(),
-                account_guid=acct.guid,
-                amount=stars,
-                description=description,
-                type=TransactionType.deposit,
-                status=TransactionStatus.completed,
-            ))
+            with self.db.begin_nested():
+                acct = self.db.query(UserBankAccount).filter(
+                    UserBankAccount.student_guid == player_uuid
+                ).first()
+                if acct is None:
+                    logger.warning(
+                        "No bank account for player %s — stars not credited to bank "
+                        "(leaderboard still updated). Player must open bank screen to create account.",
+                        player_id,
+                    )
+                    return
+                acct.balance += stars
+                self.db.add(Transaction(
+                    guid=uuid.uuid4(),
+                    account_guid=acct.guid,
+                    amount=stars,
+                    description=description,
+                    type=TransactionType.deposit,
+                    status=TransactionStatus.completed,
+                ))
         except Exception:
             logger.exception("Failed to credit battle stars for player %s", player_id)
 

@@ -181,7 +181,14 @@ class BattleService:
                     BattleSession.status.in_(["searching", "active"]),
                 ).first()
                 if session:
-                    return JoinQueueResponse(session_id=sid, status=session.status)
+                    # Reuse only if subject_ids match — prevents stale session with wrong subjects
+                    if sorted(session.subject_ids or []) == sorted(subject_ids):
+                        return JoinQueueResponse(session_id=sid, status=session.status)
+                    # Wrong subjects — abandon stale session and start fresh
+                    if session.status == "searching":
+                        session.status = "abandoned"
+                        self.db.commit()
+                    self.redis.delete(existing_key)
 
         # Look for opponent in queue
         queue_key = f"{QUEUE_KEY_PREFIX}{self._subject_key(subject_ids)}"

@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey,
+    Boolean, Column, DateTime, Float, ForeignKey,
     Integer, String, Text, UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID
@@ -62,6 +62,10 @@ class OnboardingStep(Base):
     action_label_ru = Column(Text, nullable=True)
     action_label_kk = Column(Text, nullable=True)
     action_route = Column(Text, nullable=True)
+    mascot_scale    = Column(Float, nullable=False, server_default="1.0")
+    mascot_x        = Column(Float, nullable=False, server_default="0.0")
+    mascot_y        = Column(Float, nullable=False, server_default="0.0")
+    mascot_rotation = Column(Float, nullable=False, server_default="0.0")
 
     story = relationship("OnboardingStory", back_populates="steps")
 

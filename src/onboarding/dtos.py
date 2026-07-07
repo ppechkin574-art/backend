@@ -23,6 +23,10 @@ class OnboardingStepDTO(BaseModel):
     action_label_ru: Optional[str] = None
     action_label_kk: Optional[str] = None
     action_route: Optional[str] = None
+    mascot_scale: float = 1.0
+    mascot_x: float = 0.0
+    mascot_y: float = 0.0
+    mascot_rotation: float = 0.0
 
 
 class OnboardingStepCreateDTO(BaseModel):
@@ -37,6 +41,10 @@ class OnboardingStepCreateDTO(BaseModel):
     action_label_ru: Optional[str] = Field(default=None, max_length=200)
     action_label_kk: Optional[str] = Field(default=None, max_length=200)
     action_route: Optional[str] = Field(default=None, max_length=200)
+    mascot_scale: float = Field(default=1.0, ge=0.3, le=3.0)
+    mascot_x: float = Field(default=0.0, ge=-200.0, le=200.0)
+    mascot_y: float = Field(default=0.0, ge=-200.0, le=200.0)
+    mascot_rotation: float = Field(default=0.0, ge=-180.0, le=180.0)
 
 
 class OnboardingStepUpdateDTO(BaseModel):
@@ -51,6 +59,10 @@ class OnboardingStepUpdateDTO(BaseModel):
     action_label_ru: Optional[str] = Field(default=None, max_length=200)
     action_label_kk: Optional[str] = Field(default=None, max_length=200)
     action_route: Optional[str] = Field(default=None, max_length=200)
+    mascot_scale: Optional[float] = Field(default=None, ge=0.3, le=3.0)
+    mascot_x: Optional[float] = Field(default=None, ge=-200.0, le=200.0)
+    mascot_y: Optional[float] = Field(default=None, ge=-200.0, le=200.0)
+    mascot_rotation: Optional[float] = Field(default=None, ge=-180.0, le=180.0)
 
 
 # ─── Story DTOs ──────────────────────────────────────────────────────────────
@@ -125,6 +137,10 @@ class OnboardingStepPublicDTO(BaseModel):
     action_label_ru: Optional[str] = None
     action_label_kk: Optional[str] = None
     action_route: Optional[str] = None
+    mascot_scale: float = 1.0
+    mascot_x: float = 0.0
+    mascot_y: float = 0.0
+    mascot_rotation: float = 0.0
 
 
 class OnboardingStoryPublicDTO(BaseModel):

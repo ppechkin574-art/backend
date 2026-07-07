@@ -155,6 +155,7 @@ class OnboardingStoryPublicDTO(BaseModel):
     name: str
     priority: int
     is_mandatory: bool
+    is_test: bool
     skip_delay_seconds: int
     target_audience: str
     new_user_days: int

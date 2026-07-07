@@ -70,6 +70,7 @@ class FileService:
     AVATAR_PREFIX = "avatars"
     SUBJECT_PREFIX = "subjects"
     MASCOT_PREFIX = "mascot"
+    EVENT_ICON_PREFIX = "event-icons"
     MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024
     THUMBNAIL_SIZE = (500, 500)
     JPEG_QUALITY = 85
@@ -143,11 +144,19 @@ class FileService:
         return filename
 
     def get_mascot_image_url(self, filename: str) -> str:
-        """Presigned URL для маскота."""
+        """Presigned URL для маскота.
+
+        Принимает имя файла ИЛИ старый presigned URL — в обоих случаях
+        генерирует свежую ссылку, чтобы истёкшие URL не ломали превью.
+        """
         if not filename:
             return ""
         if filename.startswith(("http://", "https://")):
-            return filename
+            from urllib.parse import urlparse
+            bare = urlparse(filename).path.rstrip("/").split("/")[-1]
+            if not bare:
+                return filename
+            filename = bare
         try:
             return self._storage.link(f"{self.MASCOT_PREFIX}/{self._extract_filename(filename)}")
         except MediaStorageError as e:
@@ -156,6 +165,35 @@ class FileService:
 
     def delete_mascot_image(self, filename: str) -> bool:
         return self._delete_object(f"{self.MASCOT_PREFIX}/{self._extract_filename(filename)}")
+
+    async def save_event_icon(self, image_file: UploadFile) -> str:
+        """Загружает иконку события в S3. Сохраняет прозрачность PNG. Возвращает object key."""
+        contents = await self._read_validated_image(image_file)
+        processed, ext = await self._process_image_keep_alpha(contents)
+
+        filename = f"event_{uuid.uuid4().hex}.{ext}"
+        object_name = f"{self.EVENT_ICON_PREFIX}/{filename}"
+
+        try:
+            self._storage.save(object_name, io.BytesIO(processed))
+        except MediaStorageError as e:
+            logger.exception("Failed to save event icon")
+            raise HTTPException(status_code=500, detail="Failed to save image") from e
+
+        logger.info("Event icon saved: %s", object_name)
+        return object_name
+
+    def get_event_icon_url(self, object_key: str) -> str:
+        """Presigned URL для иконки события. Принимает object key или уже готовый URL."""
+        if not object_key:
+            return ""
+        if object_key.startswith(("http://", "https://")):
+            return object_key
+        try:
+            return self._storage.link(object_key)
+        except MediaStorageError as e:
+            logger.warning("Failed to build event icon URL for %s: %s", object_key, e)
+            return ""
 
     def get_avatar_url(self, filename: str) -> str:
         """Presigned URL для отдачи аватара клиенту.

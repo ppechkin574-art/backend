@@ -38,7 +38,17 @@ class OnboardingService:
             )
         return story
 
+    @staticmethod
+    def _check_no_duplicate_step_orders(steps: list) -> None:
+        orders = [s.step_order for s in steps]
+        if len(orders) != len(set(orders)):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Номера шагов (step_order) должны быть уникальными",
+            )
+
     def create_story(self, payload: OnboardingStoryCreateDTO) -> OnboardingStory:
+        self._check_no_duplicate_step_orders(payload.steps)
         story = OnboardingStory(
             name=payload.name,
             priority=payload.priority,
@@ -73,6 +83,7 @@ class OnboardingService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="История должна содержать хотя бы 1 шаг",
                 )
+            self._check_no_duplicate_step_orders(steps_payload)
             # Replace all steps
             for step in list(story.steps):
                 self.repo.delete_step(step)

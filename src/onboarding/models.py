@@ -1,8 +1,7 @@
 from sqlalchemy import (
     Boolean, Column, DateTime, Float, ForeignKey,
-    Integer, String, Text,
+    Integer, String, Text, UniqueConstraint,
 )
-from sqlalchemy import UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -48,7 +47,6 @@ class OnboardingStory(Base):
 
 class OnboardingStep(Base):
     __tablename__ = "onboarding_steps"
-    __table_args__ = (UniqueConstraint("story_id", "step_order", name="uq_step_story_order"),)
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     story_id = Column(Integer, ForeignKey("onboarding_stories.id", ondelete="CASCADE"), nullable=False)

@@ -1,15 +1,15 @@
 """add mascot transform to onboarding_steps
 
-Revision ID: e1f2a3b4c5d6
-Revises: d9e0f1a2b3c4
+Revision ID: f1e2d3c4b5a6
+Revises: ba77100000001
 Create Date: 2026-07-07
 
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "e1f2a3b4c5d6"
-down_revision = "d9e0f1a2b3c4"
+revision = "f1e2d3c4b5a6"
+down_revision = "ba77100000001"
 branch_labels = None
 depends_on = None
 

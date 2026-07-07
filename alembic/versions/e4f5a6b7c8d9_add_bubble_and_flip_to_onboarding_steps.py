@@ -1,6 +1,6 @@
 """add bubble position and mascot flip to onboarding_steps
 
-Revision ID: a1b2c3d4e5f6
+Revision ID: e4f5a6b7c8d9
 Revises: f1e2d3c4b5a6
 Create Date: 2026-07-07
 
@@ -8,7 +8,7 @@ Create Date: 2026-07-07
 from alembic import op
 import sqlalchemy as sa
 
-revision = "a1b2c3d4e5f6"
+revision = "e4f5a6b7c8d9"
 down_revision = "f1e2d3c4b5a6"
 branch_labels = None
 depends_on = None

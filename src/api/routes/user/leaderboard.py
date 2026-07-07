@@ -68,6 +68,15 @@ def _safe_display_name(name: str, user_id: str) -> str:
     suffix = user_id.replace("-", "")[-4:].upper() if user_id else "????"
     return f"Пользователь #{suffix}"
 
+def _milestone_rank(rank: int) -> int | None:
+    """Nearest milestone tier above the user's rank (100 → 50 → 10 → 3)."""
+    if rank > 100: return 100
+    if rank > 50: return 50
+    if rank > 10: return 10
+    if rank > 3: return 3
+    return None
+
+
 router = APIRouter(prefix="/leaderboard", tags=["Leaderboard"])
 
 
@@ -85,6 +94,8 @@ class MyRankEntry(BaseModel):
     name: str
     avatar_url: str | None
     total_points: int
+    milestone_rank: int | None = None
+    gap_to_milestone_pts: int | None = None
 
 
 def _resolve_avatar(raw_avatar: str | None, file_service: FileService) -> str | None:
@@ -349,13 +360,18 @@ async def get_my_rank(
     dirty = dirty or wrote
     name, raw_avatar = own if own is not None else ("Пользователь", None)
 
+    gap_to_milestone_pts: int | None = None
+    milestone: int | None = None
+
     if total <= 0:
         rank = 0
     else:
         target_id_str = str(user.id)
         rank = points_repo.get_user_rank(user.id)
         visible_rank = 0
-        for u_id, _points in ranked:
+        milestone_points_map: dict[int, int] = {}
+
+        for u_id, pts in ranked:
             disp, wrote = _resolve_display(
                 str(u_id), snapshots, idp, cache, display_repo
             )
@@ -363,9 +379,20 @@ async def get_my_rank(
             if disp is None:
                 continue
             visible_rank += 1
+            # Track points at each tier milestone as we pass through them.
+            # Milestones are always above the user's rank, so they appear
+            # before the user in this sorted iteration.
+            if visible_rank in (3, 10, 50, 100):
+                milestone_points_map[visible_rank] = pts
             if str(u_id) == target_id_str:
                 rank = visible_rank
                 break
+
+        milestone = _milestone_rank(rank)
+        if milestone is not None and milestone in milestone_points_map:
+            gap = milestone_points_map[milestone] - total
+            if gap > 0:
+                gap_to_milestone_pts = gap
 
     if dirty:
         _commit_backfill(session)
@@ -376,4 +403,6 @@ async def get_my_rank(
         name=name,
         avatar_url=_resolve_avatar(raw_avatar, file_service),
         total_points=total,
+        milestone_rank=milestone,
+        gap_to_milestone_pts=gap_to_milestone_pts,
     )

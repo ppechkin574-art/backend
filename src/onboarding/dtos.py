@@ -1,8 +1,13 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+
+MascotPosition = Literal["bottom_left", "bottom_right", "top_left", "top_right"]
+TargetAudience = Literal["ALL", "NEW_USERS"]
+TriggerType    = Literal["FIRST_OPEN", "IMMEDIATE"]
+StartScreen    = Literal["HOME", "TRAINER", "PROFILE", "LEADERBOARD", "SUBSCRIPTION"]
 
 
 # ─── Step DTOs ───────────────────────────────────────────────────────────────
@@ -36,7 +41,7 @@ class OnboardingStepCreateDTO(BaseModel):
     title_kk: str = Field(default="", max_length=300)
     body_ru: str = Field(default="", max_length=1000)
     body_kk: str = Field(default="", max_length=1000)
-    mascot_position: str = Field(default="bottom_left")
+    mascot_position: MascotPosition = "bottom_left"
     spotlight_element_key: Optional[str] = Field(default=None, max_length=100)
     action_label_ru: Optional[str] = Field(default=None, max_length=200)
     action_label_kk: Optional[str] = Field(default=None, max_length=200)
@@ -54,7 +59,7 @@ class OnboardingStepUpdateDTO(BaseModel):
     title_kk: Optional[str] = Field(default=None, max_length=300)
     body_ru: Optional[str] = Field(default=None, max_length=1000)
     body_kk: Optional[str] = Field(default=None, max_length=1000)
-    mascot_position: Optional[str] = None
+    mascot_position: Optional[MascotPosition] = None
     spotlight_element_key: Optional[str] = Field(default=None, max_length=100)
     action_label_ru: Optional[str] = Field(default=None, max_length=200)
     action_label_kk: Optional[str] = Field(default=None, max_length=200)
@@ -95,12 +100,12 @@ class OnboardingStoryCreateDTO(BaseModel):
     is_mandatory: bool = True
     is_test: bool = False
     skip_delay_seconds: int = Field(default=3, ge=0, le=60)
-    target_audience: str = Field(default="ALL")
+    target_audience: TargetAudience = "ALL"
     new_user_days: int = Field(default=7, ge=1)
-    trigger: str = Field(default="FIRST_OPEN")
+    trigger: TriggerType = "FIRST_OPEN"
     immediate_count: int = Field(default=1, ge=1)
     max_shows_per_user: int = Field(default=1, ge=1)
-    start_screen: str = Field(default="HOME")
+    start_screen: StartScreen = "HOME"
     steps: list[OnboardingStepCreateDTO] = []
 
 
@@ -111,12 +116,12 @@ class OnboardingStoryUpdateDTO(BaseModel):
     is_mandatory: Optional[bool] = None
     is_test: Optional[bool] = None
     skip_delay_seconds: Optional[int] = Field(default=None, ge=0, le=60)
-    target_audience: Optional[str] = None
+    target_audience: Optional[TargetAudience] = None
     new_user_days: Optional[int] = Field(default=None, ge=1)
-    trigger: Optional[str] = None
+    trigger: Optional[TriggerType] = None
     immediate_count: Optional[int] = Field(default=None, ge=1)
     max_shows_per_user: Optional[int] = Field(default=None, ge=1)
-    start_screen: Optional[str] = None
+    start_screen: Optional[StartScreen] = None
     steps: Optional[list[OnboardingStepCreateDTO]] = None
 
 

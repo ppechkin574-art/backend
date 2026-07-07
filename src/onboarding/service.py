@@ -68,6 +68,11 @@ class OnboardingService:
             setattr(story, field, value)
 
         if steps_payload is not None:
+            if len(steps_payload) == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="История должна содержать хотя бы 1 шаг",
+                )
             # Replace all steps
             for step in list(story.steps):
                 self.repo.delete_step(step)
@@ -101,6 +106,7 @@ class OnboardingService:
     # ── View tracking (app) ──────────────────────────────────────────────────
 
     def record_view(self, user_id: UUID, payload: OnboardingViewDTO) -> OnboardingViewResponseDTO:
+        self.get_story(payload.story_id)  # raises 404 if story doesn't exist
         view = self.repo.upsert_view(user_id, payload.story_id, payload.skipped)
         return OnboardingViewResponseDTO(
             story_id=view.story_id,

@@ -75,9 +75,14 @@ def update_story(
 def delete_story(
     story_id: int,
     service: OnboardingService = Depends(get_onboarding_service),
+    fs: FileService = Depends(get_file_service),
 ):
+    story = service.get_story(story_id)
+    mascot_filenames = [s.mascot_image_url for s in story.steps if s.mascot_image_url]
     service.delete_story(story_id)
     service.repo.db.commit()
+    for fname in mascot_filenames:
+        fs.delete_mascot_image(fname)
 
 
 # ── Image upload ─────────────────────────────────────────────────────────────

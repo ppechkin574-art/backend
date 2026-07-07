@@ -32,6 +32,10 @@ class OnboardingStepDTO(BaseModel):
     mascot_x: float = 0.0
     mascot_y: float = 0.0
     mascot_rotation: float = 0.0
+    bubble_x: float = 0.0
+    bubble_y: float = 0.0
+    mascot_flip_h: bool = False
+    mascot_flip_v: bool = False
 
 
 class OnboardingStepCreateDTO(BaseModel):
@@ -50,6 +54,10 @@ class OnboardingStepCreateDTO(BaseModel):
     mascot_x: float = Field(default=0.0, ge=-200.0, le=200.0)
     mascot_y: float = Field(default=0.0, ge=-200.0, le=200.0)
     mascot_rotation: float = Field(default=0.0, ge=-180.0, le=180.0)
+    bubble_x: float = Field(default=0.0, ge=-200.0, le=200.0)
+    bubble_y: float = Field(default=0.0, ge=-200.0, le=200.0)
+    mascot_flip_h: bool = False
+    mascot_flip_v: bool = False
 
 
 class OnboardingStepUpdateDTO(BaseModel):
@@ -68,6 +76,10 @@ class OnboardingStepUpdateDTO(BaseModel):
     mascot_x: Optional[float] = Field(default=None, ge=-200.0, le=200.0)
     mascot_y: Optional[float] = Field(default=None, ge=-200.0, le=200.0)
     mascot_rotation: Optional[float] = Field(default=None, ge=-180.0, le=180.0)
+    bubble_x: Optional[float] = Field(default=None, ge=-200.0, le=200.0)
+    bubble_y: Optional[float] = Field(default=None, ge=-200.0, le=200.0)
+    mascot_flip_h: Optional[bool] = None
+    mascot_flip_v: Optional[bool] = None
 
 
 # ─── Story DTOs ──────────────────────────────────────────────────────────────
@@ -146,6 +158,10 @@ class OnboardingStepPublicDTO(BaseModel):
     mascot_x: float = 0.0
     mascot_y: float = 0.0
     mascot_rotation: float = 0.0
+    bubble_x: float = 0.0
+    bubble_y: float = 0.0
+    mascot_flip_h: bool = False
+    mascot_flip_v: bool = False
 
 
 class OnboardingStoryPublicDTO(BaseModel):

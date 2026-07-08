@@ -1,9 +1,15 @@
+import os
 from uuid import UUID
 
 from fastapi import HTTPException, status
 
-# Phones allowed to see is_test=True stories. Normalise: digits only, no spaces.
-_TEST_PHONES: frozenset[str] = frozenset({"+77787943760"})
+# Phones allowed to see is_test=True stories.
+# Configure via ONBOARDING_TEST_PHONES env var (comma-separated).
+_TEST_PHONES: frozenset[str] = frozenset(
+    p.strip()
+    for p in os.getenv("ONBOARDING_TEST_PHONES", "+77787943760").split(",")
+    if p.strip()
+)
 
 from onboarding.dtos import (
     OnboardingStoryCreateDTO, OnboardingStoryUpdateDTO,

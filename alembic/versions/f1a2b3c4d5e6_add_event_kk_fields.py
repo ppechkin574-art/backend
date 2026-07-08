@@ -1,15 +1,15 @@
 """add _kk translation fields to events
 
-Revision ID: b2c3d4e5f6a7
-Revises: 1338a104083a, a0b1c2d3e4f5, a8b7c6d5e4f3, e4f5a6b7c8d9, 420aa383195e, d9e0f1a2b3c4
+Revision ID: f1a2b3c4d5e6
+Revises: a0b1c2d3e4f5, 420aa383195e, 1338a104083a, d9e0f1a2b3c4
 Create Date: 2026-07-07
 
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "b2c3d4e5f6a7"
-down_revision = ("1338a104083a", "a0b1c2d3e4f5", "a8b7c6d5e4f3", "e4f5a6b7c8d9", "420aa383195e", "d9e0f1a2b3c4")
+revision = "f1a2b3c4d5e6"
+down_revision = ("a0b1c2d3e4f5", "420aa383195e", "1338a104083a", "d9e0f1a2b3c4")
 branch_labels = None
 depends_on = None
 

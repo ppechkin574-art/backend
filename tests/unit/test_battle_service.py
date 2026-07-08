@@ -283,6 +283,11 @@ class TestFinishSession:
 _REAL_PLAYER_UUID = "550e8400-e29b-41d4-a716-446655440000"
 
 
+def _added_types(db):
+    """Return the class names of every object passed to db.add()."""
+    return [type(call.args[0]).__name__ for call in db.add.call_args_list]
+
+
 class TestFinishSessionBankCredit:
     def test_win_adds_transaction_to_db(self):
         db = MagicMock()
@@ -291,8 +296,9 @@ class TestFinishSessionBankCredit:
 
         svc.finish_session(session)
 
-        # A Transaction record must be added for the winner's balance credit
-        db.add.assert_called_once()
+        # finish_session may add multiple records (Transaction + PointsAuditLog).
+        # Assert that exactly one Transaction was added for the bank balance credit.
+        assert _added_types(db).count("Transaction") == 1
 
     def test_loss_does_not_add_transaction(self):
         db = MagicMock()
@@ -301,8 +307,8 @@ class TestFinishSessionBankCredit:
 
         svc.finish_session(session)
 
-        # player1 lost → stars_player1 = 0 → no bank transaction
-        db.add.assert_not_called()
+        # player1 lost → stars_player1 = 0 → no bank Transaction
+        assert "Transaction" not in _added_types(db)
 
     def test_draw_adds_transaction_to_db(self):
         db = MagicMock()
@@ -311,8 +317,8 @@ class TestFinishSessionBankCredit:
 
         svc.finish_session(session)
 
-        # Draw gives BATTLE_STARS_DRAW → Transaction added
-        db.add.assert_called_once()
+        # Draw gives BATTLE_STARS_DRAW → one Transaction added
+        assert _added_types(db).count("Transaction") == 1
 
     def test_bot_player1_id_skips_bank_credit(self):
         db = MagicMock()
@@ -321,20 +327,20 @@ class TestFinishSessionBankCredit:
 
         svc.finish_session(session)
 
-        # "bot:..." is not a valid UUID → credit is skipped
-        db.add.assert_not_called()
+        # "bot:..." is not a valid UUID → bank credit AND user_points are skipped
+        assert "Transaction" not in _added_types(db)
 
     def test_no_bank_account_skips_credit(self):
         db = MagicMock()
-        # Return None for the account query to simulate no account
+        # Return None for the account query to simulate no bank account
         db.query.return_value.filter.return_value.first.return_value = None
         session = _make_session(player1_score=5, player2_score=3, player1_id=_REAL_PLAYER_UUID)
         svc = _make_svc(db=db)
 
         svc.finish_session(session)
 
-        # Account not found → add never called
-        db.add.assert_not_called()
+        # Account not found → no Transaction added (other records like PointsAuditLog may exist)
+        assert "Transaction" not in _added_types(db)
 
 
 # ---------------------------------------------------------------------------

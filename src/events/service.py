@@ -35,6 +35,7 @@ class EventService:
             deadline=payload.deadline,
             button_text=payload.button_text,
             bg_color=payload.bg_color,
+            icon_url=payload.icon_url,
             progress_current=payload.progress_current,
             progress_max=payload.progress_max,
             sort_order=payload.sort_order,

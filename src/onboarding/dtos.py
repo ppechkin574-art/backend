@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -38,6 +38,7 @@ class OnboardingStepDTO(BaseModel):
     mascot_flip_v: bool = False
     step_screen: Optional[str] = None
     spotlight_element_keys: List[str] = Field(default_factory=list)
+    spotlight_adjustments: Dict[str, Any] = Field(default_factory=dict)
 
 
 class OnboardingStepCreateDTO(BaseModel):
@@ -62,6 +63,7 @@ class OnboardingStepCreateDTO(BaseModel):
     mascot_flip_v: bool = False
     step_screen: Optional[str] = Field(default=None, max_length=50)
     spotlight_element_keys: List[str] = Field(default_factory=list)
+    spotlight_adjustments: Dict[str, Any] = Field(default_factory=dict)
 
 
 class OnboardingStepUpdateDTO(BaseModel):
@@ -86,6 +88,7 @@ class OnboardingStepUpdateDTO(BaseModel):
     mascot_flip_v: Optional[bool] = None
     step_screen: Optional[str] = Field(default=None, max_length=50)
     spotlight_element_keys: Optional[List[str]] = None
+    spotlight_adjustments: Optional[Dict[str, Any]] = None
 
 
 # ─── Story DTOs ──────────────────────────────────────────────────────────────
@@ -170,6 +173,7 @@ class OnboardingStepPublicDTO(BaseModel):
     mascot_flip_v: bool = False
     step_screen: Optional[str] = None
     spotlight_element_keys: List[str] = Field(default_factory=list)
+    spotlight_adjustments: Dict[str, Any] = Field(default_factory=dict)
 
 
 class OnboardingStoryPublicDTO(BaseModel):

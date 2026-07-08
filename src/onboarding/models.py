@@ -60,8 +60,9 @@ class OnboardingStep(Base):
     # bottom_left | bottom_right | top_left | top_right
     mascot_position = Column(String(20), nullable=False, server_default="bottom_left")
     spotlight_element_key  = Column(String(100), nullable=True)
-    spotlight_element_keys = Column(sa.JSON, nullable=False, server_default=sa.text("'[]'::json"))
-    step_screen            = Column(String(50), nullable=True)
+    spotlight_element_keys  = Column(sa.JSON, nullable=False, server_default=sa.text("'[]'::json"))
+    spotlight_adjustments   = Column(sa.JSON, nullable=False, server_default=sa.text("'{}'::json"))
+    step_screen             = Column(String(50), nullable=True)
     action_label_ru = Column(Text, nullable=True)
     action_label_kk = Column(Text, nullable=True)
     action_route = Column(Text, nullable=True)

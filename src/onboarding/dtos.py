@@ -39,6 +39,10 @@ class OnboardingStepDTO(BaseModel):
     step_screen: Optional[str] = None
     spotlight_element_keys: List[str] = Field(default_factory=list)
     spotlight_adjustments: Dict[str, Any] = Field(default_factory=dict)
+    bubble_width: float = 260.0
+    bubble_padding: float = 20.0
+    button_width: float = 0.0
+    button_padding_v: float = 15.0
 
 
 class OnboardingStepCreateDTO(BaseModel):
@@ -64,6 +68,10 @@ class OnboardingStepCreateDTO(BaseModel):
     step_screen: Optional[str] = Field(default=None, max_length=50)
     spotlight_element_keys: List[str] = Field(default_factory=list)
     spotlight_adjustments: Dict[str, Any] = Field(default_factory=dict)
+    bubble_width: float = Field(default=260.0, ge=100.0, le=400.0)
+    bubble_padding: float = Field(default=20.0, ge=4.0, le=40.0)
+    button_width: float = Field(default=0.0, ge=0.0, le=400.0)
+    button_padding_v: float = Field(default=15.0, ge=4.0, le=30.0)
 
 
 class OnboardingStepUpdateDTO(BaseModel):
@@ -89,6 +97,10 @@ class OnboardingStepUpdateDTO(BaseModel):
     step_screen: Optional[str] = Field(default=None, max_length=50)
     spotlight_element_keys: Optional[List[str]] = None
     spotlight_adjustments: Optional[Dict[str, Any]] = None
+    bubble_width: Optional[float] = Field(default=None, ge=100.0, le=400.0)
+    bubble_padding: Optional[float] = Field(default=None, ge=4.0, le=40.0)
+    button_width: Optional[float] = Field(default=None, ge=0.0, le=400.0)
+    button_padding_v: Optional[float] = Field(default=None, ge=4.0, le=30.0)
 
 
 # ─── Story DTOs ──────────────────────────────────────────────────────────────
@@ -174,6 +186,10 @@ class OnboardingStepPublicDTO(BaseModel):
     step_screen: Optional[str] = None
     spotlight_element_keys: List[str] = Field(default_factory=list)
     spotlight_adjustments: Dict[str, Any] = Field(default_factory=dict)
+    bubble_width: float = 260.0
+    bubble_padding: float = 20.0
+    button_width: float = 0.0
+    button_padding_v: float = 15.0
 
 
 class OnboardingStoryPublicDTO(BaseModel):

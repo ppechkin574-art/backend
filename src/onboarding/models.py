@@ -74,6 +74,10 @@ class OnboardingStep(Base):
     bubble_y        = Column(Float, nullable=False, server_default="0.0")
     mascot_flip_h   = Column(Boolean, nullable=False, server_default="false")
     mascot_flip_v   = Column(Boolean, nullable=False, server_default="false")
+    bubble_width    = Column(Float, nullable=False, server_default="260")
+    bubble_padding  = Column(Float, nullable=False, server_default="20")
+    button_width    = Column(Float, nullable=False, server_default="0")
+    button_padding_v = Column(Float, nullable=False, server_default="15")
 
     story = relationship("OnboardingStory", back_populates="steps")
 

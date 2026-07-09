@@ -1,19 +1,26 @@
 """add bubble and button size to onboarding steps
 
 Revision ID: b1c2d3e4f5a6
-Revises: a0b1c2d3e4f5
+Revises: a0b1c2d3e4f5, 2a5acb79a88d, a1f0e7e3b4c2, d3e4f5a6b7c8, f1a2b3c4d5e6, ba77100000001
 Create Date: 2026-07-08 12:00:00.000000
 
 """
 
-from typing import Sequence, Union
+from typing import Sequence, Tuple, Union
 
 from alembic import op
 import sqlalchemy as sa
 
 
 revision: str = 'b1c2d3e4f5a6'
-down_revision: Union[str, None] = 'a0b1c2d3e4f5'
+down_revision: Union[Tuple[str, ...], None] = (
+    'a0b1c2d3e4f5',
+    '2a5acb79a88d',
+    'a1f0e7e3b4c2',
+    'd3e4f5a6b7c8',
+    'f1a2b3c4d5e6',
+    'ba77100000001',
+)
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

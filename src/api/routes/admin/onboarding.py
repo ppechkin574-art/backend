@@ -1,13 +1,24 @@
 """Admin CRUD for onboarding stories and image uploads."""
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from uuid import UUID
 
-from api.dependencies import allow_only_admins, get_file_service, get_onboarding_service
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+
+from api.dependencies import (
+    allow_only_admins,
+    get_file_service,
+    get_identity_provider_client_keycloak,
+    get_onboarding_service,
+)
+from clients.identity_provider.client import IdentityProviderClientKeycloak
 from onboarding.dtos import (
     OnboardingStepDTO,
     OnboardingStoryCreateDTO,
     OnboardingStoryDTO,
     OnboardingStoryUpdateDTO,
+    ResetViewsRequestDTO,
+    ResetViewsResponseDTO,
+    StoryStatsDTO,
 )
 from onboarding.service import OnboardingService
 from utils.file_service import FileService
@@ -83,6 +94,42 @@ def delete_story(
     service.repo.db.commit()
     for fname in mascot_filenames:
         fs.delete_mascot_image(fname)
+
+
+# ── Stats & re-show ──────────────────────────────────────────────────────────
+
+@router.get("/stories/{story_id}/stats", response_model=StoryStatsDTO)
+def get_story_stats(
+    story_id: int,
+    service: OnboardingService = Depends(get_onboarding_service),
+):
+    return service.get_story_stats(story_id)
+
+
+@router.post("/stories/{story_id}/reset-views", response_model=ResetViewsResponseDTO)
+def reset_views(
+    story_id: int,
+    body: ResetViewsRequestDTO,
+    service: OnboardingService = Depends(get_onboarding_service),
+    identity_provider: IdentityProviderClientKeycloak = Depends(get_identity_provider_client_keycloak),
+):
+    user_id: UUID | None = None
+    if body.mode == "user":
+        if not body.user_phone:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="user_phone обязателен для режима user",
+            )
+        user_data = identity_provider._find_user_by_phone(body.user_phone)
+        if user_data is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Пользователь с номером {body.user_phone} не найден",
+            )
+        user_id = UUID(user_data["id"])
+    result = service.reset_views(story_id, body, user_id=user_id)
+    service.repo.db.commit()
+    return result
 
 
 # ── Image upload ─────────────────────────────────────────────────────────────

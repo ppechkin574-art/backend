@@ -222,3 +222,21 @@ class OnboardingViewResponseDTO(BaseModel):
     view_count: int
     completed_at: Optional[datetime] = None
     skipped_at: Optional[datetime] = None
+
+
+# ─── Re-show admin DTOs ───────────────────────────────────────────────────────
+
+class StoryStatsDTO(BaseModel):
+    total_views: int
+
+
+class ResetViewsRequestDTO(BaseModel):
+    mode: Literal["all", "before_date", "new_users", "user"]
+    before_date: Optional[datetime] = None
+    new_user_days: Optional[int] = Field(default=None, ge=1)
+    user_phone: Optional[str] = None
+
+
+class ResetViewsResponseDTO(BaseModel):
+    reset_count: int
+    message: str

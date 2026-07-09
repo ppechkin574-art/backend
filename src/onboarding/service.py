@@ -14,6 +14,7 @@ _TEST_PHONES: frozenset[str] = frozenset(
 from onboarding.dtos import (
     OnboardingStoryCreateDTO, OnboardingStoryUpdateDTO,
     OnboardingViewDTO, OnboardingViewResponseDTO,
+    ResetViewsRequestDTO, ResetViewsResponseDTO, StoryStatsDTO,
 )
 from onboarding.models import OnboardingStep, OnboardingStory
 from onboarding.repository import OnboardingRepository
@@ -135,3 +136,52 @@ class OnboardingService:
     def get_user_views(self, user_id: UUID) -> dict[int, int]:
         """Returns {story_id: view_count} for this user."""
         return {v.story_id: v.view_count for v in self.repo.get_views_for_user(user_id)}
+
+    # ── Re-show (admin) ──────────────────────────────────────────────────────
+
+    def get_story_stats(self, story_id: int) -> StoryStatsDTO:
+        self.get_story(story_id)  # raises 404 if not found
+        total = self.repo.count_views(story_id)
+        return StoryStatsDTO(total_views=total)
+
+    def reset_views(
+        self, story_id: int, payload: ResetViewsRequestDTO, user_id: UUID | None = None
+    ) -> ResetViewsResponseDTO:
+        self.get_story(story_id)  # raises 404 if not found
+
+        if payload.mode == "all":
+            count = self.repo.reset_views_all(story_id)
+            return ResetViewsResponseDTO(reset_count=count, message=f"Сброшено {count} просмотров")
+
+        if payload.mode == "before_date":
+            if not payload.before_date:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="before_date обязателен для режима before_date",
+                )
+            count = self.repo.reset_views_before_date(story_id, payload.before_date)
+            return ResetViewsResponseDTO(reset_count=count, message=f"Сброшено {count} просмотров")
+
+        if payload.mode == "new_users":
+            story = self.get_story(story_id)
+            story.target_audience = "NEW_USERS"
+            if payload.new_user_days is not None:
+                story.new_user_days = payload.new_user_days
+            self.repo.db.flush()
+            return ResetViewsResponseDTO(reset_count=0, message="Аудитория изменена на «Новые пользователи»")
+
+        if payload.mode == "user":
+            if user_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="user_id обязателен для режима user",
+                )
+            count = self.repo.reset_views_for_user(story_id, user_id)
+            if count == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="У данного пользователя нет просмотров этого онбординга",
+                )
+            return ResetViewsResponseDTO(reset_count=count, message="Просмотр сброшен для пользователя")
+
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Неизвестный режим")

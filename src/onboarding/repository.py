@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session, selectinload
 
 from onboarding.models import OnboardingStep, OnboardingStory, UserOnboardingView
@@ -78,6 +78,38 @@ class OnboardingRepository:
                 select(UserOnboardingView).where(UserOnboardingView.user_id == user_id)
             ).all()
         )
+
+    def count_views(self, story_id: int) -> int:
+        return self.db.scalar(
+            select(func.count()).select_from(UserOnboardingView).where(UserOnboardingView.story_id == story_id)
+        ) or 0
+
+    def reset_views_all(self, story_id: int) -> int:
+        result = self.db.execute(
+            delete(UserOnboardingView).where(UserOnboardingView.story_id == story_id)
+        )
+        self.db.flush()
+        return result.rowcount
+
+    def reset_views_before_date(self, story_id: int, before_date: datetime) -> int:
+        result = self.db.execute(
+            delete(UserOnboardingView).where(
+                UserOnboardingView.story_id == story_id,
+                UserOnboardingView.created_at < before_date,
+            )
+        )
+        self.db.flush()
+        return result.rowcount
+
+    def reset_views_for_user(self, story_id: int, user_id: UUID) -> int:
+        result = self.db.execute(
+            delete(UserOnboardingView).where(
+                UserOnboardingView.story_id == story_id,
+                UserOnboardingView.user_id == user_id,
+            )
+        )
+        self.db.flush()
+        return result.rowcount
 
     def upsert_view(self, user_id: UUID, story_id: int, skipped: bool) -> UserOnboardingView:
         view = self.get_view(user_id, story_id)

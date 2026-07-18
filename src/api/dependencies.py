@@ -1061,3 +1061,13 @@ def get_onboarding_service(
     from onboarding.service import OnboardingService
 
     return OnboardingService(OnboardingRepository(db))
+
+
+def get_crm_service(
+    db: Session = Depends(get_db_session),
+):
+    """CRUD доски задач CRM (канбан) + append-only лог изменений."""
+    from crm.repository import CrmRepository
+    from crm.service import CrmService
+
+    return CrmService(CrmRepository(db))

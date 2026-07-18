@@ -1,3 +1,11 @@
 # Test-only dependencies. Not installed in the production Docker image.
 pytest==8.3.4
+# Required for every `async def test_...` in tests/unit (many already use
+# @pytest.mark.asyncio, e.g. test_trial_per_phone.py, test_subscription_activate.py).
+# Without this plugin pytest silently SKIPS async tests instead of running
+# them (PytestUnhandledCoroutineWarning) — found during marketing-role RBAC
+# QA (2026-07-18) when the new async dependency tests didn't show up in the
+# run at all. Installing it also un-skips ~7 pre-existing async tests that
+# were passing silently-not-running before.
+pytest-asyncio==0.24.0
 # httpx is already pinned in requirements.txt (0.28.1) — do not re-pin here.

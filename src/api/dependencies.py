@@ -1071,3 +1071,13 @@ def get_crm_service(
     from crm.service import CrmService
 
     return CrmService(CrmRepository(db))
+
+
+def get_leaderboard_points_service(
+    db: Session = Depends(get_db_session),
+):
+    """Настройки авто-сброса очков лидерборда + точечная корректировка."""
+    from leaderboard_points.repository import LeaderboardPointsRepository
+    from leaderboard_points.service import LeaderboardPointsService
+
+    return LeaderboardPointsService(LeaderboardPointsRepository(db))

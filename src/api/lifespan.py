@@ -135,7 +135,8 @@ async def _suspicious_subscription_checker(db_settings: DatabaseSettings) -> Non
         try:
             from datetime import UTC, datetime, timedelta
 
-            from sqlalchemy import exists
+            from sqlalchemy import cast, exists
+            from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
             session = db.session
             try:
@@ -153,7 +154,8 @@ async def _suspicious_subscription_checker(db_settings: DatabaseSettings) -> Non
                             & (Payment.status == "completed")
                         ),
                         ~exists().where(
-                            PromocodeUsage.student_guid == Subscription.user_id
+                            PromocodeUsage.student_guid
+                            == cast(Subscription.user_id, PG_UUID(as_uuid=True))
                         ),
                         # Skip users already alerted in the last 24h
                         ~exists().where(

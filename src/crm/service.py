@@ -78,6 +78,18 @@ class CrmService:
             )
         )
 
+    def _maybe_dispatch_agent_webhook(self, task: CrmTask) -> None:
+        """Fires the agent-executor webhook if this task's assignee is the
+        agent — called both on creation-with-assignee and on a later
+        reassignment, since either can be how a task ends up on the agent."""
+        if (
+            self._agent_webhook is not None
+            and self._agent_admin_id
+            and task.assignee_admin_id is not None
+            and str(task.assignee_admin_id) == self._agent_admin_id
+        ):
+            self._agent_webhook.notify_task_assigned(task)
+
     def create(
         self, payload: CrmTaskCreateDTO, actor_id: UUID | None, actor_display: str
     ) -> CrmTask:
@@ -95,6 +107,7 @@ class CrmService:
         )
         self.repo.add(task)
         self._log(task, "create", {"status": task.status}, actor_id, actor_display)
+        self._maybe_dispatch_agent_webhook(task)
         return task
 
     def update(
@@ -129,14 +142,8 @@ class CrmService:
                 actor_display,
             )
 
-        if (
-            "assignee_admin_id" in fields
-            and str(task.assignee_admin_id) != str(old_assignee)
-            and self._agent_webhook is not None
-            and self._agent_admin_id
-            and str(task.assignee_admin_id) == self._agent_admin_id
-        ):
-            self._agent_webhook.notify_task_assigned(task)
+        if "assignee_admin_id" in fields and str(task.assignee_admin_id) != str(old_assignee):
+            self._maybe_dispatch_agent_webhook(task)
 
         return task
 

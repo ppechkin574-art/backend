@@ -1,6 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from clients import TelegramBotSettings
+from clients.agent_webhook.settings import AgentWebhookSettings
 from clients.apple.settings import AppleOAuthSettings
 from clients.firebase.settings import FirebaseSettings
 from clients.freedom_pay.settings import FreedomPaySettings
@@ -42,3 +43,6 @@ class Settings(BaseSettings):
     upload_base_dir: str
     file_base_url: str
     cloudflare_customer_code: str
+    # Optional: 24/7 agent executor webhook. Blank/disabled until the
+    # executor service exists — see AgentWebhookSettings.
+    agent_webhook: AgentWebhookSettings = AgentWebhookSettings()

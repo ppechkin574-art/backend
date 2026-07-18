@@ -28,8 +28,12 @@ from .security import router as security_router
 from .translation import router as admin_translation_router
 from .events import router as events_router
 from .onboarding import router as onboarding_router
+from .crm import router as crm_router
+from .leaderboard_points import router as leaderboard_points_router
 
 routers = [
+    crm_router,
+    leaderboard_points_router,
     dashboard_router,
     subjects_router,
     topics_router,

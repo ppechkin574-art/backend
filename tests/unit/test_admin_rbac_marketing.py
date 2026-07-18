@@ -48,9 +48,9 @@ def _user(roles: list[str]) -> UserDTO:
         subscription_cancelled=False,
         created_at=None,
         updated_at=None,
-        streak_days=0,
-        total_attendance_points=0,
-        today_attendance_points=None,
+        attendance_streak_days=0,
+        attendance_total_points=0,
+        attendance_today_points=None,
         roles=roles,
     )
 
@@ -147,6 +147,14 @@ class TestAllowReadOrAdminWrite:
             )
         assert exc.value.status_code == 403
 
+    @pytest.mark.asyncio
+    async def test_invalid_token_is_401(self):
+        with pytest.raises(HTTPException) as exc:
+            await allow_read_or_admin_write(
+                request=_request("GET"), access_token="t", auth_service=_FakeAuthService(None)
+            )
+        assert exc.value.status_code == 401
+
 
 # ---------------------------------------------------------------------------
 # allow_crm_access — marketing gets full read/write EXCEPT delete.
@@ -155,7 +163,7 @@ class TestAllowReadOrAdminWrite:
 # ---------------------------------------------------------------------------
 class TestAllowCrmAccess:
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("method", ["GET", "POST", "PATCH"])
+    @pytest.mark.parametrize("method", ["GET", "POST", "PATCH", "PUT"])
     async def test_marketing_can_read_and_write_except_delete(self, method):
         user = await allow_crm_access(
             request=_request(method), access_token="t", auth_service=_FakeAuthService(["marketing"])
@@ -177,6 +185,22 @@ class TestAllowCrmAccess:
             request=_request("DELETE"), access_token="t", auth_service=_FakeAuthService(roles)
         )
         assert user.roles == roles
+
+    @pytest.mark.asyncio
+    async def test_plain_user_rejected(self):
+        with pytest.raises(HTTPException) as exc:
+            await allow_crm_access(
+                request=_request("GET"), access_token="t", auth_service=_FakeAuthService(["user"])
+            )
+        assert exc.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_invalid_token_is_401(self):
+        with pytest.raises(HTTPException) as exc:
+            await allow_crm_access(
+                request=_request("GET"), access_token="t", auth_service=_FakeAuthService(None)
+            )
+        assert exc.value.status_code == 401
 
 
 # ---------------------------------------------------------------------------
@@ -227,3 +251,11 @@ class TestAllowSettingsReadOrAdminWrite:
                 request=_request("GET"), access_token="t", auth_service=_FakeAuthService(["manager"])
             )
         assert exc.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_invalid_token_is_401(self):
+        with pytest.raises(HTTPException) as exc:
+            await allow_settings_read_or_admin_write(
+                request=_request("GET"), access_token="t", auth_service=_FakeAuthService(None)
+            )
+        assert exc.value.status_code == 401

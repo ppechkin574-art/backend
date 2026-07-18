@@ -5,7 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 
 from api.dependencies import (
-    allow_only_admins,
+    allow_read_or_admin_write,
     get_file_service,
     get_identity_provider_client_keycloak,
     get_onboarding_service,
@@ -26,7 +26,7 @@ from utils.file_service import FileService
 router = APIRouter(
     prefix="/admin/onboarding",
     tags=["admin"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 

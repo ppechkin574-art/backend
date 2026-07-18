@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from api.dependencies import (
-    allow_only_admins,
+    allow_read_or_admin_write,
     get_streak_bonus_service,
     get_streak_reminder_service,
 )
@@ -23,7 +23,7 @@ from streak_bonus.service import StreakBonusService
 router = APIRouter(
     prefix="/admin/streak-push-template",
     tags=["admin"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 

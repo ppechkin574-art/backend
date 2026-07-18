@@ -9,20 +9,21 @@ There is no POST/DELETE — settings are seeded by migrations. The admin
 UI just lets you tune the values that ops needs to adjust without a
 backend redeploy (SMS cap, IP block thresholds, future feature flags).
 
-Gated by `allow_only_admins`. Updates bust the Redis cache so other
+Writes (PUT) are admin-only; GET also allows `marketing` (read-only) since
+the Рефералы page reads through here. Updates bust the Redis cache so other
 replicas see the new value within milliseconds.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from api.dependencies import allow_only_super_admins, get_app_settings_service
+from api.dependencies import allow_settings_read_or_admin_write, get_app_settings_service
 from app_config.dtos import AppSettingDTO, AppSettingUpdateDTO
 from app_config.service import AppSettingsService
 
 router = APIRouter(
     prefix="/admin/app-settings",
     tags=["admin"],
-    dependencies=[Depends(allow_only_super_admins)],
+    dependencies=[Depends(allow_settings_read_or_admin_write)],
 )
 
 

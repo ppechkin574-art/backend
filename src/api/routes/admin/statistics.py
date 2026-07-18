@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, Depends
 
-from api.dependencies import allow_only_admins, get_admin_service
+from api.dependencies import allow_read_or_admin_write, get_admin_service
 from api.exceptions.documentation import get_common_responses
 from quiz.dtos.admin import (
     AdminSubjectDTO,
@@ -14,7 +14,7 @@ from quiz.services.admin import AdminService
 router = APIRouter(
     prefix="/admin/statistics",
     tags=["Admin - Statistics"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 logger = logging.getLogger(__name__)

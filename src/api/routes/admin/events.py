@@ -1,6 +1,6 @@
 """Admin CRUD for events (banners + event cards on Главная screen).
 
-Endpoints (all protected by allow_only_admins):
+Endpoints (all protected by allow_read_or_admin_write):
 - GET    /admin/events           — list all (active + inactive)
 - POST   /admin/events           — create
 - GET    /admin/events/{id}      — get one
@@ -11,7 +11,7 @@ Endpoints (all protected by allow_only_admins):
 
 from fastapi import APIRouter, Depends, UploadFile, File
 
-from api.dependencies import allow_only_admins, get_event_service, get_file_service
+from api.dependencies import allow_read_or_admin_write, get_event_service, get_file_service
 from events.dtos import EventCreateDTO, EventDTO, EventUpdateDTO
 from events.service import EventService
 from utils.file_service import FileService
@@ -19,7 +19,7 @@ from utils.file_service import FileService
 router = APIRouter(
     prefix="/admin/events",
     tags=["admin"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 

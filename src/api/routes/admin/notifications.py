@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from api.containers import Container
-from api.dependencies import allow_only_admins, get_database, get_settings
+from api.dependencies import allow_read_or_admin_write, get_database, get_settings
 from api.exceptions.documentation import get_common_responses
 from clients.firebase import FirebaseNotificationClient
 from clients.firebase.settings import FirebaseSettings
@@ -17,7 +17,7 @@ from settings import Settings
 router = APIRouter(
     prefix="/admin/notifications",
     tags=["Admin - Notifications (Test)"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 logger = logging.getLogger(__name__)

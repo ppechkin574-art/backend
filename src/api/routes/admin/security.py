@@ -7,14 +7,14 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from api.dependencies import allow_only_admins, get_db_session, get_identity_provider_client_keycloak
+from api.dependencies import allow_read_or_admin_write, get_db_session, get_identity_provider_client_keycloak
 from clients.identity_provider.client import IdentityProviderClientKeycloak
 from security.service import SecurityService
 
 router = APIRouter(
     prefix="/admin/security",
     tags=["Admin - Security"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 

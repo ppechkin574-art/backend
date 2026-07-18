@@ -1,4 +1,4 @@
-"""Admin cache flush — guarded by Depends(allow_only_admins).
+"""Admin cache flush — guarded by Depends(allow_read_or_admin_write) (write path, admin/manager only).
 
 Verifies the auth boundary: anonymous → 401, admin token → 200.
 """

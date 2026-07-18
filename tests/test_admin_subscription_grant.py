@@ -1,4 +1,4 @@
-"""Admin grant/revoke PRO subscription — guarded by Depends(allow_only_admins).
+"""Admin grant/revoke PRO subscription — guarded by Depends(allow_read_or_admin_write) (write path, admin/manager only).
 
 Smoke test: verify auth boundary on both new endpoints.
 
@@ -61,7 +61,7 @@ def test_grant_pro_rejects_excessive_days(http, admin_token):
 def test_reset_subscription_anon_is_unauthorized(http):
     """Sister endpoint — confirm same boundary still holds after we
     added grant. Regression guard against accidentally removing the
-    `Depends(allow_only_admins)` from the router."""
+    `Depends(allow_read_or_admin_write)` from the router."""
     fake_user_id = uuid.uuid4()
     resp = http.post(f"/admin/users/{fake_user_id}/reset-subscription")
     assert resp.status_code == 401

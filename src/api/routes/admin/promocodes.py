@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from api.dependencies import (
-    allow_only_admins,
+    allow_read_or_admin_write,
     get_db_session,
     get_promocode_service,
 )
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/admin/promocodes",
     tags=["Admin - Promocodes"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 
@@ -44,7 +44,7 @@ router = APIRouter(
 )
 async def create_promocode(
     request: CreatePromocodeRequest,
-    user: UserDTO = Depends(allow_only_admins),
+    user: UserDTO = Depends(allow_read_or_admin_write),
     promocode_service: PromocodeService = Depends(get_promocode_service),
 ):
     """Создать новый промокод"""
@@ -88,7 +88,7 @@ async def create_promocode(
 )
 async def bulk_create_promocodes(
     request: BulkCreateRequest,
-    user: UserDTO = Depends(allow_only_admins),
+    user: UserDTO = Depends(allow_read_or_admin_write),
     promocode_service: PromocodeService = Depends(get_promocode_service),
 ):
     """Создать несколько промокодов"""
@@ -139,7 +139,7 @@ async def bulk_create_promocodes(
     summary="Список всех промокодов с пагинацией",
 )
 async def list_promocodes(
-    _user: UserDTO = Depends(allow_only_admins),
+    _user: UserDTO = Depends(allow_read_or_admin_write),
     page: int = Query(1, ge=1, description="Номер страницы"),
     page_size: int = Query(20, ge=1, le=100, description="Размер страницы"),
     plan_type: PlanType | None = Query(None, description="Фильтр по типу плана"),
@@ -198,7 +198,7 @@ async def list_promocodes(
 @router.get("/{code}", response_model=PromocodeStatsDTO, summary="Статистика промокода")
 async def get_promocode_stats(
     code: str,
-    _user: UserDTO = Depends(allow_only_admins),
+    _user: UserDTO = Depends(allow_read_or_admin_write),
     promocode_service: PromocodeService = Depends(get_promocode_service),
 ):
     """Получить полную статистику использования промокода"""
@@ -220,7 +220,7 @@ async def get_promocode_stats(
 )
 async def get_promocode_usages(
     code: str,
-    _user: UserDTO = Depends(allow_only_admins),
+    _user: UserDTO = Depends(allow_read_or_admin_write),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db_session),
@@ -276,7 +276,7 @@ async def get_promocode_usages(
 async def update_promocode(
     code: str,
     update_data: UpdatePromocodeRequest,
-    user: UserDTO = Depends(allow_only_admins),
+    user: UserDTO = Depends(allow_read_or_admin_write),
     promocode_service: PromocodeService = Depends(get_promocode_service),
 ):
     """Обновить параметры промокода"""
@@ -309,7 +309,7 @@ async def update_promocode(
 @router.delete("/{code}", status_code=status.HTTP_204_NO_CONTENT, summary="Деактивировать промокод")
 async def deactivate_promocode(
     code: str,
-    user: UserDTO = Depends(allow_only_admins),
+    user: UserDTO = Depends(allow_read_or_admin_write),
     promocode_service: PromocodeService = Depends(get_promocode_service),
 ):
     """Деактивировать промокод (установить дату истечения в прошлое)"""
@@ -340,7 +340,7 @@ async def deactivate_promocode(
 )
 async def search_promocodes(
     search_term: str,
-    _user: UserDTO = Depends(allow_only_admins),
+    _user: UserDTO = Depends(allow_read_or_admin_write),
     db: Session = Depends(get_db_session),
 ):
     """Поиск промокодов по коду или описанию"""

@@ -1,6 +1,6 @@
 """Admin CRUD endpoints for subscription benefits.
 
-Gated by `allow_only_admins` — only realm-role `admin` can mutate the
+Gated by `allow_read_or_admin_write` — only realm-role `admin` can mutate the
 list.  Behavioural contract:
 
 - GET   /admin/content/subscription-benefits           — list everything (incl. inactive)
@@ -14,7 +14,7 @@ through its existing OpenAPI client."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from api.dependencies import allow_only_admins, get_subscription_benefit_service
+from api.dependencies import allow_read_or_admin_write, get_subscription_benefit_service
 from content.dtos import (
     SubscriptionBenefitAdminDTO,
     SubscriptionBenefitCreateDTO,
@@ -25,7 +25,7 @@ from content.service import SubscriptionBenefitService
 router = APIRouter(
     prefix="/admin/content/subscription-benefits",
     tags=["admin"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 

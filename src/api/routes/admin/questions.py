@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from fastapi.responses import JSONResponse
 
-from api.dependencies import allow_only_admins, get_import_service, get_question_service
+from api.dependencies import allow_read_or_admin_write, get_import_service, get_question_service
 from api.exceptions.documentation import get_common_responses, get_error_responses
 from api.routes.quiz.converters import (
     to_question_create_service,
@@ -33,7 +33,7 @@ from quiz.services.questions import QuestionServiceInterface
 router = APIRouter(
     prefix="/admin/questions",
     tags=["Admin - Questions"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 logger = logging.getLogger(__name__)

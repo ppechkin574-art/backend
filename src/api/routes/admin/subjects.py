@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
 from api.common import ListDTO, ListQueryDTO
-from api.dependencies import allow_only_admins, get_subject_service
+from api.dependencies import allow_read_or_admin_write, get_subject_service
 from api.exceptions.documentation import get_common_responses, get_error_responses
 from api.routes.quiz.converters import (
     to_subject_create_service,
@@ -24,7 +24,7 @@ from quiz.services.subjects import SubjectServiceInterface
 router = APIRouter(
     prefix="/admin/subjects",
     tags=["Admin - Subjects"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 

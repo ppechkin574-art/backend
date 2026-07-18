@@ -2,13 +2,13 @@ from fastapi import APIRouter, Depends
 from dependency_injector.wiring import Provide, inject
 
 from api.containers import Container
-from api.dependencies import allow_only_admins
+from api.dependencies import allow_read_or_admin_write
 from utils.cache import CacheService
 
 router = APIRouter(
     prefix="/admin/cache",
     tags=["admin"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 

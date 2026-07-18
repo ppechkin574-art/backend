@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from api.dependencies import get_db_session, allow_only_admins
+from api.dependencies import get_db_session, allow_read_or_admin_write
 from subscription.models import SubscriptionPlan
 from subscription.plan_repository import SubscriptionPlanRepository
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/admin/subscription",
     tags=["Admin - Subscription"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 

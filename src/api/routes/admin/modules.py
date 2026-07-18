@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from api.dependencies import (
-    allow_only_admins,
+    allow_read_or_admin_write,
     get_module_lesson_service,
     get_subject_module_service,
 )
@@ -29,7 +29,7 @@ from quiz.services.modules import ModuleLessonService, SubjectModuleService
 router = APIRouter(
     prefix="/admin/modules",
     tags=["Admin - Modules"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 

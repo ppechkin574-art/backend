@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
-from api.dependencies import allow_only_admins, get_db_session
+from api.dependencies import allow_read_or_admin_write, get_db_session
 from app_config.models import AppSetting
 from quiz.dtos.enums import BlockType
 from quiz.models.edu_content import Hint, Question, Subject, Variant
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/admin/translation",
     tags=["admin"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 _STATUSES = {"none", "queued", "draft", "done"}

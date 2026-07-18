@@ -27,7 +27,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from api.dependencies import (
-    allow_only_admins,
+    allow_read_or_admin_write,
     get_cache_service,
     get_unit_of_work_tests,
 )
@@ -79,7 +79,7 @@ class _FakeCache:
 
 
 def _build_admin_user() -> UserDTO:
-    """Minimal admin UserDTO good enough for the allow_only_admins
+    """Minimal admin UserDTO good enough for the allow_read_or_admin_write
     override. The real dependency reads .roles, so we only fill that."""
     return UserDTO.model_construct(
         id=uuid4(),
@@ -106,7 +106,7 @@ def _build_admin_user() -> UserDTO:
 def app():
     """FastAPI app with just the admin/users router mounted, dependency
     overrides for the three things we want to inject:
-      * allow_only_admins → returns a fake admin user
+      * allow_read_or_admin_write → returns a fake admin user
       * get_unit_of_work_tests → our recording UoW
       * get_cache_service → our recording cache
     """
@@ -116,7 +116,7 @@ def app():
     application.state.test_uow = _FakeUoW()
     application.state.test_cache = _FakeCache()
 
-    application.dependency_overrides[allow_only_admins] = _build_admin_user
+    application.dependency_overrides[allow_read_or_admin_write] = _build_admin_user
     application.dependency_overrides[get_unit_of_work_tests] = lambda: application.state.test_uow
     application.dependency_overrides[get_cache_service] = lambda: application.state.test_cache
 

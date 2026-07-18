@@ -11,7 +11,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from api.dependencies import (
-    allow_only_admins,
+    allow_read_or_admin_write,
     get_database,
     get_db_session,
     get_payment_settings,
@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/admin/payments",
     tags=["admin"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 

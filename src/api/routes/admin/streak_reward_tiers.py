@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends
 
-from api.dependencies import allow_only_admins, get_streak_bonus_service
+from api.dependencies import allow_read_or_admin_write, get_streak_bonus_service
 from streak_bonus.dtos import (
     StreakRewardTierCreateDTO,
     StreakRewardTierDTO,
@@ -13,7 +13,7 @@ from streak_bonus.service import StreakBonusService
 router = APIRouter(
     prefix="/admin/streak-reward-tiers",
     tags=["admin"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 

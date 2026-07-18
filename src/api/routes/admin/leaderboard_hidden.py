@@ -7,7 +7,7 @@ positions 1, 2, 3… Top-3 podium prizes are display-by-rank only, so
 hiding a user also removes them from prizes. The mobile app needs NO
 change — the backend filters the ranking.
 
-Endpoints (gated by `allow_only_admins`):
+Endpoints (gated by `allow_read_or_admin_write`):
 - GET  /admin/leaderboard/hidden — current hidden set { "user_ids": [...] }
 - POST /admin/leaderboard/hidden — bulk hide/show, returns the updated set
 
@@ -17,7 +17,7 @@ the service flushes, the route commits after a successful save.
 
 from fastapi import APIRouter, Depends
 
-from api.dependencies import allow_only_admins, get_leaderboard_hidden_service
+from api.dependencies import allow_read_or_admin_write, get_leaderboard_hidden_service
 from quiz.dtos.leaderboard_hidden import (
     LeaderboardHiddenListDTO,
     LeaderboardHiddenUpdateDTO,
@@ -27,7 +27,7 @@ from quiz.services.leaderboard_hidden import LeaderboardHiddenService
 router = APIRouter(
     prefix="/admin/leaderboard/hidden",
     tags=["admin"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 

@@ -4,7 +4,7 @@ Single singleton row (per-platform `min_build` + `store_url`). The public
 `GET /app/update-config` reads it; here the admin edits it WITHOUT a
 backend redeploy.
 
-Endpoints (gated by `allow_only_admins`):
+Endpoints (gated by `allow_read_or_admin_write`):
 - GET /admin/app-update-config — current values
 - PUT /admin/app-update-config — partial update (all fields optional)
 
@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from api.dependencies import (
-    allow_only_admins,
+    allow_read_or_admin_write,
     get_app_update_config_service,
     get_cache_service,
 )
@@ -153,7 +153,7 @@ def _validate_store_urls(body: AppUpdateConfigUpdateDTO, current) -> None:
 router = APIRouter(
     prefix="/admin/app-update-config",
     tags=["admin"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 
@@ -175,7 +175,7 @@ def get_config(
 )
 def update_config(
     body: AppUpdateConfigUpdateDTO,
-    admin: UserDTO = Depends(allow_only_admins),
+    admin: UserDTO = Depends(allow_read_or_admin_write),
     service: AppUpdateConfigService = Depends(get_app_update_config_service),
     cache: CacheService = Depends(get_cache_service),
 ):

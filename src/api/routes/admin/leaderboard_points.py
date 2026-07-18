@@ -1,7 +1,7 @@
 """Admin controls for leaderboard points — auto-reset schedule + selective
 per-user adjustment. Surfaced in the admin panel's "Пользователи" section.
 
-Endpoints (all protected by allow_only_admins):
+Endpoints (all protected by allow_read_or_admin_write):
 - GET   /admin/leaderboard-points/settings        — current auto-reset config
 - PATCH /admin/leaderboard-points/settings        — update it (restarts the countdown)
 - POST  /admin/leaderboard-points/users/{id}/adjust — add/remove points for one user
@@ -15,7 +15,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 
-from api.dependencies import allow_only_admins, get_leaderboard_points_service
+from api.dependencies import allow_read_or_admin_write, get_leaderboard_points_service
 from auth.dtos.users import UserDTO
 from leaderboard_points.dtos import (
     LeaderboardPointsSettingsDTO,
@@ -28,7 +28,7 @@ from leaderboard_points.service import LeaderboardPointsService
 router = APIRouter(
     prefix="/admin/leaderboard-points",
     tags=["admin"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 
@@ -42,7 +42,7 @@ def get_settings(
 @router.patch("/settings", response_model=LeaderboardPointsSettingsDTO)
 def update_settings(
     body: LeaderboardPointsSettingsUpdateDTO,
-    user: UserDTO = Depends(allow_only_admins),
+    user: UserDTO = Depends(allow_read_or_admin_write),
     service: LeaderboardPointsService = Depends(get_leaderboard_points_service),
 ):
     actor_display = user.name or user.email or str(user.id)
@@ -55,7 +55,7 @@ def update_settings(
 def adjust_points(
     user_id: UUID,
     body: PointsAdjustDTO,
-    user: UserDTO = Depends(allow_only_admins),
+    user: UserDTO = Depends(allow_read_or_admin_write),
     service: LeaderboardPointsService = Depends(get_leaderboard_points_service),
 ):
     actor_display = user.name or user.email or str(user.id)

@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from api.dependencies import (
-    allow_only_admins,
+    allow_read_or_admin_write,
     get_daily_notification_template_service,
     get_daily_test_notification_service,
 )
@@ -26,7 +26,7 @@ from quiz.services.daily_test_notifications import DailyTestNotificationService
 router = APIRouter(
     prefix="/admin/daily-notification-template",
     tags=["admin"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 

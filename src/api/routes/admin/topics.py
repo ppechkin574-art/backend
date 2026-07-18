@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.common import ListDTO, ListQueryDTO
-from api.dependencies import allow_only_admins, get_topic_service
+from api.dependencies import allow_read_or_admin_write, get_topic_service
 from api.exceptions.documentation import get_common_responses, get_error_responses
 from api.routes.quiz.converters import to_topic_create_service, to_topic_update_service
 from api.routes.quiz.dtos import (
@@ -23,7 +23,7 @@ from quiz.services.topics import TopicServiceInterface
 router = APIRouter(
     prefix="/admin/topics",
     tags=["Admin - Topics"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 

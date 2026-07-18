@@ -651,6 +651,141 @@ async def allow_admin_or_marketing(
         ) from e
 
 
+async def allow_read_or_admin_write(
+    request: Request,
+    access_token: str = Depends(oauth2_scheme),
+    auth_service: AuthServiceInterface = Depends(get_auth_service),
+):
+    """Read access (GET) for admin/manager/marketing; any other method
+    (POST/PUT/PATCH/DELETE) stays admin/manager-only, identical to
+    ``allow_only_admins``.
+
+    Lets a marketing-only account browse content-management sections it has
+    no business editing (Модули, Пробное ЕНТ, Пользователи, Безопасность,
+    etc.) without opening up any mutation path.
+    """
+    try:
+        user = auth_service.get_user_from_token(access_token)
+
+        if not user.roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User roles not loaded",
+            )
+
+        is_privileged = "admin" in user.roles or "manager" in user.roles
+        can_read = request.method == "GET" and "marketing" in user.roles
+
+        if not is_privileged and not can_read:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: only allowed for admins, managers, or marketing (read-only)",
+            )
+
+        return user
+
+    except AuthAccessInvalidTokenError as e:
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+        ) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Authentication system error in allow_read_or_admin_write: %s", e)
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="Authentication error",
+        ) from e
+
+
+async def allow_settings_read_or_admin_write(
+    request: Request,
+    access_token: str = Depends(oauth2_scheme),
+    auth_service: AuthServiceInterface = Depends(get_auth_service),
+):
+    """Same contract as ``allow_only_super_admins`` (strict admin-only for
+    writes — managers are NOT included, on purpose, matching the existing
+    app-settings policy) but also lets ``marketing`` read (GET) settings,
+    since the Рефералы page reads through this endpoint."""
+    try:
+        user = auth_service.get_user_from_token(access_token)
+
+        if not user.roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User roles not loaded",
+            )
+
+        is_admin = "admin" in user.roles
+        can_read = request.method == "GET" and "marketing" in user.roles
+
+        if not is_admin and not can_read:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: only allowed for admins (marketing may read-only)",
+            )
+
+        return user
+
+    except AuthAccessInvalidTokenError as e:
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+        ) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Authentication system error in allow_settings_read_or_admin_write: %s", e)
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="Authentication error",
+        ) from e
+
+
+async def allow_crm_access(
+    request: Request,
+    access_token: str = Depends(oauth2_scheme),
+    auth_service: AuthServiceInterface = Depends(get_auth_service),
+):
+    """CRM task board: full access for admin/manager. ``marketing`` gets
+    full access too (create/edit/move tasks) EXCEPT deleting — deletion
+    stays admin/manager-only."""
+    try:
+        user = auth_service.get_user_from_token(access_token)
+
+        if not user.roles:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User roles not loaded",
+            )
+
+        is_privileged = "admin" in user.roles or "manager" in user.roles
+        can_write_no_delete = "marketing" in user.roles and request.method != "DELETE"
+
+        if not is_privileged and not can_write_no_delete:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: CRM is allowed for admins, managers, or marketing (except delete)",
+            )
+
+        return user
+
+    except AuthAccessInvalidTokenError as e:
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="Invalid authentication credentials",
+        ) from e
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Authentication system error in allow_crm_access: %s", e)
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="Authentication error",
+        ) from e
+
+
 def get_ent_options_service(
     uow: UnitOfWorkTests = Depends(get_unit_of_work_questions),
     cache_service: CacheService = Depends(get_cache_service),

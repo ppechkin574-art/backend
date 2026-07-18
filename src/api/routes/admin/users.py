@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from api.dependencies import (
-    allow_only_admins,
+    allow_read_or_admin_write,
     get_admin_user_service,
     get_cache_service,
     get_database,
@@ -27,7 +27,7 @@ from utils.cache import CacheService
 router = APIRouter(
     prefix="/admin/users",
     tags=["Admin - Users"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 
@@ -91,7 +91,7 @@ async def reset_subscription(
     The regular `cancel_subscription` endpoint is a soft-cancel
     and won't help here (it leaves plan=PRO until subscription_end).
 
-    Admin-only (this whole router is `allow_only_admins`).
+    Admin-only (this whole router is `allow_read_or_admin_write`).
     """
     return service.reset_subscription(user_id)
 
@@ -116,7 +116,7 @@ async def grant_pro_subscription(
         flows (test creation, etc.) before approving a build.
       - Customer support needs to comp a user.
 
-    Admin-only (this whole router is `allow_only_admins`).
+    Admin-only (this whole router is `allow_read_or_admin_write`).
     """
     try:
         return service.grant_pro_subscription(user_id, days=payload.days)

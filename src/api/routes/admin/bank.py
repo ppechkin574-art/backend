@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from api.dependencies import allow_only_admins, get_bank_service
+from api.dependencies import allow_read_or_admin_write, get_bank_service
 from bank.dtos import (
     CardStyleCreateDTO,
     CardStyleDTO,
@@ -22,7 +22,7 @@ from bank.service import BankService
 router = APIRouter(
     prefix="/admin/bank",
     tags=["Admin - Bank"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 

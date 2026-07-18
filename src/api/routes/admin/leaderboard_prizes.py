@@ -1,6 +1,6 @@
 """Admin CRUD for leaderboard prizes.
 
-Endpoints (all gated by `allow_only_admins`):
+Endpoints (all gated by `allow_read_or_admin_write`):
 - GET    /admin/leaderboard-prizes              — list all (active + inactive)
 - POST   /admin/leaderboard-prizes              — create
 - GET    /admin/leaderboard-prizes/icon-keys    — allowed icon_key values
@@ -14,7 +14,7 @@ dropdown without keeping a hardcoded copy in the frontend.
 
 from fastapi import APIRouter, Depends
 
-from api.dependencies import allow_only_admins, get_leaderboard_prize_service
+from api.dependencies import allow_read_or_admin_write, get_leaderboard_prize_service
 from leaderboard_prizes.dtos import (
     IconKeyListDTO,
     LeaderboardPrizeCreateDTO,
@@ -27,7 +27,7 @@ from leaderboard_prizes.service import LeaderboardPrizeService
 router = APIRouter(
     prefix="/admin/leaderboard-prizes",
     tags=["admin"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 

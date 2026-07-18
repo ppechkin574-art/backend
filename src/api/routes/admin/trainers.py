@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 
-from api.dependencies import allow_only_admins, get_trainer_service
+from api.dependencies import allow_read_or_admin_write, get_trainer_service
 from api.exceptions.documentation import get_common_responses, get_error_responses
 from api.routes.quiz.dtos import (
     DeleteResponseDTO,
@@ -20,7 +20,7 @@ from quiz.services.trainers import TrainerServiceInterface
 router = APIRouter(
     prefix="/admin/trainers",
     tags=["Admin - Trainers"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 

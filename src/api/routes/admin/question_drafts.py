@@ -4,7 +4,7 @@ AI-generated questions land here as `draft` rows (POST by the generator
 tool), a human reviews / edits them, then publishes — which materializes
 a live `questions` row through the existing question create service.
 
-Endpoints (all gated by `allow_only_admins`):
+Endpoints (all gated by `allow_read_or_admin_write`):
 - POST   /admin/question-drafts                 — create (generator tool)
 - GET    /admin/question-drafts                 — list (status / subject filters + pagination)
 - GET    /admin/question-drafts/{id}            — get one
@@ -20,7 +20,7 @@ question create land together within the request.
 
 from fastapi import APIRouter, Depends, Query
 
-from api.dependencies import allow_only_admins, get_question_draft_service
+from api.dependencies import allow_read_or_admin_write, get_question_draft_service
 from quiz.dtos.enums import DraftStatus
 from quiz.dtos.question_drafts import (
     QuestionDraftCreateDTO,
@@ -33,7 +33,7 @@ from quiz.services.question_drafts import QuestionDraftService
 router = APIRouter(
     prefix="/admin/question-drafts",
     tags=["admin"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 
@@ -90,7 +90,7 @@ def update_draft(
 @router.post("/{draft_id}/publish", response_model=QuestionDraftReadDTO)
 async def publish_draft(
     draft_id: int,
-    user=Depends(allow_only_admins),
+    user=Depends(allow_read_or_admin_write),
     service: QuestionDraftService = Depends(get_question_draft_service),
 ):
     reviewed_by = str(getattr(user, "id", None)) if user else None
@@ -103,7 +103,7 @@ async def publish_draft(
 @router.post("/{draft_id}/reject", response_model=QuestionDraftReadDTO)
 def reject_draft(
     draft_id: int,
-    user=Depends(allow_only_admins),
+    user=Depends(allow_read_or_admin_write),
     service: QuestionDraftService = Depends(get_question_draft_service),
 ):
     reviewed_by = str(getattr(user, "id", None)) if user else None

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 
 from api.common import ListDTO, ListQueryDTO
-from api.dependencies import allow_only_admins, get_ent_options_service
+from api.dependencies import allow_read_or_admin_write, get_ent_options_service
 from api.exceptions.documentation import get_common_responses, get_error_responses
 from api.routes.quiz.dtos import (
     DeleteResponseDTO,
@@ -25,7 +25,7 @@ from quiz.services.ent_options import EntOptionServiceInterface
 router = APIRouter(
     prefix="/admin/ents",
     tags=["Admin - ENTs"],
-    dependencies=[Depends(allow_only_admins)],
+    dependencies=[Depends(allow_read_or_admin_write)],
 )
 
 

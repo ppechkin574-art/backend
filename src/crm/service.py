@@ -1,3 +1,4 @@
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -6,10 +7,21 @@ from crm.dtos import CrmMoveDTO, CrmTaskCreateDTO, CrmTaskUpdateDTO
 from crm.models import CrmActivity, CrmTask
 from crm.repository import CrmRepository
 
+if TYPE_CHECKING:
+    from clients.agent_webhook.client import AgentWebhookClient
+
 
 class CrmService:
-    def __init__(self, repo: CrmRepository):
+    def __init__(
+        self,
+        repo: CrmRepository,
+        agent_webhook: "AgentWebhookClient | None" = None,
+        agent_admin_id: str | None = None,
+    ):
         self.repo = repo
+        self._agent_webhook = agent_webhook
+        # Compared as strings — env value has no UUID validation upstream.
+        self._agent_admin_id = agent_admin_id or None
 
     # ---------- reads ----------
     def list_tasks(self) -> list[CrmTask]:
@@ -95,6 +107,7 @@ class CrmService:
         task = self.get_one(task_id)
         fields = payload.model_dump(exclude_unset=True)
         old_status = task.status
+        old_assignee = task.assignee_admin_id
         for field, value in fields.items():
             setattr(task, field, value)
         self.repo.db.flush()
@@ -115,6 +128,16 @@ class CrmService:
                 actor_id,
                 actor_display,
             )
+
+        if (
+            "assignee_admin_id" in fields
+            and str(task.assignee_admin_id) != str(old_assignee)
+            and self._agent_webhook is not None
+            and self._agent_admin_id
+            and str(task.assignee_admin_id) == self._agent_admin_id
+        ):
+            self._agent_webhook.notify_task_assigned(task)
+
         return task
 
     def move(

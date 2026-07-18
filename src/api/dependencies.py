@@ -1200,12 +1200,22 @@ def get_onboarding_service(
 
 def get_crm_service(
     db: Session = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
 ):
-    """CRUD доски задач CRM (канбан) + append-only лог изменений."""
+    """CRUD доски задач CRM (канбан) + append-only лог изменений.
+
+    Also wires the agent-webhook notifier (fires when a task's assignee
+    changes to the 24/7 agent's Keycloak id) — a no-op until
+    ``agent_webhook.enabled`` is turned on in settings."""
+    from clients.agent_webhook.client import AgentWebhookClient
     from crm.repository import CrmRepository
     from crm.service import CrmService
 
-    return CrmService(CrmRepository(db))
+    return CrmService(
+        CrmRepository(db),
+        agent_webhook=AgentWebhookClient(settings.agent_webhook),
+        agent_admin_id=settings.agent_webhook.agent_admin_id,
+    )
 
 
 def get_leaderboard_points_service(

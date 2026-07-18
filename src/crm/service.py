@@ -90,9 +90,34 @@ class CrmService:
         ):
             self._agent_webhook.notify_task_assigned(task)
 
+    def _dispatch_board_event(
+        self, event_type: str, task: CrmTask | None, change: dict | None = None
+    ) -> None:
+        if self._agent_webhook is not None:
+            self._agent_webhook.notify_board_event(event_type, task, change)
+
+    def _enforce_wip_limit(self, task_id: int | None, new_status: str) -> None:
+        """Hard WIP limit: at most ONE task in «В работе» (prog), for
+        everyone — humans and agent alike (explicit product decision)."""
+        if new_status != "prog":
+            return
+        occupied = [
+            t for t in self.repo.list_by_status("prog") if t.id != task_id
+        ]
+        if occupied:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"В колонке «В работе» уже есть задача "
+                    f"«{occupied[0].title}» (№{occupied[0].id}) — "
+                    f"одновременно в работе может быть только одна задача"
+                ),
+            )
+
     def create(
         self, payload: CrmTaskCreateDTO, actor_id: UUID | None, actor_display: str
     ) -> CrmTask:
+        self._enforce_wip_limit(None, payload.status)
         task = CrmTask(
             title=payload.title,
             description=payload.description or "",
@@ -107,6 +132,7 @@ class CrmService:
         )
         self.repo.add(task)
         self._log(task, "create", {"status": task.status}, actor_id, actor_display)
+        self._dispatch_board_event("create", task)
         self._maybe_dispatch_agent_webhook(task)
         return task
 
@@ -119,6 +145,8 @@ class CrmService:
     ) -> CrmTask:
         task = self.get_one(task_id)
         fields = payload.model_dump(exclude_unset=True)
+        if "status" in fields:
+            self._enforce_wip_limit(task_id, fields["status"])
         old_status = task.status
         old_assignee = task.assignee_admin_id
         for field, value in fields.items():
@@ -133,6 +161,9 @@ class CrmService:
                 actor_id,
                 actor_display,
             )
+            self._dispatch_board_event(
+                "move", task, {"from": old_status, "to": task.status}
+            )
         else:
             self._log(
                 task,
@@ -141,6 +172,7 @@ class CrmService:
                 actor_id,
                 actor_display,
             )
+            self._dispatch_board_event("edit", task, {"fields": list(fields.keys())})
 
         if "assignee_admin_id" in fields and str(task.assignee_admin_id) != str(old_assignee):
             self._maybe_dispatch_agent_webhook(task)
@@ -157,6 +189,7 @@ class CrmService:
         task = self.get_one(task_id)
         old_status = task.status
         new_status = payload.status
+        self._enforce_wip_limit(task_id, new_status)
 
         # target column without this task, in current order
         column = [t for t in self.repo.list_by_status(new_status) if t.id != task.id]
@@ -185,6 +218,9 @@ class CrmService:
                 actor_id,
                 actor_display,
             )
+            self._dispatch_board_event(
+                "move", task, {"from": old_status, "to": new_status}
+            )
         return task
 
     def delete(
@@ -202,4 +238,5 @@ class CrmService:
             actor_display,
             task_title=title,
         )
+        self._dispatch_board_event("delete", task)
         self.repo.delete(task)

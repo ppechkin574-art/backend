@@ -1,5 +1,5 @@
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, UTC
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -70,10 +70,14 @@ def _safe_display_name(name: str, user_id: str) -> str:
 
 def _milestone_rank(rank: int) -> int | None:
     """Nearest milestone tier above the user's rank (100 → 50 → 10 → 3)."""
-    if rank > 100: return 100
-    if rank > 50: return 50
-    if rank > 10: return 10
-    if rank > 3: return 3
+    if rank > 100:
+        return 100
+    if rank > 50:
+        return 50
+    if rank > 10:
+        return 10
+    if rank > 3:
+        return 3
     return None
 
 
@@ -205,8 +209,8 @@ def _is_fresh(updated_at) -> bool:
     if updated_at is None:
         return False
     if updated_at.tzinfo is None:
-        updated_at = updated_at.replace(tzinfo=timezone.utc)
-    return datetime.now(timezone.utc) - updated_at < _DISPLAY_FRESH
+        updated_at = updated_at.replace(tzinfo=UTC)
+    return datetime.now(UTC) - updated_at < _DISPLAY_FRESH
 
 
 def _resolve_display(

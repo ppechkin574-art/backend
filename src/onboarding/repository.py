@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, UTC
 from uuid import UUID
 
 from sqlalchemy import delete, func, select
@@ -113,7 +113,7 @@ class OnboardingRepository:
 
     def upsert_view(self, user_id: UUID, story_id: int, skipped: bool) -> UserOnboardingView:
         view = self.get_view(user_id, story_id)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if view is None:
             view = UserOnboardingView(
                 user_id=user_id,

@@ -13,6 +13,8 @@ failure here can never break the purchase response.
 
 from __future__ import annotations
 
+import contextlib
+
 import logging
 from decimal import Decimal
 
@@ -81,10 +83,8 @@ def log_subscription_event(
         )
         session.commit()
     except Exception:  # noqa: BLE001 — audit must never break the payment flow
-        try:
+        with contextlib.suppress(Exception):
             session.rollback()
-        except Exception:  # noqa: BLE001
-            pass
         logger.exception(
             "[audit] failed to log subscription event %s/%s", platform, event_type
         )

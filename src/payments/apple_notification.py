@@ -8,6 +8,8 @@ payload is kept for audit / replay analysis.
 
 from __future__ import annotations
 
+import contextlib
+
 import logging
 
 from sqlalchemy import Column, DateTime, String, Text
@@ -56,10 +58,8 @@ def record_notification(session: Session, uuid: str, ntype: str, raw: str) -> bo
         return False
     except Exception:  # noqa: BLE001 — a store hiccup must not drop the event
         logger.exception("[apple_s2s] record_notification failed for uuid=%s", uuid)
-        try:
+        with contextlib.suppress(Exception):
             session.rollback()
-        except Exception:  # noqa: BLE001
-            pass
         # Fail open: treat as new so the event is still handled (downstream is
         # idempotent). Better a rare double-process than a dropped renewal.
         return True

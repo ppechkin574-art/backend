@@ -319,10 +319,6 @@ async def send_test_push(
         test_phones, len(all_tokens), send_result.success, send_result.failure,
     )
 
-    # Distribute sent/failed counts back to per-phone results
-    tokens_per_phone = {
-        phone: len(toks) for phone, toks in phone_token_map.items()
-    }
     total_tokens = len(all_tokens)
     for r in phone_results:
         if r.tokens_found == 0:

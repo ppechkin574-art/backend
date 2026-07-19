@@ -244,7 +244,7 @@ async def battle_ws(websocket: WebSocket, session_id: str):
         while True:
             try:
                 raw = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 try:
                     await websocket.send_json({"type": "ping"})
                 except Exception:

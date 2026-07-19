@@ -27,10 +27,12 @@ class LeaderboardPointsRepository:
         self,
         settings: LeaderboardPointsSettings,
         enabled: bool,
+        reset_mode: str,
         interval_days: int,
         actor_display: str,
     ) -> LeaderboardPointsSettings:
         settings.auto_reset_enabled = enabled
+        settings.reset_mode = reset_mode
         settings.interval_days = interval_days
         # Saving always restarts the countdown — see models.py docstring.
         settings.last_reset_at = datetime.now(UTC)

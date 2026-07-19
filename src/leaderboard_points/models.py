@@ -7,6 +7,15 @@ settings from the admin panel always restarts the countdown from "now":
 `next_reset_at = last_reset_at + interval_days` is simple to compute
 and never surprises the operator with a reset older config would have
 already triggered.
+
+`reset_mode` picks how `next_reset_at` is computed:
+- `"interval"` (default, backward-compatible) — `last_reset_at + interval_days`.
+- `"weekly_monday"` — the next Monday 00:00 Asia/Almaty strictly after
+  `last_reset_at`. Added for the "Еженедельный спринт" requirement
+  (CRM task #6): points must reset every Monday at midnight, not on an
+  arbitrary N-day cadence. `interval_days` is ignored in this mode but
+  kept populated (not nulled) so switching back to "interval" restores
+  the previous cadence without the operator re-entering it.
 """
 
 from sqlalchemy import Boolean, Column, DateTime, Integer, String
@@ -20,6 +29,7 @@ class LeaderboardPointsSettings(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     auto_reset_enabled = Column(Boolean, nullable=False, server_default="false")
+    reset_mode = Column(String(20), nullable=False, server_default="interval")
     interval_days = Column(Integer, nullable=False, server_default="30")
     last_reset_at = Column(DateTime(timezone=True), nullable=True)
     updated_at = Column(

@@ -159,7 +159,8 @@ async def _suspicious_subscription_checker(db_settings: DatabaseSettings) -> Non
                         ),
                         # Skip users already alerted in the last 24h
                         ~exists().where(
-                            (FraudEvent.user_id == Subscription.user_id)
+                            (FraudEvent.user_id
+                             == cast(Subscription.user_id, PG_UUID(as_uuid=True)))
                             & (FraudEvent.event_type == "pro_without_payment")
                             & (FraudEvent.created_at > (now - timedelta(hours=24)))
                         ),

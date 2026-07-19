@@ -16,7 +16,10 @@ class AgentWebhookClient:
     def __init__(self, settings: AgentWebhookSettings):
         self._settings = settings
 
-    def _task_payload(self, task: CrmTask) -> dict:
+    def task_payload(self, task: CrmTask) -> dict:
+        """Snapshot the task NOW (pre-commit, ORM object alive) — the
+        actual send happens post-commit via send_*, when a deleted task's
+        ORM object would no longer be readable."""
         return {
             "task_id": task.id,
             "title": task.title,
@@ -30,24 +33,23 @@ class AgentWebhookClient:
             "due_date": task.due_date.isoformat() if task.due_date else None,
         }
 
-    def notify_task_assigned(self, task: CrmTask) -> None:
+    def send_task_assigned(self, payload: dict) -> None:
         if not self._settings.enabled or not self._settings.url:
             return
         try:
             httpx.post(
                 f"{self._settings.url}/webhooks/crm-task-assigned",
-                json=self._task_payload(task),
+                json=payload,
                 headers={"X-Webhook-Secret": self._settings.secret},
                 timeout=5.0,
             )
         except Exception:
             logger.exception(
-                "Failed to notify agent executor of CRM task %s", task.id
+                "Failed to notify agent executor of CRM task %s",
+                payload.get("task_id"),
             )
 
-    def notify_board_event(
-        self, event_type: str, task: CrmTask | None, change: dict | None = None
-    ) -> None:
+    def send_board_event(self, event: dict) -> None:
         """Generic board-change event (create/move/edit/delete). The
         executor uses these to stop a running session when its task is
         pulled back to «Не начато», and to start the next queued task
@@ -57,13 +59,9 @@ class AgentWebhookClient:
         try:
             httpx.post(
                 f"{self._settings.url}/webhooks/crm-event",
-                json={
-                    "type": event_type,
-                    "task": self._task_payload(task) if task is not None else None,
-                    "change": change or {},
-                },
+                json=event,
                 headers={"X-Webhook-Secret": self._settings.secret},
                 timeout=5.0,
             )
         except Exception:
-            logger.exception("Failed to send board event %s", event_type)
+            logger.exception("Failed to send board event %s", event.get("type"))

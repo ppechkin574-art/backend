@@ -53,6 +53,7 @@ def create_task(
     actor_id, actor_display = _actor(user)
     task = service.create(body, actor_id, actor_display)
     service.repo.db.commit()
+    service.flush_webhooks()
     return CrmTaskDTO.model_validate(task)
 
 
@@ -66,6 +67,7 @@ def update_task(
     actor_id, actor_display = _actor(user)
     task = service.update(task_id, body, actor_id, actor_display)
     service.repo.db.commit()
+    service.flush_webhooks()
     return CrmTaskDTO.model_validate(task)
 
 
@@ -79,6 +81,7 @@ def move_task(
     actor_id, actor_display = _actor(user)
     task = service.move(task_id, body, actor_id, actor_display)
     service.repo.db.commit()
+    service.flush_webhooks()
     return CrmTaskDTO.model_validate(task)
 
 
@@ -91,6 +94,7 @@ def delete_task(
     actor_id, actor_display = _actor(user)
     service.delete(task_id, actor_id, actor_display)
     service.repo.db.commit()
+    service.flush_webhooks()
 
 
 @router.get("/activity", response_model=list[CrmActivityDTO])

@@ -22,6 +22,10 @@ class CrmService:
         self._agent_webhook = agent_webhook
         # Compared as strings — env value has no UUID validation upstream.
         self._agent_admin_id = agent_admin_id or None
+        # Webhooks are QUEUED during the operation and sent only after the
+        # router commits (flush_webhooks) — firing pre-commit made the
+        # executor re-read the board and see the OLD state (live-caught race).
+        self._pending_webhooks: list[tuple[str, dict]] = []
 
     # ---------- reads ----------
     def list_tasks(self) -> list[CrmTask]:
@@ -79,7 +83,7 @@ class CrmService:
         )
 
     def _maybe_dispatch_agent_webhook(self, task: CrmTask) -> None:
-        """Fires the agent-executor webhook if this task's assignee is the
+        """Queues the assigned-webhook if this task's assignee is the
         agent — called both on creation-with-assignee and on a later
         reassignment, since either can be how a task ends up on the agent."""
         if (
@@ -88,13 +92,38 @@ class CrmService:
             and task.assignee_admin_id is not None
             and str(task.assignee_admin_id) == self._agent_admin_id
         ):
-            self._agent_webhook.notify_task_assigned(task)
+            self._pending_webhooks.append(
+                ("assigned", self._agent_webhook.task_payload(task))
+            )
 
     def _dispatch_board_event(
         self, event_type: str, task: CrmTask | None, change: dict | None = None
     ) -> None:
         if self._agent_webhook is not None:
-            self._agent_webhook.notify_board_event(event_type, task, change)
+            self._pending_webhooks.append(
+                (
+                    "event",
+                    {
+                        "type": event_type,
+                        "task": self._agent_webhook.task_payload(task)
+                        if task is not None
+                        else None,
+                        "change": change or {},
+                    },
+                )
+            )
+
+    def flush_webhooks(self) -> None:
+        """Call AFTER commit — sends the queued webhooks so the executor's
+        follow-up board read is guaranteed to see the committed state."""
+        pending, self._pending_webhooks = self._pending_webhooks, []
+        if self._agent_webhook is None:
+            return
+        for kind, payload in pending:
+            if kind == "assigned":
+                self._agent_webhook.send_task_assigned(payload)
+            else:
+                self._agent_webhook.send_board_event(payload)
 
     def _enforce_wip_limit(self, task_id: int | None, new_status: str) -> None:
         """Hard WIP limit: at most ONE task in «В работе» (prog), for

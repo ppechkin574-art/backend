@@ -83,7 +83,9 @@ from utils.cache import CacheService, CacheStrategy
 from utils.file_service import FileService
 
 if TYPE_CHECKING:
+    from app_config.service import AppSettingsService
     from quiz.services.subject_combinations import SubjectCombinationService
+    from security.login_event_logger import LoginEventLogger
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login-swagger")
 

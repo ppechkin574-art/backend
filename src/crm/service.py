@@ -354,7 +354,18 @@ class CrmService:
                     f"{self.MAX_ATTACHMENT_SIZE_BYTES // (1024 * 1024)}MB"
                 ),
             )
-        if is_blocked_extension(filename):
+        # Sanitize BEFORE checking the extension: os.path.splitext doesn't
+        # strip trailing whitespace, so a raw client-supplied filename like
+        # "evil.js " (trailing space/tab — trivial to set via a crafted
+        # multipart request, not just a browser) would yield ext ".js "
+        # which doesn't match anything in BLOCKED_EXTENSIONS, silently
+        # bypassing the block-list for exactly the plain-text script types
+        # (.js/.bat/.cmd/.vbs/.ps1/...) that sniff_dangerous's magic-byte
+        # check can't catch. Checking the sanitized name closes that gap,
+        # since sanitize_filename() strips the name and is also what
+        # ultimately becomes part of the stored object_name.
+        safe_name = sanitize_filename(filename)
+        if is_blocked_extension(safe_name):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Этот тип файла запрещён к загрузке",
@@ -370,7 +381,6 @@ class CrmService:
                 detail="Хранилище файлов не настроено",
             )
 
-        safe_name = sanitize_filename(filename)
         object_name = f"{self.ATTACHMENT_PREFIX}/{task_id}/{uuid4().hex}_{safe_name}"
 
         try:

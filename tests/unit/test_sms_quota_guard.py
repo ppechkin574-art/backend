@@ -224,7 +224,9 @@ def test_record_skips_reviewer_contact():
 
 def test_record_increments_both_counters_with_25h_ttl():
     """Counter TTL is 25h (24h + 1h buffer) to avoid the daily-reset
-    window where stale counters would coexist with new ones."""
+    window where stale counters would coexist with new ones. Three
+    counters get the TTL: the ip zset, the per-phone counter (added with
+    per-phone rate limiting) and the global daily total."""
     redis = _FakeRedis()
     settings = _make_app_settings()
     email = _make_email_client()
@@ -238,7 +240,7 @@ def test_record_increments_both_counters_with_25h_ttl():
     assert redis.zsets[f"sms:daily:ips:{today}"]["203.0.113.42"] == 1
 
     expire_calls = [c for c in redis.calls if c[0] == "expire"]
-    assert len(expire_calls) == 2
+    assert len(expire_calls) == 3
     assert all(c[1][1] == 25 * 3600 for c in expire_calls)
 
 

@@ -177,8 +177,11 @@ def test_get_int_redis_write_failure_does_not_break_read():
 
 
 def test_update_value_busts_cache_so_next_read_hits_db():
-    """Admin saves new value → cache invalidated → next read reflects
-    the change immediately, not at the end of the TTL window."""
+    """Admin saves new value → cache refreshed WRITE-THROUGH (setex with
+    the new value, not delete: auth/services.py reads Redis directly with
+    no DB fallback, so deleting the key would break auto-subscription on
+    registration — see AppSettingsService.update_value) → next read
+    reflects the change immediately."""
     rows = {"sms_daily_cap": _FakeRow("sms_daily_cap", "1000")}
     svc, repo, redis = _make_service(rows)
 
@@ -192,10 +195,11 @@ def test_update_value_busts_cache_so_next_read_hits_db():
     assert updated.value == "2000"
     assert repo.update_calls == [("sms_daily_cap", "2000")]
 
-    # Cache delete was called
+    # Write-through: the cache key now holds the NEW value
     assert any(
-        c[0] == "delete" and "sms_daily_cap" in c[1] for c in redis.calls
-    ), f"expected delete call, got: {redis.calls}"
+        c[0] == "setex" and "sms_daily_cap" in c[1][0] and c[1][2] == "2000"
+        for c in redis.calls
+    ), f"expected write-through setex with new value, got: {redis.calls}"
 
     # Next read returns the new value
     second = svc.get_int("sms_daily_cap", default=0)

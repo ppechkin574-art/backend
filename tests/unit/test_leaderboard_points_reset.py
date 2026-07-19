@@ -13,6 +13,7 @@ from unittest.mock import MagicMock
 from leaderboard_points.service import (
     ALMATY_TZ,
     LeaderboardPointsService,
+    current_week_start_almaty,
     next_monday_midnight_almaty,
 )
 
@@ -68,6 +69,61 @@ class TestNextMondayMidnightAlmaty:
         result = next_monday_midnight_almaty(after)
         assert result == datetime(2026, 7, 26, 19, 0, tzinfo=UTC)
         assert result > after
+
+
+# ─── current_week_start_almaty (CRM task #7 — sprint winner) ───────────
+#
+# Symmetric to next_monday_midnight_almaty above, but "most recent Monday
+# 00:00 Asia/Almaty AT-OR-BEFORE `now`" instead of "next Monday strictly
+# after". Deliberately independent of reset_mode/last_reset_at — see the
+# function's docstring.
+
+
+class TestCurrentWeekStartAlmaty:
+    def test_from_monday_morning_returns_this_mondays_midnight(self):
+        # 2026-07-20 is a Monday. 10:00 Almaty (UTC+5) == 05:00 UTC.
+        # This Monday 00:00 Almaty is 2026-07-20T00:00+05:00 == 2026-07-19T19:00 UTC.
+        after = datetime(2026, 7, 20, 5, 0, tzinfo=UTC)
+        result = current_week_start_almaty(after)
+        assert result == datetime(2026, 7, 19, 19, 0, tzinfo=UTC)
+
+    def test_exactly_at_monday_midnight_returns_same_instant(self):
+        # 2026-07-20 00:00 Almaty == 2026-07-19 19:00 UTC — the boundary
+        # instant belongs to the week that just started ("at-or-before"
+        # is inclusive), unlike next_monday_midnight_almaty which rolls
+        # a same-instant match to the FOLLOWING week.
+        after = datetime(2026, 7, 19, 19, 0, tzinfo=UTC)
+        result = current_week_start_almaty(after)
+        assert result == after
+
+    def test_from_midweek_rolls_back_to_this_mondays_midnight(self):
+        # 2026-07-22 is a Wednesday. Noon UTC == 17:00 Almaty (still Wed).
+        # This week's Monday 00:00 Almaty is 2026-07-20T00:00+05:00 ==
+        # 2026-07-19T19:00 UTC.
+        after = datetime(2026, 7, 22, 12, 0, tzinfo=UTC)
+        result = current_week_start_almaty(after)
+        assert result == datetime(2026, 7, 19, 19, 0, tzinfo=UTC)
+
+    def test_from_sunday_night_rolls_back_to_prior_mondays_midnight(self):
+        # 2026-07-19 is a Sunday. 18:00 UTC == 23:00 Almaty (still Sun,
+        # the week hasn't rolled to the next Monday yet). Most recent
+        # Monday 00:00 Almaty is the PRIOR week: 2026-07-13T00:00+05:00
+        # == 2026-07-12T19:00 UTC.
+        after = datetime(2026, 7, 19, 18, 0, tzinfo=UTC)
+        result = current_week_start_almaty(after)
+        assert result == datetime(2026, 7, 12, 19, 0, tzinfo=UTC)
+
+    def test_result_is_always_a_monday_in_almaty(self):
+        after = datetime(2026, 7, 22, 12, 0, tzinfo=UTC)
+        result = current_week_start_almaty(after)
+        local = result.astimezone(ALMATY_TZ)
+        assert local.weekday() == 0
+        assert (local.hour, local.minute, local.second) == (0, 0, 0)
+
+    def test_result_is_always_at_or_before_now(self):
+        after = datetime(2026, 7, 22, 12, 0, tzinfo=UTC)
+        result = current_week_start_almaty(after)
+        assert result <= after
 
 
 # ─── reset_all_points_if_due — weekly_monday mode ──────────────────────

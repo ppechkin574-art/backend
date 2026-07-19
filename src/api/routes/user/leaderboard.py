@@ -10,11 +10,14 @@ from api.dependencies import (
     get_db_session,
     get_file_service,
     get_identity_provider_client_keycloak,
+    get_leaderboard_points_service,
     get_user,
 )
 from auth.dtos.users import UserDTO
 from clients.identity_provider import IdentityNotFound
 from clients.identity_provider.client import IdentityProviderClientKeycloak
+from leaderboard_points.dtos import SprintWinnerDTO
+from leaderboard_points.service import LeaderboardPointsService
 from quiz.repositories.user_display import UserDisplayRepository
 from quiz.repositories.user_points import UserPointsRepository
 from utils.cache import CacheService, CacheStrategy
@@ -100,6 +103,18 @@ class MyRankEntry(BaseModel):
     total_points: int
     milestone_rank: int | None = None
     gap_to_milestone_pts: int | None = None
+
+
+class SprintStatusEntry(BaseModel):
+    """Response shape for GET /leaderboard/sprint (CRM task #7,
+    "Еженедельный спринт"). Always a 200 with this shape — never a 404
+    — so the mobile client doesn't need a special "not configured"
+    error path: `target_points`/`week_start_at`/`winner` are simply
+    null when the admin hasn't configured a sprint threshold yet."""
+
+    target_points: int | None
+    week_start_at: datetime | None
+    winner: SprintWinnerDTO | None
 
 
 def _resolve_avatar(raw_avatar: str | None, file_service: FileService) -> str | None:
@@ -409,4 +424,64 @@ async def get_my_rank(
         total_points=total,
         milestone_rank=milestone,
         gap_to_milestone_pts=gap_to_milestone_pts,
+    )
+
+
+@router.get(
+    "/sprint",
+    response_model=SprintStatusEntry,
+    summary="Статус недельного спринта (цель + текущий победитель)",
+)
+async def get_sprint_status(
+    session: Session = Depends(get_db_session),
+    idp: IdentityProviderClientKeycloak = Depends(get_identity_provider_client_keycloak),
+    file_service: FileService = Depends(get_file_service),
+    cache: CacheService = Depends(get_cache_service),
+    lb_points_service: LeaderboardPointsService = Depends(get_leaderboard_points_service),
+):
+    """Public, no auth (CRM task #7 — "Еженедельный спринт"): the first
+    user each week to reach the admin-configured `sprint_target_points`
+    threshold is locked in as that week's winner. The lock itself
+    happens inline in `UserPointsRepository.add_points` (every
+    points-award path: ЕНТ full-exam, battle wins, referral/payment
+    rewards) via `LeaderboardPointsService.check_and_lock_sprint_winner`
+    — this endpoint only reads the result.
+
+    Always returns 200 with this shape, never 404 — `target_points` /
+    `week_start_at` / `winner` are simply null when the sprint feature
+    hasn't been configured yet, so the mobile client has one shape to
+    render instead of a separate "not configured" error path.
+
+    Winner name/avatar resolution reuses the exact same user_display
+    snapshot + Keycloak-fallback mechanism `GET /leaderboard` and
+    `GET /leaderboard/me` already use (`_resolve_display`), not a
+    second lookup.
+    """
+    target_points, week_start_at, winner_row = lb_points_service.get_sprint_status_raw()
+    if target_points is None:
+        return SprintStatusEntry(target_points=None, week_start_at=None, winner=None)
+
+    winner: SprintWinnerDTO | None = None
+    if winner_row is not None:
+        winner_user_id, points_at_win, won_at = winner_row
+        display_repo = UserDisplayRepository(session)
+        snapshots = display_repo.bulk_get([str(winner_user_id)])
+        display, wrote = _resolve_display(
+            str(winner_user_id), snapshots, idp, cache, display_repo
+        )
+        if wrote:
+            _commit_backfill(session)
+        name, raw_avatar = display if display is not None else ("Пользователь", None)
+        winner = SprintWinnerDTO(
+            user_id=str(winner_user_id),
+            name=name,
+            avatar_url=_resolve_avatar(raw_avatar, file_service),
+            points_at_win=points_at_win,
+            won_at=won_at,
+        )
+
+    return SprintStatusEntry(
+        target_points=target_points,
+        week_start_at=week_start_at,
+        winner=winner,
     )

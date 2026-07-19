@@ -15,6 +15,9 @@ class LeaderboardPointsSettingsDTO(BaseModel):
     interval_days: int
     last_reset_at: datetime | None = None
     next_reset_at: datetime | None = None
+    # CRM task #7 ("Еженедельный спринт"): points threshold that locks
+    # in the week's sprint winner. None/0 == feature off.
+    sprint_target_points: int | None = None
     updated_at: datetime
     updated_by: str | None = None
 
@@ -27,6 +30,8 @@ class LeaderboardPointsSettingsUpdateDTO(BaseModel):
     # Ignored when reset_mode == "weekly_monday", but still validated/stored
     # so switching back to "interval" restores the previous cadence.
     interval_days: int = Field(30, ge=1, le=3650)
+    # None/0 disables the sprint-winner feature entirely (default).
+    sprint_target_points: int | None = Field(default=None, ge=0, le=1_000_000)
 
 
 class PointsAdjustDTO(BaseModel):
@@ -52,3 +57,16 @@ class PointsResetResultDTO(BaseModel):
     ran: bool
     users_reset: int = 0
     next_reset_at: datetime | None = None
+
+
+class SprintWinnerDTO(BaseModel):
+    """Public shape of the current week's locked-in sprint winner —
+    used by GET /leaderboard/sprint. Name/avatar are resolved the same
+    way as the rest of the leaderboard (user_display snapshot / Keycloak
+    fallback), not re-derived here."""
+
+    user_id: str
+    name: str
+    avatar_url: str | None = None
+    points_at_win: int
+    won_at: datetime

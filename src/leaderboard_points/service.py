@@ -1,4 +1,6 @@
+import logging
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from leaderboard_points.dtos import (
@@ -8,6 +10,8 @@ from leaderboard_points.dtos import (
 )
 from leaderboard_points.models import LeaderboardPointsSettings
 from leaderboard_points.repository import LeaderboardPointsRepository
+
+logger = logging.getLogger(__name__)
 
 ALMATY_TZ = ZoneInfo("Asia/Almaty")
 WEEKLY_MONDAY = "weekly_monday"
@@ -28,6 +32,26 @@ def next_monday_midnight_almaty(after: datetime) -> datetime:
     return candidate.astimezone(UTC)
 
 
+def current_week_start_almaty(now: datetime) -> datetime:
+    """The most recent Monday 00:00 Asia/Almaty at-or-before `now`,
+    returned as a UTC-aware datetime. Almaty has no DST, so — like
+    `next_monday_midnight_almaty` above — this is a plain fixed UTC+5
+    conversion, no ambiguous/skipped local times to guard against.
+
+    Pure calendar function for CRM task #7 ("Еженедельный спринт"
+    winner lock-in): deliberately does NOT read `settings.reset_mode`
+    or `settings.last_reset_at`. "This week" for the sprint-winner
+    feature is defined by the calendar, not by whatever the points
+    auto-reset schedule (CRM task #6) happens to be configured to —
+    so locking in a winner works correctly even if weekly auto-reset
+    is disabled or still set to "interval" mode."""
+    local = now.astimezone(ALMATY_TZ)
+    candidate = (local - timedelta(days=local.weekday())).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    return candidate.astimezone(UTC)
+
+
 def _next_reset_at(settings: LeaderboardPointsSettings) -> datetime | None:
     if not settings.auto_reset_enabled or settings.last_reset_at is None:
         return None
@@ -43,6 +67,7 @@ def _to_dto(settings: LeaderboardPointsSettings) -> LeaderboardPointsSettingsDTO
         interval_days=settings.interval_days,
         last_reset_at=settings.last_reset_at,
         next_reset_at=_next_reset_at(settings),
+        sprint_target_points=settings.sprint_target_points,
         updated_at=settings.updated_at,
         updated_by=settings.updated_by,
     )
@@ -63,10 +88,16 @@ class LeaderboardPointsService:
         reset_mode: str,
         interval_days: int,
         actor_display: str,
+        sprint_target_points: int | None = None,
     ) -> LeaderboardPointsSettingsDTO:
         settings = self.repo.get_or_create_settings()
         settings = self.repo.save_settings(
-            settings, enabled, reset_mode, interval_days, actor_display
+            settings,
+            enabled,
+            reset_mode,
+            interval_days,
+            actor_display,
+            sprint_target_points,
         )
         return _to_dto(settings)
 
@@ -133,3 +164,89 @@ class LeaderboardPointsService:
             users_reset=count,
             next_reset_at=next_reset_at,
         )
+
+    # ---------- sprint winner (CRM task #7) ----------
+
+    def check_and_lock_sprint_winner(self, user_id: UUID, total_points_after: int) -> None:
+        """Side-effect hook: called after every points award (ЕНТ full-exam
+        completion, battle win, referral/payment reward — see
+        `UserPointsRepository.add_points`). Locks `user_id` in as this
+        week's "Еженедельный спринт" winner the first time their total
+        crosses the admin-configured `sprint_target_points` threshold.
+
+        No-ops entirely when the feature is off (`sprint_target_points`
+        is None/0) or when the user is on the admin hide-list — same
+        exclusion `GET /leaderboard` already applies, a hidden user
+        shouldn't headline the public sprint banner either.
+
+        MUST NEVER RAISE: this runs inline in the hot points-award path
+        used by quiz/battle/exam completion — a bug here must not break
+        the caller's actual points award.
+
+        Runs inside a SAVEPOINT (`db.begin_nested()`), not just a bare
+        try/except — same pattern as `battle/service.py`'s
+        `_add_to_user_points`/`_credit_stars_to_bank` ("Use a savepoint
+        so a failure here doesn't corrupt the outer transaction."). This
+        matters concretely for a deploy-ordering edge case: Railway's
+        auto-deploy does not guarantee the Alembic migration for
+        `sprint_target_points`/`sprint_winners` has run before the new
+        backend code is live, so `get_or_create_settings()` or
+        `try_lock_sprint_winner()` can hit Postgres errors (missing
+        column/table) during that window. A raw Postgres error aborts
+        the whole transaction — a bare `except Exception: log` catches
+        the Python exception but does NOT un-abort the transaction, so
+        the caller's subsequent `commit()` (e.g. `EntAttemptService.
+        answer()`'s `self._uow.commit()`, needed right after for the
+        cashback check) would then raise, unhandled, breaking exam
+        completion. `ROLLBACK TO SAVEPOINT` (issued by begin_nested()'s
+        context manager when it observes the exception) undoes exactly
+        that abort, so the outer transaction — and the points award
+        that already happened in it — stays healthy."""
+        try:
+            with self.repo.db.begin_nested():
+                settings = self.repo.get_or_create_settings()
+                target = settings.sprint_target_points
+                if not target:
+                    return
+                if total_points_after < target:
+                    return
+
+                # Local import — mirrors the existing lazy-import convention
+                # for cross-package deps in this codebase (see
+                # api/dependencies.get_leaderboard_points_service) and keeps
+                # leaderboard_points from depending on quiz.repositories at
+                # module-import time.
+                from quiz.repositories.leaderboard_hidden import (
+                    LeaderboardHiddenRepository,
+                )
+
+                hidden_ids = LeaderboardHiddenRepository(self.repo.db).get_all()
+                if str(user_id) in hidden_ids:
+                    return
+
+                week_start_at = current_week_start_almaty(datetime.now(UTC))
+                self.repo.try_lock_sprint_winner(week_start_at, user_id, total_points_after)
+        except Exception:
+            logger.exception(
+                "check_and_lock_sprint_winner failed for user %s (non-fatal, "
+                "points award itself is unaffected)",
+                user_id,
+            )
+
+    def get_sprint_status_raw(
+        self,
+    ) -> tuple[int | None, datetime | None, tuple[UUID, int, datetime] | None]:
+        """Returns `(target_points, week_start_at, winner_row)` for
+        `GET /leaderboard/sprint`. `winner_row` is the raw `(user_id,
+        points_at_win, won_at)` tuple — display-name/avatar resolution
+        happens at the route layer, reusing the same Keycloak/cache/
+        user_display lookup `GET /leaderboard` already uses, rather than
+        a second mechanism here. `week_start_at` is None iff
+        `target_points` is None/0 (feature off)."""
+        settings = self.repo.get_or_create_settings()
+        target = settings.sprint_target_points
+        if not target:
+            return None, None, None
+        week_start_at = current_week_start_almaty(datetime.now(UTC))
+        winner_row = self.repo.get_current_sprint_winner_row(week_start_at)
+        return target, week_start_at, winner_row

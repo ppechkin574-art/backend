@@ -17,6 +17,13 @@ Covers:
   GET /leaderboard/sprint is built on.
 - `GET /leaderboard/sprint` — response shape in all three states (not
   configured / configured no winner yet / configured with winner).
+- `UserPointsRepository.add_points` — savepoint isolation. If the
+  sprint-winner check's DB work raises INSIDE Postgres (not just a
+  Python exception — an aborted transaction), the SAVEPOINT wrapping
+  it must roll back so the outer transaction (and the points award
+  that already happened in it) stays usable. A bare try/except is not
+  sufficient for this — see `LeaderboardPointsService.
+  check_and_lock_sprint_winner`'s docstring.
 """
 
 from datetime import UTC, datetime
@@ -35,6 +42,8 @@ from api.routes.user.leaderboard import SprintStatusEntry, get_sprint_status
 from leaderboard_points.dtos import SprintWinnerDTO
 from leaderboard_points.repository import LeaderboardPointsRepository
 from leaderboard_points.service import LeaderboardPointsService
+from quiz.repositories.user_points import UserPointsRepository
+from security.models import PointsAuditLog
 
 # ─── LeaderboardPointsRepository.try_lock_sprint_winner ─────────────────
 
@@ -391,3 +400,155 @@ async def test_endpoint_configured_with_winner_resolves_display():
         points_at_win=1200,
         won_at=won_at,
     )
+
+
+# ─── UserPointsRepository.add_points — savepoint isolation ──────────────
+#
+# A bare Python try/except around the sprint-winner check is NOT enough:
+# if the check's SQL raises inside Postgres (e.g. `sprint_winners` doesn't
+# exist yet during a deploy window where the backend ships before the
+# Alembic migration runs — Railway auto-deploy doesn't order the two),
+# Postgres aborts the WHOLE transaction. Catching the Python exception
+# doesn't un-abort it — the caller's later `session.commit()` (e.g.
+# `EntAttemptService.answer()`'s `self._uow.commit()`) would then raise,
+# unhandled, breaking exam completion for the user. `check_and_lock_
+# sprint_winner` wraps its DB work in `db.begin_nested()` (a SAVEPOINT)
+# for exactly this reason — see its docstring.
+#
+# `unittest.mock.MagicMock` can't model this: it never raises on its own
+# and has no notion of "the connection is now unusable until rolled
+# back." `_FakeSession` below is a minimal double that DOES model that —
+# `aborted=True` makes every subsequent DB call raise (mirrors Postgres
+# rejecting all commands until `ROLLBACK`/`ROLLBACK TO SAVEPOINT`), and
+# `begin_nested()`'s context manager clears the flag on exception exit
+# (mirrors `ROLLBACK TO SAVEPOINT` — the outer transaction recovers).
+# This proves the SAVEPOINT is actually doing its job, not just that no
+# exception happens to propagate out of `add_points()`.
+
+
+class _FakeNestedTxn:
+    """Models the one property of `Session.begin_nested()` this test
+    cares about: on a clean exit it does nothing special; on an
+    exception it "issues ROLLBACK TO SAVEPOINT" (clears `aborted`) and
+    then re-raises — it never swallows."""
+
+    def __init__(self, session):
+        self._session = session
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is not None:
+            self._session.rolled_back_to_savepoint = True
+            self._session.aborted = False
+        return False
+
+
+class _FakeSession:
+    """Minimal Session double with just enough Postgres-transaction
+    semantics to prove savepoint isolation — not a general-purpose
+    session mock."""
+
+    def __init__(self):
+        self.aborted = False
+        self.rolled_back_to_savepoint = False
+        self.committed = False
+        self.added: list = []
+        self.executed: list = []
+
+    def _guard(self):
+        if self.aborted:
+            raise Exception(
+                "current transaction is aborted, commands ignored until "
+                "end of transaction block"
+            )
+
+    def execute(self, stmt, params=None):
+        self._guard()
+        self.executed.append((stmt, params))
+        result = MagicMock()
+        result.scalar.return_value = 500
+        result.first.return_value = None
+        return result
+
+    def add(self, obj):
+        self._guard()
+        self.added.append(obj)
+
+    def query(self, *_a, **_k):
+        self._guard()
+        m = MagicMock()
+        m.filter.return_value.first.return_value = None
+        m.order_by.return_value.first.return_value = None
+        return m
+
+    def begin_nested(self):
+        return _FakeNestedTxn(self)
+
+    def commit(self):
+        self._guard()
+        self.committed = True
+
+
+def test_add_points_survives_sprint_check_aborting_the_transaction(monkeypatch):
+    """Simulates the deploy-race failure mode: the sprint-winner check's
+    first DB call (`get_or_create_settings`) blows up as if
+    `sprint_target_points`/`sprint_winners` don't exist yet, aborting
+    the Postgres transaction. Asserts:
+
+    1. `add_points()` itself doesn't raise (the baseline "never breaks
+       the caller" requirement).
+    2. The points award that already happened (UPSERT + audit log) is
+       untouched — it ran BEFORE the sprint check and isn't rolled back
+       by the savepoint (the savepoint only covers the sprint-check's
+       own work).
+    3. The SAVEPOINT actually engaged (`rolled_back_to_savepoint`),
+       proving the transaction was un-aborted — not just that the
+       Python exception didn't propagate.
+    4. The caller's subsequent `commit()` (mirrors `self._uow.commit()`
+       right after `add_points()` in `ent_attempts.py`) succeeds — this
+       is what would have raised, unhandled, without the savepoint.
+    """
+    session = _FakeSession()
+    repo = UserPointsRepository(session)
+    user_id = uuid4()
+
+    def _boom(self):
+        # Simulate a real Postgres error (missing column/table) — the
+        # connection is now aborted until rolled back, exactly like the
+        # real DBAPI/psycopg2 behaviour this is standing in for.
+        session.aborted = True
+        raise Exception('relation "sprint_winners" does not exist')
+
+    monkeypatch.setattr(LeaderboardPointsRepository, "get_or_create_settings", _boom)
+
+    # Must not raise.
+    repo.add_points(user_id, 500, source_type="ent_attempt", source_id="attempt-1")
+
+    # The points award itself completed before the sprint check ran.
+    assert len(session.executed) == 1  # the total_points UPSERT
+    assert len(session.added) == 1
+    assert isinstance(session.added[0], PointsAuditLog)
+    assert session.added[0].points_delta == 500
+
+    # The savepoint actually rolled back the abort...
+    assert session.rolled_back_to_savepoint is True
+    assert session.aborted is False
+
+    # ...so the caller's subsequent commit() (which would otherwise
+    # raise on an aborted transaction) succeeds.
+    session.commit()
+    assert session.committed is True
+
+
+def test_add_points_without_savepoint_would_have_left_transaction_aborted():
+    """Control case, not exercising production code: proves `_FakeSession`
+    itself faithfully models "no rollback → still aborted → commit
+    raises", so the green result of the test above is actually meaningful
+    (i.e. it's the savepoint doing the work, not a lenient fake)."""
+    session = _FakeSession()
+    session.aborted = True  # no ROLLBACK TO SAVEPOINT ever issued
+
+    with pytest.raises(Exception, match="aborted"):
+        session.commit()

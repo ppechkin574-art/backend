@@ -181,28 +181,51 @@ class LeaderboardPointsService:
 
         MUST NEVER RAISE: this runs inline in the hot points-award path
         used by quiz/battle/exam completion — a bug here must not break
-        the caller's actual points award."""
+        the caller's actual points award.
+
+        Runs inside a SAVEPOINT (`db.begin_nested()`), not just a bare
+        try/except — same pattern as `battle/service.py`'s
+        `_add_to_user_points`/`_credit_stars_to_bank` ("Use a savepoint
+        so a failure here doesn't corrupt the outer transaction."). This
+        matters concretely for a deploy-ordering edge case: Railway's
+        auto-deploy does not guarantee the Alembic migration for
+        `sprint_target_points`/`sprint_winners` has run before the new
+        backend code is live, so `get_or_create_settings()` or
+        `try_lock_sprint_winner()` can hit Postgres errors (missing
+        column/table) during that window. A raw Postgres error aborts
+        the whole transaction — a bare `except Exception: log` catches
+        the Python exception but does NOT un-abort the transaction, so
+        the caller's subsequent `commit()` (e.g. `EntAttemptService.
+        answer()`'s `self._uow.commit()`, needed right after for the
+        cashback check) would then raise, unhandled, breaking exam
+        completion. `ROLLBACK TO SAVEPOINT` (issued by begin_nested()'s
+        context manager when it observes the exception) undoes exactly
+        that abort, so the outer transaction — and the points award
+        that already happened in it — stays healthy."""
         try:
-            settings = self.repo.get_or_create_settings()
-            target = settings.sprint_target_points
-            if not target:
-                return
-            if total_points_after < target:
-                return
+            with self.repo.db.begin_nested():
+                settings = self.repo.get_or_create_settings()
+                target = settings.sprint_target_points
+                if not target:
+                    return
+                if total_points_after < target:
+                    return
 
-            # Local import — mirrors the existing lazy-import convention
-            # for cross-package deps in this codebase (see
-            # api/dependencies.get_leaderboard_points_service) and keeps
-            # leaderboard_points from depending on quiz.repositories at
-            # module-import time.
-            from quiz.repositories.leaderboard_hidden import LeaderboardHiddenRepository
+                # Local import — mirrors the existing lazy-import convention
+                # for cross-package deps in this codebase (see
+                # api/dependencies.get_leaderboard_points_service) and keeps
+                # leaderboard_points from depending on quiz.repositories at
+                # module-import time.
+                from quiz.repositories.leaderboard_hidden import (
+                    LeaderboardHiddenRepository,
+                )
 
-            hidden_ids = LeaderboardHiddenRepository(self.repo.db).get_all()
-            if str(user_id) in hidden_ids:
-                return
+                hidden_ids = LeaderboardHiddenRepository(self.repo.db).get_all()
+                if str(user_id) in hidden_ids:
+                    return
 
-            week_start_at = current_week_start_almaty(datetime.now(UTC))
-            self.repo.try_lock_sprint_winner(week_start_at, user_id, total_points_after)
+                week_start_at = current_week_start_almaty(datetime.now(UTC))
+                self.repo.try_lock_sprint_winner(week_start_at, user_id, total_points_after)
         except Exception:
             logger.exception(
                 "check_and_lock_sprint_winner failed for user %s (non-fatal, "

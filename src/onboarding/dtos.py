@@ -37,8 +37,8 @@ class OnboardingStepDTO(BaseModel):
     mascot_flip_h: bool = False
     mascot_flip_v: bool = False
     step_screen: Optional[str] = None
-    spotlight_element_keys: List[str] = Field(default_factory=list)
-    spotlight_adjustments: Dict[str, Any] = Field(default_factory=dict)
+    spotlight_element_keys: list[str] = Field(default_factory=list)
+    spotlight_adjustments: dict[str, Any] = Field(default_factory=dict)
     bubble_width: float = 260.0
     bubble_padding: float = 20.0
     button_width: float = 0.0
@@ -66,8 +66,8 @@ class OnboardingStepCreateDTO(BaseModel):
     mascot_flip_h: bool = False
     mascot_flip_v: bool = False
     step_screen: Optional[str] = Field(default=None, max_length=50)
-    spotlight_element_keys: List[str] = Field(default_factory=list)
-    spotlight_adjustments: Dict[str, Any] = Field(default_factory=dict)
+    spotlight_element_keys: list[str] = Field(default_factory=list)
+    spotlight_adjustments: dict[str, Any] = Field(default_factory=dict)
     bubble_width: float = Field(default=260.0, ge=100.0, le=400.0)
     bubble_padding: float = Field(default=20.0, ge=4.0, le=40.0)
     button_width: float = Field(default=0.0, ge=0.0, le=400.0)
@@ -95,8 +95,8 @@ class OnboardingStepUpdateDTO(BaseModel):
     mascot_flip_h: Optional[bool] = None
     mascot_flip_v: Optional[bool] = None
     step_screen: Optional[str] = Field(default=None, max_length=50)
-    spotlight_element_keys: Optional[List[str]] = None
-    spotlight_adjustments: Optional[Dict[str, Any]] = None
+    spotlight_element_keys: Optional[list[str]] = None
+    spotlight_adjustments: Optional[dict[str, Any]] = None
     bubble_width: Optional[float] = Field(default=None, ge=100.0, le=400.0)
     bubble_padding: Optional[float] = Field(default=None, ge=4.0, le=40.0)
     button_width: Optional[float] = Field(default=None, ge=0.0, le=400.0)
@@ -184,8 +184,8 @@ class OnboardingStepPublicDTO(BaseModel):
     mascot_flip_h: bool = False
     mascot_flip_v: bool = False
     step_screen: Optional[str] = None
-    spotlight_element_keys: List[str] = Field(default_factory=list)
-    spotlight_adjustments: Dict[str, Any] = Field(default_factory=dict)
+    spotlight_element_keys: list[str] = Field(default_factory=list)
+    spotlight_adjustments: dict[str, Any] = Field(default_factory=dict)
     bubble_width: float = 260.0
     bubble_padding: float = 20.0
     button_width: float = 0.0

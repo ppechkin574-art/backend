@@ -1,3 +1,4 @@
+import contextlib
 import hashlib
 import logging
 import os
@@ -482,10 +483,8 @@ class SubscriptionService:
             logger.exception(
                 "reconcile_registration_trial failed for user %s: %s", user.id, e
             )
-            try:
+            with contextlib.suppress(Exception):
                 session.rollback()
-            except Exception:  # noqa: BLE001
-                pass
             return user
         finally:
             session.close()
@@ -585,10 +584,8 @@ class SubscriptionService:
             session.commit()
         except Exception as e:  # noqa: BLE001
             logger.exception("reconcile_login_trial record failed: %s", e)
-            try:
+            with contextlib.suppress(Exception):
                 session.rollback()
-            except Exception:  # noqa: BLE001
-                pass
         finally:
             session.close()
         return granted

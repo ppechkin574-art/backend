@@ -148,7 +148,7 @@ def questions_for_client(questions: list[dict], lang: str = "ru") -> list[Battle
         # Kazakh content to Russian users (blocks text may be in any language).
         if not text:
             continue
-        expl = q.get(f"explanation_{lang}") or q.get(f"explanation_ru") or q.get("explanation")
+        expl = q.get(f"explanation_{lang}") or q.get("explanation_ru") or q.get("explanation")
         result.append(BattleQuestion(
             id=q["id"],
             subject_id=q["subject_id"],
@@ -528,9 +528,9 @@ class BattleService:
         if all_user_ids:
             wins_raw = self.redis.hmget(wins_key, all_user_ids)
             losses_raw = self.redis.hmget(losses_key, all_user_ids)
-            for uid, w, l in zip(all_user_ids, wins_raw, losses_raw):
+            for uid, w, loss in zip(all_user_ids, wins_raw, losses_raw, strict=False):
                 wins_map[uid] = int(w or 0)
-                losses_map[uid] = int(l or 0)
+                losses_map[uid] = int(loss or 0)
 
         entries = []
         my_entry = None

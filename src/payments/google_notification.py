@@ -10,6 +10,8 @@ Mirrors `apple_notification.py` (App Store Server Notifications V2).
 
 from __future__ import annotations
 
+import contextlib
+
 import logging
 
 from sqlalchemy import Column, DateTime, String, Text
@@ -60,10 +62,8 @@ def record_google_notification(
             "[google_rtdn] record_google_notification failed for message_id=%s",
             message_id,
         )
-        try:
+        with contextlib.suppress(Exception):
             session.rollback()
-        except Exception:  # noqa: BLE001
-            pass
         # Fail open: treat as new so the event is still handled (downstream is
         # idempotent). Better a rare double-process than a dropped renewal.
         return True

@@ -18,14 +18,14 @@ from leaderboard_points.service import (
 
 
 def _fake_settings(**overrides):
-    base = dict(
-        auto_reset_enabled=True,
-        reset_mode="weekly_monday",
-        interval_days=30,
-        last_reset_at=None,
-        updated_at=datetime.now(UTC),
-        updated_by=None,
-    )
+    base = {
+        "auto_reset_enabled": True,
+        "reset_mode": "weekly_monday",
+        "interval_days": 30,
+        "last_reset_at": None,
+        "updated_at": datetime.now(UTC),
+        "updated_by": None,
+    }
     base.update(overrides)
     return SimpleNamespace(**base)
 

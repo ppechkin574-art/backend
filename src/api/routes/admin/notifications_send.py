@@ -223,6 +223,26 @@ class TestSendResponseDTO(BaseModel):
     total_failed: int
 
 
+class TestPhonesResponseDTO(BaseModel):
+    phones: list[str]
+
+
+@router.get(
+    "/test-phones",
+    response_model=TestPhonesResponseDTO,
+    summary="Текущие тестовые номера (для отображения в админке)",
+    description=(
+        "Возвращает номера, реально настроенные на бэкенде через "
+        "REVIEWER_TEST_PHONE + DEV_RATE_LIMIT_BYPASS_PHONES — те же, на "
+        "которые уйдёт POST /send-test. Админка использует этот эндпоинт "
+        "вместо хардкода, чтобы список в UI никогда не расходился с "
+        "реальной конфигурацией (см. историю задачи 'Пуш')."
+    ),
+)
+async def get_test_phones() -> TestPhonesResponseDTO:
+    return TestPhonesResponseDTO(phones=_get_test_phones())
+
+
 @router.post(
     "/send-test",
     response_model=TestSendResponseDTO,

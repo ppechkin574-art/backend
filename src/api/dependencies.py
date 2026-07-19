@@ -1200,15 +1200,21 @@ def get_onboarding_service(
     return OnboardingService(OnboardingRepository(db))
 
 
+@inject
 def get_crm_service(
     db: Session = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
+    media_storage=Depends(Provide[Container.media_storage]),
 ):
     """CRUD доски задач CRM (канбан) + append-only лог изменений.
 
     Also wires the agent-webhook notifier (fires when a task's assignee
     changes to the 24/7 agent's Keycloak id) — a no-op until
-    ``agent_webhook.enabled`` is turned on in settings."""
+    ``agent_webhook.enabled`` is turned on in settings.
+
+    ``media_storage`` is injected directly (not via FileService, which is
+    image-specific/PIL-based) so CrmService can save/link/remove arbitrary
+    task attachments (pdf/docx/xlsx/zip/...) in the same S3 bucket."""
     from clients.agent_webhook.client import AgentWebhookClient
     from crm.repository import CrmRepository
     from crm.service import CrmService
@@ -1217,6 +1223,7 @@ def get_crm_service(
         CrmRepository(db),
         agent_webhook=AgentWebhookClient(settings.agent_webhook),
         agent_admin_id=settings.agent_webhook.agent_admin_id,
+        media_storage=media_storage,
     )
 
 

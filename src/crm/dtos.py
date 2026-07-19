@@ -7,6 +7,13 @@ _STATUSES = ("todo", "prog", "hold", "done")
 _PRIORITIES = ("low", "mid", "high")
 
 
+class CrmMemberDTO(BaseModel):
+    """Админ, которого можно назначить ответственным."""
+
+    id: UUID
+    display: str
+
+
 class CrmTaskDTO(BaseModel):
     id: int
     title: str
@@ -20,6 +27,8 @@ class CrmTaskDTO(BaseModel):
     sort_order: int
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    linked_task_ids: list[int] = Field(default_factory=list)
+    extra_assignees: list[CrmMemberDTO] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 
@@ -115,8 +124,51 @@ class CrmActivityDTO(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class CrmMemberDTO(BaseModel):
-    """Админ, которого можно назначить ответственным."""
+# ---------- attachments ----------
 
-    id: UUID
-    display: str
+
+class CrmAttachmentDTO(BaseModel):
+    id: int
+    task_id: int
+    filename: str
+    content_type: str | None = None
+    size: int
+    uploaded_by: UUID | None = None
+    uploaded_by_display: str | None = None
+    created_at: datetime.datetime
+    url: str = ""
+
+    model_config = {"from_attributes": True}
+
+
+# ---------- links ----------
+
+
+class CrmLinkCreateDTO(BaseModel):
+    linked_task_id: int
+
+
+# ---------- assignees ----------
+
+
+class CrmAssigneeCreateDTO(BaseModel):
+    admin_id: UUID
+    admin_display: str = Field(..., min_length=1, max_length=200)
+
+
+# ---------- comments ----------
+
+
+class CrmCommentCreateDTO(BaseModel):
+    text: str = Field(..., min_length=1, max_length=4000)
+
+
+class CrmCommentDTO(BaseModel):
+    id: int
+    task_id: int
+    admin_id: UUID | None = None
+    admin_display: str
+    text: str
+    created_at: datetime.datetime
+
+    model_config = {"from_attributes": True}

@@ -1,22 +1,45 @@
+import io
+import logging
 from typing import TYPE_CHECKING
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
 
+from clients.media_storage.exceptions import MediaStorageError
+from crm.attachments import (
+    MAX_ATTACHMENT_SIZE_BYTES,
+    is_blocked_extension,
+    sanitize_filename,
+    sniff_dangerous,
+)
 from crm.dtos import CrmMoveDTO, CrmTaskCreateDTO, CrmTaskUpdateDTO
-from crm.models import CrmActivity, CrmTask
+from crm.models import (
+    CrmActivity,
+    CrmTask,
+    CrmTaskAssignee,
+    CrmTaskAttachment,
+    CrmTaskComment,
+    CrmTaskLink,
+)
 from crm.repository import CrmRepository
 
 if TYPE_CHECKING:
     from clients.agent_webhook.client import AgentWebhookClient
+    from clients.media_storage.client import MediaStorageClientInterface
+
+logger = logging.getLogger(__name__)
 
 
 class CrmService:
+    ATTACHMENT_PREFIX = "crm-attachments"
+    MAX_ATTACHMENT_SIZE_BYTES = MAX_ATTACHMENT_SIZE_BYTES
+
     def __init__(
         self,
         repo: CrmRepository,
         agent_webhook: "AgentWebhookClient | None" = None,
         agent_admin_id: str | None = None,
+        media_storage: "MediaStorageClientInterface | None" = None,
     ):
         self.repo = repo
         self._agent_webhook = agent_webhook
@@ -26,10 +49,18 @@ class CrmService:
         # router commits (flush_webhooks) — firing pre-commit made the
         # executor re-read the board and see the OLD state (live-caught race).
         self._pending_webhooks: list[tuple[str, dict]] = []
+        # Injected directly (not via FileService) — FileService's pipeline
+        # is PIL-based and image-specific (resize/re-encode/magic-byte
+        # sniff for image formats only). CRM attachments are arbitrary
+        # files (pdf/docx/xlsx/zip/...), so we talk to the storage
+        # interface directly and keep the image pipeline untouched.
+        self._media_storage = media_storage
 
     # ---------- reads ----------
     def list_tasks(self) -> list[CrmTask]:
-        return self.repo.list_tasks()
+        tasks = self.repo.list_tasks()
+        self._attach_relations_bulk(tasks)
+        return tasks
 
     def list_activity(self, limit: int = 200) -> list[CrmActivity]:
         return self.repo.list_activity(limit)
@@ -60,6 +91,28 @@ class CrmService:
             if admin_id is not None and key not in seen:
                 seen[key] = {"id": admin_id, "display": display or key}
         return list(seen.values())
+
+    # ---------- relation enrichment (linked tasks / extra assignees) ----------
+    def _attach_relations(self, task: CrmTask) -> None:
+        """Sets transient (non-persisted) attributes on the ORM instance so
+        CrmTaskDTO.model_validate(task, from_attributes=True) can read
+        them — these are NOT mapped columns, just plain attributes."""
+        task.linked_task_ids = self.repo.list_link_ids(task.id)
+        task.extra_assignees = [
+            {"id": a.admin_id, "display": a.admin_display}
+            for a in self.repo.list_assignees(task.id)
+        ]
+
+    def _attach_relations_bulk(self, tasks: list[CrmTask]) -> None:
+        ids = [t.id for t in tasks]
+        links_map = self.repo.list_link_ids_bulk(ids)
+        assignees_map = self.repo.list_assignees_bulk(ids)
+        for t in tasks:
+            t.linked_task_ids = links_map.get(t.id, [])
+            t.extra_assignees = [
+                {"id": a.admin_id, "display": a.admin_display}
+                for a in assignees_map.get(t.id, [])
+            ]
 
     # ---------- writes ----------
     def _log(
@@ -163,6 +216,7 @@ class CrmService:
         self._log(task, "create", {"status": task.status}, actor_id, actor_display)
         self._dispatch_board_event("create", task)
         self._maybe_dispatch_agent_webhook(task)
+        self._attach_relations(task)
         return task
 
     def update(
@@ -206,6 +260,7 @@ class CrmService:
         if "assignee_admin_id" in fields and str(task.assignee_admin_id) != str(old_assignee):
             self._maybe_dispatch_agent_webhook(task)
 
+        self._attach_relations(task)
         return task
 
     def move(
@@ -250,6 +305,7 @@ class CrmService:
             self._dispatch_board_event(
                 "move", task, {"from": old_status, "to": new_status}
             )
+        self._attach_relations(task)
         return task
 
     def delete(
@@ -269,3 +325,289 @@ class CrmService:
         )
         self._dispatch_board_event("delete", task)
         self.repo.delete(task)
+
+    # ---------- attachments ----------
+    def list_attachments(self, task_id: int) -> list[CrmTaskAttachment]:
+        self.get_one(task_id)
+        return self.repo.list_attachments(task_id)
+
+    def add_attachment(
+        self,
+        task_id: int,
+        filename: str,
+        content_type: str | None,
+        content: bytes,
+        actor_id: UUID | None,
+        actor_display: str,
+    ) -> CrmTaskAttachment:
+        task = self.get_one(task_id)
+
+        if not content:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST, detail="Пустой файл"
+            )
+        if len(content) > self.MAX_ATTACHMENT_SIZE_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"Файл слишком большой. Максимум "
+                    f"{self.MAX_ATTACHMENT_SIZE_BYTES // (1024 * 1024)}MB"
+                ),
+            )
+        # Sanitize BEFORE checking the extension: os.path.splitext doesn't
+        # strip trailing whitespace, so a raw client-supplied filename like
+        # "evil.js " (trailing space/tab — trivial to set via a crafted
+        # multipart request, not just a browser) would yield ext ".js "
+        # which doesn't match anything in BLOCKED_EXTENSIONS, silently
+        # bypassing the block-list for exactly the plain-text script types
+        # (.js/.bat/.cmd/.vbs/.ps1/...) that sniff_dangerous's magic-byte
+        # check can't catch. Checking the sanitized name closes that gap,
+        # since sanitize_filename() strips the name and is also what
+        # ultimately becomes part of the stored object_name.
+        safe_name = sanitize_filename(filename)
+        if is_blocked_extension(safe_name):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Этот тип файла запрещён к загрузке",
+            )
+        if sniff_dangerous(content[:64]):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Файл похож на исполняемый — загрузка запрещена",
+            )
+        if self._media_storage is None:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Хранилище файлов не настроено",
+            )
+
+        object_name = f"{self.ATTACHMENT_PREFIX}/{task_id}/{uuid4().hex}_{safe_name}"
+
+        try:
+            self._media_storage.save(object_name, io.BytesIO(content))
+        except MediaStorageError as e:
+            logger.exception("Failed to save CRM attachment %s", object_name)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Не удалось сохранить файл",
+            ) from e
+
+        attachment = CrmTaskAttachment(
+            task_id=task_id,
+            object_name=object_name,
+            filename=safe_name,
+            content_type=content_type,
+            size=len(content),
+            uploaded_by=actor_id,
+            uploaded_by_display=actor_display,
+        )
+        self.repo.add_attachment(attachment)
+        self._log(
+            task,
+            "attach",
+            {"filename": safe_name, "attachment_id": attachment.id},
+            actor_id,
+            actor_display,
+        )
+        return attachment
+
+    def remove_attachment(
+        self,
+        task_id: int,
+        attachment_id: int,
+        actor_id: UUID | None,
+        actor_display: str,
+    ) -> None:
+        task = self.get_one(task_id)
+        attachment = self.repo.get_attachment(attachment_id)
+        if attachment is None or attachment.task_id != task_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Вложение с id={attachment_id} не найдено",
+            )
+        object_name = attachment.object_name
+        filename = attachment.filename
+        self.repo.delete_attachment(attachment)
+
+        if self._media_storage is not None:
+            try:
+                self._media_storage.remove(object_name)
+            except MediaStorageError:
+                logger.warning(
+                    "Failed to remove CRM attachment object %s from storage",
+                    object_name,
+                )
+
+        self._log(
+            task,
+            "unattach",
+            {"filename": filename, "attachment_id": attachment_id},
+            actor_id,
+            actor_display,
+        )
+
+    def attachment_url(self, attachment: CrmTaskAttachment) -> str:
+        if self._media_storage is None:
+            return ""
+        try:
+            return self._media_storage.link(attachment.object_name)
+        except MediaStorageError:
+            logger.warning(
+                "Failed to build URL for CRM attachment %s", attachment.object_name
+            )
+            return ""
+
+    # ---------- links ("связано с") ----------
+    def list_links(self, task_id: int) -> list[int]:
+        self.get_one(task_id)
+        return self.repo.list_link_ids(task_id)
+
+    def add_link(
+        self,
+        task_id: int,
+        linked_task_id: int,
+        actor_id: UUID | None,
+        actor_display: str,
+    ) -> CrmTask:
+        if task_id == linked_task_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Нельзя связать задачу саму с собой",
+            )
+        task = self.get_one(task_id)
+        self.get_one(linked_task_id)
+
+        if self.repo.get_link(task_id, linked_task_id) is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Эти задачи уже связаны",
+            )
+
+        self.repo.add_link(CrmTaskLink(task_id=task_id, linked_task_id=linked_task_id))
+        self.repo.add_link(CrmTaskLink(task_id=linked_task_id, linked_task_id=task_id))
+        self._log(
+            task,
+            "link",
+            {"linked_task_id": linked_task_id},
+            actor_id,
+            actor_display,
+        )
+        self._attach_relations(task)
+        return task
+
+    def remove_link(
+        self,
+        task_id: int,
+        linked_task_id: int,
+        actor_id: UUID | None,
+        actor_display: str,
+    ) -> CrmTask:
+        task = self.get_one(task_id)
+        link = self.repo.get_link(task_id, linked_task_id)
+        if link is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Связь между этими задачами не найдена",
+            )
+        reverse = self.repo.get_link(linked_task_id, task_id)
+        self.repo.delete_link(link)
+        if reverse is not None:
+            self.repo.delete_link(reverse)
+
+        self._log(
+            task,
+            "unlink",
+            {"linked_task_id": linked_task_id},
+            actor_id,
+            actor_display,
+        )
+        self._attach_relations(task)
+        return task
+
+    # ---------- extra assignees ----------
+    def list_assignees(self, task_id: int) -> list[CrmTaskAssignee]:
+        self.get_one(task_id)
+        return self.repo.list_assignees(task_id)
+
+    def add_assignee(
+        self,
+        task_id: int,
+        admin_id: UUID,
+        admin_display: str,
+        actor_id: UUID | None,
+        actor_display: str,
+    ) -> CrmTask:
+        task = self.get_one(task_id)
+        if self.repo.get_assignee(task_id, admin_id) is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Этот админ уже в списке ответственных",
+            )
+        self.repo.add_assignee(
+            CrmTaskAssignee(
+                task_id=task_id, admin_id=admin_id, admin_display=admin_display
+            )
+        )
+        self._log(
+            task,
+            "assign_extra",
+            {"admin_id": str(admin_id), "admin_display": admin_display},
+            actor_id,
+            actor_display,
+        )
+        self._attach_relations(task)
+        return task
+
+    def remove_assignee(
+        self,
+        task_id: int,
+        admin_id: UUID,
+        actor_id: UUID | None,
+        actor_display: str,
+    ) -> CrmTask:
+        task = self.get_one(task_id)
+        assignee = self.repo.get_assignee(task_id, admin_id)
+        if assignee is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Ответственный не найден среди дополнительных для этой задачи",
+            )
+        self.repo.delete_assignee(assignee)
+        self._log(
+            task,
+            "unassign_extra",
+            {"admin_id": str(admin_id)},
+            actor_id,
+            actor_display,
+        )
+        self._attach_relations(task)
+        return task
+
+    # ---------- comments ----------
+    def list_comments(self, task_id: int) -> list[CrmTaskComment]:
+        self.get_one(task_id)
+        return self.repo.list_comments(task_id)
+
+    def add_comment(
+        self,
+        task_id: int,
+        text: str,
+        actor_id: UUID | None,
+        actor_display: str,
+    ) -> CrmTaskComment:
+        task = self.get_one(task_id)
+        comment = CrmTaskComment(
+            task_id=task_id,
+            admin_id=actor_id,
+            admin_display=actor_display,
+            text=text,
+        )
+        self.repo.add_comment(comment)
+        self._log(
+            task,
+            "comment",
+            {"comment_id": comment.id},
+            actor_id,
+            actor_display,
+        )
+        return comment

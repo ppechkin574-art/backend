@@ -1,10 +1,17 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
+
+# "interval"      — reset every `interval_days` days after the last reset.
+# "weekly_monday" — reset every Monday 00:00 Asia/Almaty (CRM task #6,
+#                    "Еженедельный спринт").
+ResetMode = Literal["interval", "weekly_monday"]
 
 
 class LeaderboardPointsSettingsDTO(BaseModel):
     auto_reset_enabled: bool
+    reset_mode: ResetMode
     interval_days: int
     last_reset_at: datetime | None = None
     next_reset_at: datetime | None = None
@@ -16,7 +23,10 @@ class LeaderboardPointsSettingsDTO(BaseModel):
 
 class LeaderboardPointsSettingsUpdateDTO(BaseModel):
     auto_reset_enabled: bool
-    interval_days: int = Field(..., ge=1, le=3650)
+    reset_mode: ResetMode = "interval"
+    # Ignored when reset_mode == "weekly_monday", but still validated/stored
+    # so switching back to "interval" restores the previous cadence.
+    interval_days: int = Field(30, ge=1, le=3650)
 
 
 class PointsAdjustDTO(BaseModel):

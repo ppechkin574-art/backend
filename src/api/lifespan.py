@@ -221,8 +221,10 @@ async def _cleanup_old_activity_events(db_settings: DatabaseSettings) -> None:
 
 async def _points_auto_reset_check(db_settings: DatabaseSettings) -> None:
     """Hourly: reset every user's leaderboard points to 0 once the
-    admin-configured interval has elapsed. No-op (cheap) when auto-reset
-    is disabled or not yet due — see LeaderboardPointsService."""
+    admin-configured schedule is due — either a fixed N-day interval, or
+    (for the "Еженедельный спринт") every Monday 00:00 Asia/Almaty.
+    No-op (cheap) when auto-reset is disabled or not yet due — see
+    LeaderboardPointsService."""
     from leaderboard_points.repository import LeaderboardPointsRepository
     from leaderboard_points.service import LeaderboardPointsService
 

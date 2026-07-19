@@ -46,7 +46,9 @@ def update_settings(
     service: LeaderboardPointsService = Depends(get_leaderboard_points_service),
 ):
     actor_display = user.name or user.email or str(user.id)
-    result = service.update_settings(body.auto_reset_enabled, body.interval_days, actor_display)
+    result = service.update_settings(
+        body.auto_reset_enabled, body.reset_mode, body.interval_days, actor_display
+    )
     service.repo.db.commit()
     return result
 

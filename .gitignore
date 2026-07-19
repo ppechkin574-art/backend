@@ -38,3 +38,5 @@ venv
 secrets/*.p8
 secrets/*.json
 !secrets/*.example
+*.bak
+docker-compose.local.yml

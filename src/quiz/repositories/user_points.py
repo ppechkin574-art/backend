@@ -1,7 +1,11 @@
+import logging
+
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 from quiz.models.leaderboard_hidden import LeaderboardHiddenUser
 from quiz.models.user_points import UserPoints
+
+logger = logging.getLogger(__name__)
 
 
 class UserPointsRepository:
@@ -25,8 +29,11 @@ class UserPointsRepository:
             VALUES (:user_id, :points)
             ON CONFLICT (user_id) DO UPDATE
             SET total_points = user_points.total_points + :points
+            RETURNING total_points
         """)
-        self._session.execute(stmt, {"user_id": user_id, "points": points})
+        points_after = self._session.execute(
+            stmt, {"user_id": user_id, "points": points}
+        ).scalar()
 
         self._session.add(
             PointsAuditLog(
@@ -40,6 +47,32 @@ class UserPointsRepository:
                 is_suspicious=False,
             )
         )
+
+        # Sprint-winner check (CRM task #7) — single funnel: every
+        # points-awarding path (ЕНТ full-exam completion, battle wins,
+        # referral/payment rewards) calls add_points(), so hooking here
+        # instead of at each of those call sites guarantees none of them
+        # can drift out of sync with this check in the future. Local
+        # import mirrors the existing lazy cross-package import
+        # convention in this codebase (e.g.
+        # api/dependencies.get_leaderboard_points_service) — avoids
+        # leaderboard_points being imported at module-load time from
+        # quiz.repositories. check_and_lock_sprint_winner already never
+        # raises internally; the try/except here is defense-in-depth so
+        # even an import-time failure can't break a points award.
+        try:
+            from leaderboard_points.repository import LeaderboardPointsRepository
+            from leaderboard_points.service import LeaderboardPointsService
+
+            LeaderboardPointsService(
+                LeaderboardPointsRepository(self._session)
+            ).check_and_lock_sprint_winner(user_id, points_after)
+        except Exception:
+            logger.exception(
+                "Sprint-winner check failed for user %s (non-fatal, points "
+                "award itself is unaffected)",
+                user_id,
+            )
 
     def get_total_points(self, user_id) -> int:
         """Вернуть сумму баллов пользователя."""

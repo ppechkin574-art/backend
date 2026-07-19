@@ -47,7 +47,11 @@ def update_settings(
 ):
     actor_display = user.name or user.email or str(user.id)
     result = service.update_settings(
-        body.auto_reset_enabled, body.reset_mode, body.interval_days, actor_display
+        body.auto_reset_enabled,
+        body.reset_mode,
+        body.interval_days,
+        actor_display,
+        body.sprint_target_points,
     )
     service.repo.db.commit()
     return result

@@ -20,7 +20,27 @@ class UserPointsRepository:
         source_id: str | None = None,
         reason: str | None = None,
     ) -> None:
-        from security.models import PointsAuditLog
+        from security.models import PointsAuditLog, UserRiskProfile
+
+        # Admin-frozen users earn nothing, from ANY source. This check used
+        # to live only in the ЕНТ award path, so battles and referrals kept
+        # crediting a user the admin had frozen for fraud — and with CRM #19
+        # those points now decide a cash prize. Enforcing it here, in the
+        # single funnel every award goes through, is what makes the freeze
+        # actually mean "frozen".
+        frozen = (
+            self._session.query(UserRiskProfile.points_frozen)
+            .filter(UserRiskProfile.user_id == user_id)
+            .scalar()
+        )
+        if frozen:
+            logger.info(
+                "Points frozen for user %s — skipping %s award of %s points",
+                user_id,
+                source_type,
+                points,
+            )
+            return
 
         points_before = self.get_total_points(user_id)
 

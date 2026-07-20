@@ -131,6 +131,12 @@ class LeaderboardPointsService:
             reason=tagged_reason,
             source_id=str(actor_id) if actor_id else None,
         )
+        # Manual adjustments bypass `UserPointsRepository.add_points`, which
+        # is where the sprint-winner hook normally fires. Without this call an
+        # admin could hand a participant enough points to clear the weekly
+        # threshold and no winner would ever be locked in — the award would
+        # silently not count towards the sprint it visibly should.
+        self.check_and_lock_sprint_winner(user_id, after)
         return PointsAdjustResultDTO(
             user_id=str(user_id),
             points_before=before,

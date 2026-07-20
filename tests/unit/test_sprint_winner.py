@@ -507,6 +507,10 @@ class _FakeSession:
         m = MagicMock()
         m.filter.return_value.first.return_value = None
         m.order_by.return_value.first.return_value = None
+        # `add_points` looks up UserRiskProfile.points_frozen before awarding.
+        # No risk profile row → NULL → not frozen, which is the case for
+        # virtually every user and the one this test cares about.
+        m.filter.return_value.scalar.return_value = None
         return m
 
     def begin_nested(self):

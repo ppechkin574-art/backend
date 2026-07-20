@@ -368,3 +368,55 @@ def test_threshold_check_short_circuits_when_lifetime_total_is_below_target():
 
     repo.weekly_points.assert_not_called()
     repo.try_lock_sprint_winner.assert_not_called()
+
+
+# --------------------------------------------------------------------
+# integrity holes closed alongside CRM #19
+# --------------------------------------------------------------------
+
+
+def _points_repo(frozen: bool):
+    """UserPointsRepository over a mocked session whose risk-profile query
+    reports `frozen`."""
+    from quiz.repositories.user_points import UserPointsRepository
+
+    session = MagicMock()
+    session.query.return_value.filter.return_value.scalar.return_value = frozen
+    return UserPointsRepository(session), session
+
+
+def test_frozen_user_earns_nothing_from_any_source():
+    """The freeze used to be enforced only in the ЕНТ award path, so battle
+    wins and referral rewards kept crediting a user the admin had frozen for
+    fraud. With CRM #19 those points decide a cash prize."""
+    repo, session = _points_repo(frozen=True)
+
+    repo.add_points(uuid4(), 50, source_type="battle")
+
+    session.execute.assert_not_called()
+    session.add.assert_not_called()
+
+
+def test_unfrozen_user_still_earns_normally():
+    repo, session = _points_repo(frozen=False)
+
+    repo.add_points(uuid4(), 50, source_type="battle")
+
+    session.execute.assert_called()
+
+
+def test_admin_adjustment_triggers_the_sprint_winner_check():
+    """Manual adjustments bypass add_points, where the hook normally fires —
+    without an explicit call an admin could push a participant over the
+    weekly threshold and no winner would be locked in."""
+    from leaderboard_points.service import LeaderboardPointsService
+
+    repo = MagicMock()
+    repo.adjust_user_points.return_value = (100, 700)
+    service = LeaderboardPointsService(repo)
+    service.check_and_lock_sprint_winner = MagicMock()
+    user_id = uuid4()
+
+    service.adjust_points(user_id, 600, "приз за конкурс", None, "admin@aima.kz")
+
+    service.check_and_lock_sprint_winner.assert_called_once_with(user_id, 700)

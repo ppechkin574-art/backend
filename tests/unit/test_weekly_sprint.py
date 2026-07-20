@@ -420,3 +420,33 @@ def test_admin_adjustment_triggers_the_sprint_winner_check():
     service.adjust_points(user_id, 600, "приз за конкурс", None, "admin@aima.kz")
 
     service.check_and_lock_sprint_winner.assert_called_once_with(user_id, 700)
+
+
+def test_settings_dto_returns_every_sprint_field_it_stores():
+    """Regression: the card copy and prize were saved to the DB but missing
+    from `_to_dto`, so the API read them back as null. The admin page loads
+    settings into its inputs — blank inputs then wiped the real values on the
+    next save. Anything writable must survive the round trip."""
+    from datetime import UTC, datetime as _dt
+
+    from leaderboard_points.service import _to_dto
+
+    settings = MagicMock(
+        auto_reset_enabled=False,
+        reset_mode="interval",
+        interval_days=30,
+        last_reset_at=None,
+        sprint_target_points=500,
+        sprint_title_ru="Еженедельный спринт",
+        sprint_title_kk="Апталық спринт",
+        sprint_prize_amount=50_000,
+        updated_at=_dt.now(UTC),
+        updated_by="admin@aima.kz",
+    )
+
+    dto = _to_dto(settings)
+
+    assert dto.sprint_target_points == 500
+    assert dto.sprint_title_ru == "Еженедельный спринт"
+    assert dto.sprint_title_kk == "Апталық спринт"
+    assert dto.sprint_prize_amount == 50_000

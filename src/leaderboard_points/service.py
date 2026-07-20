@@ -81,6 +81,9 @@ def _to_dto(settings: LeaderboardPointsSettings) -> LeaderboardPointsSettingsDTO
         last_reset_at=settings.last_reset_at,
         next_reset_at=_next_reset_at(settings),
         sprint_target_points=settings.sprint_target_points,
+        sprint_title_ru=settings.sprint_title_ru,
+        sprint_title_kk=settings.sprint_title_kk,
+        sprint_prize_amount=settings.sprint_prize_amount,
         updated_at=settings.updated_at,
         updated_by=settings.updated_by,
     )

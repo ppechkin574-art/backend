@@ -52,6 +52,19 @@ def current_week_start_almaty(now: datetime) -> datetime:
     return candidate.astimezone(UTC)
 
 
+def current_week_bounds_almaty(now: datetime) -> tuple[datetime, datetime]:
+    """`[Monday 00:00, next Monday 00:00)` around `now`, Asia/Almaty, as
+    UTC-aware datetimes. Half-open on purpose: the end bound doubles as the
+    next week's start, so a point scored at 23:59:59.999 on Sunday lands in
+    exactly one week and none is double-counted at the boundary.
+
+    The mobile card's "Закончится через" countdown is this end bound minus
+    now, computed against Almaty rather than the phone's timezone — a user
+    on Moscow time must see the same deadline as everyone else."""
+    start = current_week_start_almaty(now)
+    return start, start + timedelta(days=7)
+
+
 def _next_reset_at(settings: LeaderboardPointsSettings) -> datetime | None:
     if not settings.auto_reset_enabled or settings.last_reset_at is None:
         return None
@@ -84,21 +97,20 @@ class LeaderboardPointsService:
 
     def update_settings(
         self,
-        enabled: bool,
-        reset_mode: str,
-        interval_days: int,
+        changes: dict,
         actor_display: str,
-        sprint_target_points: int | None = None,
     ) -> LeaderboardPointsSettingsDTO:
+        """Applies only the keys present in `changes` (the caller passes
+        `model_dump(exclude_unset=True)`), leaving every other column alone.
+
+        Partial on purpose: two admin screens PATCH this same row — the
+        Users page owns the auto-reset cadence, Tournament→Sprint owns the
+        threshold, prize and card copy. With a full overwrite, saving one
+        page would silently reset the other page's fields to their
+        defaults. An explicit `null` in the payload IS applied, since
+        that is how the admin clears the threshold or the prize."""
         settings = self.repo.get_or_create_settings()
-        settings = self.repo.save_settings(
-            settings,
-            enabled,
-            reset_mode,
-            interval_days,
-            actor_display,
-            sprint_target_points,
-        )
+        settings = self.repo.save_settings(settings, changes, actor_display)
         return _to_dto(settings)
 
     # ---------- single-user adjustment ----------
@@ -171,12 +183,24 @@ class LeaderboardPointsService:
         """Side-effect hook: called after every points award (ЕНТ full-exam
         completion, battle win, referral/payment reward — see
         `UserPointsRepository.add_points`). Locks `user_id` in as this
-        week's "Еженедельный спринт" winner the first time their total
-        crosses the admin-configured `sprint_target_points` threshold.
+        week's "Еженедельный спринт" winner the first time their points
+        EARNED THIS WEEK cross the admin-configured threshold.
+
+        `total_points_after` is the caller's new all-time balance and is
+        deliberately NOT what gets compared: the sprint runs on points
+        earned inside the current week, summed from `points_audit_log`,
+        while `total_points` keeps accumulating forever for the separate
+        "Кубок" rating. Comparing the all-time total would hand week 2's
+        prize to whoever happened to be ahead overall. The argument is
+        kept in the signature because it is a free short-circuit — a user
+        whose lifetime total is below the threshold cannot possibly be
+        above it for a single week, so we skip the aggregate query.
 
         No-ops entirely when the feature is off (`sprint_target_points`
-        is None/0) or when the user is on the admin hide-list — same
-        exclusion `GET /leaderboard` already applies, a hidden user
+        is None/0), when the user is not on the admin allowlist (entry is
+        paid for; non-participants earn points normally, they just cannot
+        win the prize), or when the user is on the leaderboard hide-list —
+        same exclusion `GET /leaderboard` already applies, a hidden user
         shouldn't headline the public sprint banner either.
 
         MUST NEVER RAISE: this runs inline in the hot points-award path
@@ -208,7 +232,13 @@ class LeaderboardPointsService:
                 target = settings.sprint_target_points
                 if not target:
                     return
+                # Cheap upper bound: this week's points can never exceed the
+                # all-time total, so a total below target rules the user out
+                # without touching points_audit_log.
                 if total_points_after < target:
+                    return
+
+                if user_id not in self.repo.participant_user_ids():
                     return
 
                 # Local import — mirrors the existing lazy-import convention
@@ -224,8 +254,17 @@ class LeaderboardPointsService:
                 if str(user_id) in hidden_ids:
                     return
 
-                week_start_at = current_week_start_almaty(datetime.now(UTC))
-                self.repo.try_lock_sprint_winner(week_start_at, user_id, total_points_after)
+                week_start_at, week_end_at = current_week_bounds_almaty(datetime.now(UTC))
+                # The caller added its PointsAuditLog row to the session but
+                # has not committed; flush so the aggregate below counts the
+                # award that triggered this hook.
+                self.repo.db.flush()
+                rows = self.repo.weekly_points(week_start_at, week_end_at, [user_id])
+                week_points = rows[0][1] if rows else 0
+                if week_points < target:
+                    return
+
+                self.repo.try_lock_sprint_winner(week_start_at, user_id, week_points)
         except Exception:
             logger.exception(
                 "check_and_lock_sprint_winner failed for user %s (non-fatal, "

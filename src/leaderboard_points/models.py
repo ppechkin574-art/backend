@@ -26,13 +26,36 @@ sprint winner is locked in off the calendar week (see
 `current_week_start_almaty`), not off whatever the points-reset
 schedule happens to be, so the feature works even before/without
 weekly auto-reset being turned on.
+
+`sprint_title_ru` / `sprint_title_kk` / `sprint_prize_amount` (CRM #19)
+— everything the mobile "Еженедельный спринт" home card renders except
+the leader's own numbers. Deliberately owned HERE and not in the
+`events` table: the prize is also what gets split between tied winners
+and recorded per week in `sprint_winners.prize_share`, so a free-text
+`events.prize_text` would let the advertised prize drift away from the
+one actually paid out.
 """
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, String
+from sqlalchemy import (
+    Boolean,
+    Column,
+    DateTime,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 
 from database import Base
+
+# `SprintWinner.resolution_type` — HOW this row's winner was decided.
+# See the SprintWinner docstring for the full state machine.
+RESOLUTION_THRESHOLD = "threshold"
+RESOLUTION_CLOSEST = "closest"
+RESOLUTION_TIE_PENDING = "tie_pending"
+RESOLUTION_TIE_SPLIT = "tie_split"
 
 
 class LeaderboardPointsSettings(Base):
@@ -44,6 +67,9 @@ class LeaderboardPointsSettings(Base):
     interval_days = Column(Integer, nullable=False, server_default="30")
     last_reset_at = Column(DateTime(timezone=True), nullable=True)
     sprint_target_points = Column(Integer, nullable=True)
+    sprint_title_ru = Column(String(120), nullable=True)
+    sprint_title_kk = Column(String(120), nullable=True)
+    sprint_prize_amount = Column(Integer, nullable=True)
     updated_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -53,24 +79,87 @@ class LeaderboardPointsSettings(Base):
     updated_by = Column(String(200), nullable=True)
 
 
+class SprintParticipant(Base):
+    """Admin-curated allowlist — the ONLY way into the weekly sprint
+    (CRM #19). Entry is paid outside the app (bank transfer, Kaspi…);
+    the admin then adds the payer here by hand. An empty table means
+    NOBODY competes this week — deliberately not "everybody competes",
+    so forgetting to populate it degrades to a quiet no-op rather than
+    silently entering the whole user base into a cash prize draw.
+
+    Keyed on `phone_number` rather than `user_id` because an admin may
+    grant entry *before* the payer has registered (that person has no
+    Keycloak id yet). `user_id` is backfilled by
+    `SprintService._resolve_participants` the first time the phone is
+    matched to a real account, and stays NULL for numbers that never
+    signed up. Phones are stored normalized as `+7XXXXXXXXXX`."""
+
+    __tablename__ = "sprint_participants"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    phone_number = Column(String(20), nullable=False, unique=True)
+    user_id = Column(UUID(as_uuid=True), nullable=True)
+    added_by_display = Column(String(200), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+    def __repr__(self) -> str:
+        return f"<SprintParticipant phone={self.phone_number}>"
+
+
 class SprintWinner(Base):
-    """One row per week that had a winner (CRM task #7). `week_start_at`
-    (the Monday 00:00 Asia/Almaty identifying the week — see
-    `current_week_start_almaty`) is UNIQUE: that constraint is the
-    concurrency-safety mechanism. Multiple requests racing to be the
-    first to cross `sprint_target_points` in the same week all attempt
-    `INSERT ... ON CONFLICT (week_start_at) DO NOTHING RETURNING
-    user_id`; only the first commit wins the row, everyone else's
-    INSERT is a no-op. See `LeaderboardPointsRepository.
-    try_lock_sprint_winner`."""
+    """One row per (week, winner). `week_start_at` is the Monday 00:00
+    Asia/Almaty identifying the week — see `current_week_start_almaty`.
+
+    `resolution_type` records HOW the row was decided:
+
+    - `threshold`   — someone crossed `sprint_target_points` mid-week and
+      won early (CRM #7's original behaviour). At most ONE per week,
+      enforced by the partial unique index `uq_sprint_winners_week_threshold`.
+      That index is what `try_lock_sprint_winner`'s
+      `INSERT … ON CONFLICT DO NOTHING` races against: concurrent
+      crossings all attempt the insert, only the first commit gets the row.
+    - `closest`     — nobody crossed (or no threshold configured) and the
+      week ended with a single top scorer. Written by `close_week_if_due`.
+    - `tie_pending` — the week ended with 2+ users tied at the top. One row
+      per tied user, `prize_share` NULL, waiting for an admin to call
+      `POST /admin/sprint/weeks/{week}/resolve-tie`.
+    - `tie_split`   — a `tie_pending` group after the admin resolved it;
+      `prize_share` holds each winner's cut of `sprint_prize_amount`.
+
+    UNIQUE is `(week_start_at, user_id)` and not `week_start_at` alone,
+    because tie splits legitimately produce several winners per week; the
+    constraint only stops the SAME user being recorded twice in one week.
+
+    A locked-in row is never revoked: deleting the participant, banning
+    the user or editing the prize afterwards leaves history untouched —
+    `prize_share` is the amount owed as of resolution time."""
 
     __tablename__ = "sprint_winners"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    week_start_at = Column(DateTime(timezone=True), nullable=False, unique=True)
+    week_start_at = Column(DateTime(timezone=True), nullable=False)
     user_id = Column(UUID(as_uuid=True), nullable=False)
     points_at_win = Column(Integer, nullable=False)
     won_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    resolution_type = Column(
+        String(20), nullable=False, server_default=RESOLUTION_THRESHOLD
+    )
+    prize_share = Column(Integer, nullable=True)
+    resolved_by = Column(String(200), nullable=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("week_start_at", "user_id", name="uq_sprint_winners_week_user"),
+        Index(
+            "uq_sprint_winners_week_threshold",
+            "week_start_at",
+            unique=True,
+            postgresql_where=Column("resolution_type") == RESOLUTION_THRESHOLD,
+        ),
+    )
 
     def __repr__(self) -> str:
-        return f"<SprintWinner week={self.week_start_at} user_id={self.user_id}>"
+        return (
+            f"<SprintWinner week={self.week_start_at} user_id={self.user_id} "
+            f"type={self.resolution_type}>"
+        )

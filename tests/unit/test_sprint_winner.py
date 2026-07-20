@@ -153,10 +153,17 @@ def _fake_settings(**overrides):
     return SimpleNamespace(**base)
 
 
-def _make_service(settings):
+def _make_service(settings, participants=None, weekly_points=None):
+    """`participants` / `weekly_points` model the CRM #19 gates added on
+    top of #7: only allowlisted users can win, and the threshold is
+    compared against points earned THIS WEEK rather than the all-time
+    total. Both default to empty, so a test that doesn't opt in exercises
+    the "not a participant" short-circuit."""
     repo = MagicMock()
     repo.db = MagicMock()
     repo.get_or_create_settings.return_value = settings
+    repo.participant_user_ids.return_value = participants or []
+    repo.weekly_points.return_value = weekly_points or []
     return LeaderboardPointsService(repo=repo), repo
 
 
@@ -203,9 +210,14 @@ def test_check_and_lock_noop_when_below_target(monkeypatch):
 
 def test_check_and_lock_locks_when_target_reached(monkeypatch):
     settings = _fake_settings(sprint_target_points=1000)
-    service, repo = _make_service(settings)
-    _patch_hidden_list(monkeypatch, [])
     user_id = uuid4()
+    # Allowlisted (CRM #19) and 1000 of their points were earned this week.
+    service, repo = _make_service(
+        settings,
+        participants=[user_id],
+        weekly_points=[(user_id, 1000, datetime.now(UTC))],
+    )
+    _patch_hidden_list(monkeypatch, [])
 
     service.check_and_lock_sprint_winner(user_id, 1000)
 
@@ -220,8 +232,14 @@ def test_check_and_lock_skips_hidden_users(monkeypatch):
     users — they shouldn't be able to headline the sprint banner
     either, even if they numerically cross the target."""
     settings = _fake_settings(sprint_target_points=1000)
-    service, repo = _make_service(settings)
     user_id = uuid4()
+    # Allowlisted and above the weekly target — so the ONLY thing that can
+    # stop the lock here is the hide-list, which is what this asserts.
+    service, repo = _make_service(
+        settings,
+        participants=[user_id],
+        weekly_points=[(user_id, 1500, datetime.now(UTC))],
+    )
     _patch_hidden_list(monkeypatch, [str(user_id)])
 
     service.check_and_lock_sprint_winner(user_id, 1500)
@@ -234,12 +252,20 @@ def test_check_and_lock_never_raises_on_repo_failure(monkeypatch):
     (ЕНТ/battle/referral) — a bug here must never break the caller's
     actual points award."""
     settings = _fake_settings(sprint_target_points=1000)
-    service, repo = _make_service(settings)
+    user_id = uuid4()
+    # Must actually REACH try_lock_sprint_winner for its failure to be the
+    # thing under test — hence allowlisted and over the weekly target.
+    service, repo = _make_service(
+        settings,
+        participants=[user_id],
+        weekly_points=[(user_id, 2000, datetime.now(UTC))],
+    )
     repo.try_lock_sprint_winner.side_effect = RuntimeError("boom")
     _patch_hidden_list(monkeypatch, [])
 
     # Must not raise.
-    service.check_and_lock_sprint_winner(uuid4(), 2000)
+    service.check_and_lock_sprint_winner(user_id, 2000)
+    repo.try_lock_sprint_winner.assert_called_once()
 
 
 def test_check_and_lock_never_raises_when_settings_lookup_fails():

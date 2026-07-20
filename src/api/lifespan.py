@@ -246,6 +246,41 @@ async def _points_auto_reset_check(db_settings: DatabaseSettings) -> None:
             logger.exception("[points-auto-reset] cycle error")
 
 
+async def _sprint_week_close_check(db_settings: DatabaseSettings) -> None:
+    """Hourly: resolve the weekly sprint week that has just ended (CRM #19).
+
+    Only ever looks at the PREVIOUS calendar week and does nothing once
+    that week already has a winner row, so running every hour is cheap and
+    idempotent — the first cycle after Monday 00:00 Almaty does the work,
+    the rest are no-ops. Polling rather than firing exactly at midnight is
+    deliberate: a missed tick (deploy, restart) still gets picked up within
+    the hour instead of losing the week entirely.
+
+    Independent of the points auto-reset above: the sprint is decided off
+    the calendar week and off `points_audit_log`, so it resolves correctly
+    whether or not auto-reset is enabled."""
+    from leaderboard_points.repository import LeaderboardPointsRepository
+    from leaderboard_points.sprint import SprintService
+
+    db = Database(db_settings)
+    while True:
+        await asyncio.sleep(_POINTS_RESET_CHECK_INTERVAL_SECONDS)
+        try:
+            with db.session as session:
+                result = SprintService(
+                    LeaderboardPointsRepository(session)
+                ).close_week_if_due()
+                if result.get("ran"):
+                    session.commit()
+                    logger.info(
+                        "[sprint-week-close] %s, winners: %s",
+                        result.get("resolution"),
+                        result.get("winners"),
+                    )
+        except Exception:
+            logger.exception("[sprint-week-close] cycle error")
+
+
 async def lifespan(app: FastAPI):
     # Startup
     settings = Settings()
@@ -281,6 +316,9 @@ async def lifespan(app: FastAPI):
     points_auto_reset_task = asyncio.create_task(
         _points_auto_reset_check(db_settings)
     )
+    sprint_week_close_task = asyncio.create_task(
+        _sprint_week_close_check(db_settings)
+    )
 
     yield
 
@@ -289,6 +327,7 @@ async def lifespan(app: FastAPI):
     suspicious_sub_task.cancel()
     activity_cleanup_task.cancel()
     points_auto_reset_task.cancel()
+    sprint_week_close_task.cancel()
     stop_poller_on_app(app)
     await manager.stop_heartbeat()
     await notification_scheduler.stop()

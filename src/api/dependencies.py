@@ -1235,3 +1235,14 @@ def get_leaderboard_points_service(
     from leaderboard_points.service import LeaderboardPointsService
 
     return LeaderboardPointsService(LeaderboardPointsRepository(db))
+
+
+def get_sprint_service(
+    db: Session = Depends(get_db_session),
+):
+    """Еженедельный спринт: допуск участников, недельные стандинги,
+    закрытие недели и разрешение ничьей (CRM #19)."""
+    from leaderboard_points.repository import LeaderboardPointsRepository
+    from leaderboard_points.sprint import SprintService
+
+    return SprintService(LeaderboardPointsRepository(db))

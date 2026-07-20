@@ -4,7 +4,14 @@ from uuid import UUID
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from leaderboard_points.models import LeaderboardPointsSettings, SprintWinner
+from leaderboard_points.models import (
+    RESOLUTION_THRESHOLD,
+    RESOLUTION_TIE_PENDING,
+    RESOLUTION_TIE_SPLIT,
+    LeaderboardPointsSettings,
+    SprintParticipant,
+    SprintWinner,
+)
 from quiz.models.user_points import UserPoints
 
 
@@ -24,21 +31,41 @@ class LeaderboardPointsRepository:
             self.db.flush()
         return settings
 
+    # Columns an admin PATCH is allowed to write. Anything else in the
+    # payload is ignored rather than blindly setattr'd onto the model.
+    _SETTINGS_WRITABLE = frozenset(
+        {
+            "auto_reset_enabled",
+            "reset_mode",
+            "interval_days",
+            "sprint_target_points",
+            "sprint_title_ru",
+            "sprint_title_kk",
+            "sprint_prize_amount",
+        }
+    )
+    # Changing any of these restarts the auto-reset countdown; the sprint
+    # copy/prize fields do not, so editing the card text must not silently
+    # postpone the next points reset.
+    _RESET_COUNTDOWN_FIELDS = frozenset(
+        {"auto_reset_enabled", "reset_mode", "interval_days"}
+    )
+
     def save_settings(
         self,
         settings: LeaderboardPointsSettings,
-        enabled: bool,
-        reset_mode: str,
-        interval_days: int,
+        changes: dict,
         actor_display: str,
-        sprint_target_points: int | None = None,
     ) -> LeaderboardPointsSettings:
-        settings.auto_reset_enabled = enabled
-        settings.reset_mode = reset_mode
-        settings.interval_days = interval_days
-        # Saving always restarts the countdown — see models.py docstring.
-        settings.last_reset_at = datetime.now(UTC)
-        settings.sprint_target_points = sprint_target_points
+        """Partial write — see `LeaderboardPointsService.update_settings`
+        for why this is not a full overwrite."""
+        applied = {k: v for k, v in changes.items() if k in self._SETTINGS_WRITABLE}
+        for field, value in applied.items():
+            setattr(settings, field, value)
+        if self._RESET_COUNTDOWN_FIELDS & applied.keys():
+            # Saving the cadence always restarts the countdown — see the
+            # models.py docstring.
+            settings.last_reset_at = datetime.now(UTC)
         settings.updated_by = actor_display
         self.db.flush()
         return settings
@@ -131,14 +158,17 @@ class LeaderboardPointsRepository:
     def try_lock_sprint_winner(
         self, week_start_at: datetime, user_id: UUID, points_at_win: int
     ) -> bool:
-        """Attempt to lock `user_id` in as the winner of the sprint week
-        identified by `week_start_at`. Concurrency-safe: the UNIQUE
-        constraint on `sprint_winners.week_start_at` means only the
-        first concurrent INSERT for a given week actually lands — every
-        other racing call's INSERT is a silent no-op (`ON CONFLICT DO
-        NOTHING`), so at most one row (and one winner) ever exists per
-        week regardless of how many requests cross the threshold at
-        the same instant.
+        """Attempt to lock `user_id` in as the THRESHOLD winner of the
+        sprint week identified by `week_start_at`. Concurrency-safe: the
+        partial unique index `uq_sprint_winners_week_threshold`
+        (`week_start_at WHERE resolution_type = 'threshold'`) means only
+        the first concurrent INSERT for a given week actually lands —
+        every other racing call's INSERT is a silent no-op (`ON CONFLICT
+        DO NOTHING`), so at most one early winner ever exists per week
+        regardless of how many requests cross the threshold at the same
+        instant. The index is partial so that end-of-week tie splits,
+        which legitimately write several rows for one week, are not
+        blocked by it.
 
         Returns True only when THIS call is the one that won the lock
         (a row was returned AND its user_id matches the caller's). A
@@ -147,9 +177,11 @@ class LeaderboardPointsRepository:
         return False."""
         row = self.db.execute(
             text("""
-                INSERT INTO sprint_winners (week_start_at, user_id, points_at_win)
-                VALUES (:week_start_at, :user_id, :points_at_win)
-                ON CONFLICT (week_start_at) DO NOTHING
+                INSERT INTO sprint_winners
+                    (week_start_at, user_id, points_at_win, resolution_type)
+                VALUES (:week_start_at, :user_id, :points_at_win, 'threshold')
+                ON CONFLICT (week_start_at) WHERE resolution_type = 'threshold'
+                DO NOTHING
                 RETURNING user_id
             """),
             {
@@ -165,18 +197,225 @@ class LeaderboardPointsRepository:
     def get_current_sprint_winner_row(
         self, week_start_at: datetime
     ) -> tuple[UUID, int, datetime] | None:
-        """Raw (user_id, points_at_win, won_at) for the sprint week
-        identified by `week_start_at`, or None if nobody has reached
-        the target yet this week. Deliberately returns the raw row
+        """Raw (user_id, points_at_win, won_at) of the THRESHOLD winner for
+        the sprint week identified by `week_start_at`, or None if nobody has
+        reached the target yet this week. Restricted to threshold rows on
+        purpose: end-of-week `closest`/`tie_*` rows describe a week that is
+        already over, whereas every caller of this method is asking "has
+        this week been won early?". Deliberately returns the raw row
         rather than a fully-resolved DTO — resolving the winner's
         display name/avatar needs the same Keycloak/cache/user_display
         lookup chain `GET /leaderboard` already uses (idp client,
         CacheService, UserDisplayRepository), which lives at the API
         route layer, not here. The route composes this row with that
         existing `_resolve_display` mechanism instead of a second one."""
-        row = self.db.query(
-            SprintWinner.user_id, SprintWinner.points_at_win, SprintWinner.won_at
-        ).filter(SprintWinner.week_start_at == week_start_at).first()
+        row = (
+            self.db.query(
+                SprintWinner.user_id, SprintWinner.points_at_win, SprintWinner.won_at
+            )
+            .filter(
+                SprintWinner.week_start_at == week_start_at,
+                SprintWinner.resolution_type == RESOLUTION_THRESHOLD,
+            )
+            .first()
+        )
         if row is None:
             return None
         return (row[0], row[1], row[2])
+
+    # ---------- weekly standings (CRM #19) ----------
+
+    def weekly_points(
+        self,
+        week_start_at: datetime,
+        week_end_at: datetime,
+        user_ids: list[UUID],
+    ) -> list[tuple[UUID, int, datetime]]:
+        """Sum of `points_delta` inside the week window, per participant,
+        best first. Returns (user_id, points, last_scored_at).
+
+        This — not `user_points.total_points` — is what "points this week"
+        means for the sprint. Deriving it from the audit log keeps the
+        all-time "Кубок" rating (`total_points`) completely untouched, so
+        the two leaderboards can coexist without one resetting the other.
+
+        Excludes `auto_reset` rows: those are the bookkeeping entries the
+        global reset job writes (a negative delta cancelling a balance),
+        not points anybody won or lost by playing. Rows are dropped once
+        the participant's net for the week is <= 0, so a purely negative
+        admin correction cannot put someone on the board.
+
+        Ordering is by points desc, then by `last_scored_at` asc — whoever
+        reached the score first ranks higher. That only decides DISPLAY
+        order; an actual tie at the top is resolved by an admin, never
+        silently by this ordering (see `close_week`)."""
+        if not user_ids:
+            return []
+
+        rows = self.db.execute(
+            text("""
+                SELECT user_id,
+                       SUM(points_delta)  AS points,
+                       MAX(created_at)    AS last_scored_at
+                FROM points_audit_log
+                WHERE created_at >= :week_start
+                  AND created_at <  :week_end
+                  AND source_type <> 'auto_reset'
+                  AND user_id = ANY(:user_ids)
+                GROUP BY user_id
+                HAVING SUM(points_delta) > 0
+                ORDER BY points DESC, last_scored_at ASC
+            """),
+            {
+                "week_start": week_start_at,
+                "week_end": week_end_at,
+                "user_ids": user_ids,
+            },
+        ).all()
+        return [(r[0], int(r[1]), r[2]) for r in rows]
+
+    # ---------- participants allowlist (CRM #19) ----------
+
+    def list_participants(self) -> list[SprintParticipant]:
+        return (
+            self.db.query(SprintParticipant)
+            .order_by(SprintParticipant.created_at.desc())
+            .all()
+        )
+
+    def participant_user_ids(self) -> list[UUID]:
+        """User ids of allowlisted people who actually have an account.
+        Entries still awaiting registration (`user_id IS NULL`) simply do
+        not appear — they cannot score points yet anyway."""
+        rows = (
+            self.db.query(SprintParticipant.user_id)
+            .filter(SprintParticipant.user_id.is_not(None))
+            .all()
+        )
+        return [r[0] for r in rows]
+
+    def count_participants(self) -> int:
+        """Size of the whole allowlist, including entries granted in
+        advance to phones with no account yet — this is the "из N" the
+        mobile card shows, i.e. how many people paid to compete."""
+        return self.db.query(SprintParticipant).count()
+
+    def get_participant_by_phone(self, phone_number: str) -> SprintParticipant | None:
+        return (
+            self.db.query(SprintParticipant)
+            .filter(SprintParticipant.phone_number == phone_number)
+            .first()
+        )
+
+    def add_participant(
+        self, phone_number: str, user_id: UUID | None, added_by_display: str
+    ) -> SprintParticipant:
+        participant = SprintParticipant(
+            phone_number=phone_number,
+            user_id=user_id,
+            added_by_display=added_by_display,
+        )
+        self.db.add(participant)
+        self.db.flush()
+        return participant
+
+    def set_participant_user_id(self, participant_id: int, user_id: UUID) -> None:
+        """Backfill after a phone granted entry in advance finally signs up."""
+        self.db.query(SprintParticipant).filter(
+            SprintParticipant.id == participant_id
+        ).update({"user_id": user_id})
+        self.db.flush()
+
+    def delete_participant(self, participant_id: int) -> bool:
+        deleted = (
+            self.db.query(SprintParticipant)
+            .filter(SprintParticipant.id == participant_id)
+            .delete()
+        )
+        self.db.flush()
+        return bool(deleted)
+
+    # ---------- winners: week close, history, tie resolution ----------
+
+    def list_winners_for_week(self, week_start_at: datetime) -> list[SprintWinner]:
+        return (
+            self.db.query(SprintWinner)
+            .filter(SprintWinner.week_start_at == week_start_at)
+            .order_by(SprintWinner.points_at_win.desc())
+            .all()
+        )
+
+    def list_winners_history(self, limit: int = 100) -> list[SprintWinner]:
+        return (
+            self.db.query(SprintWinner)
+            .order_by(SprintWinner.week_start_at.desc(), SprintWinner.points_at_win.desc())
+            .limit(limit)
+            .all()
+        )
+
+    def week_has_winner(self, week_start_at: datetime) -> bool:
+        """True once ANY row exists for the week — the guard that stops the
+        week-close job from resolving the same week twice."""
+        return (
+            self.db.query(SprintWinner.id)
+            .filter(SprintWinner.week_start_at == week_start_at)
+            .first()
+            is not None
+        )
+
+    def record_week_winners(
+        self,
+        week_start_at: datetime,
+        entries: list[tuple[UUID, int]],
+        resolution_type: str,
+        prize_share: int | None,
+    ) -> int:
+        """Write the end-of-week outcome: one row for `closest`, several for
+        `tie_pending`. Idempotent by way of `UNIQUE(week_start_at, user_id)`
+        — a duplicate run inserts nothing rather than doubling the history."""
+        if not entries:
+            return 0
+        for user_id, points in entries:
+            self.db.execute(
+                text("""
+                    INSERT INTO sprint_winners
+                        (week_start_at, user_id, points_at_win,
+                         resolution_type, prize_share)
+                    VALUES (:week, :user_id, :points, :rtype, :share)
+                    ON CONFLICT (week_start_at, user_id) DO NOTHING
+                """),
+                {
+                    "week": week_start_at,
+                    "user_id": user_id,
+                    "points": points,
+                    "rtype": resolution_type,
+                    "share": prize_share,
+                },
+            )
+        self.db.flush()
+        return len(entries)
+
+    def resolve_tie(
+        self, week_start_at: datetime, prize_share: int | None, resolved_by: str
+    ) -> int:
+        """Flip a week's `tie_pending` rows to `tie_split`, stamping each
+        winner's cut. Returns how many rows were affected (0 when the week
+        has no pending tie — the caller turns that into a 404/409)."""
+        affected = (
+            self.db.query(SprintWinner)
+            .filter(
+                SprintWinner.week_start_at == week_start_at,
+                SprintWinner.resolution_type == RESOLUTION_TIE_PENDING,
+            )
+            .update(
+                {
+                    "resolution_type": RESOLUTION_TIE_SPLIT,
+                    "prize_share": prize_share,
+                    "resolved_by": resolved_by,
+                    "resolved_at": datetime.now(UTC),
+                },
+                synchronize_session=False,
+            )
+        )
+        self.db.flush()
+        return affected

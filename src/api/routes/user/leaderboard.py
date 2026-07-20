@@ -11,13 +11,19 @@ from api.dependencies import (
     get_file_service,
     get_identity_provider_client_keycloak,
     get_leaderboard_points_service,
+    get_sprint_service,
     get_user,
 )
 from auth.dtos.users import UserDTO
 from clients.identity_provider import IdentityNotFound
 from clients.identity_provider.client import IdentityProviderClientKeycloak
-from leaderboard_points.dtos import SprintWinnerDTO
+from leaderboard_points.dtos import (
+    SprintStandingDTO,
+    SprintWinnerDTO,
+    WeeklySprintCardDTO,
+)
 from leaderboard_points.service import LeaderboardPointsService
+from leaderboard_points.sprint import SprintService
 from quiz.repositories.user_display import UserDisplayRepository
 from quiz.repositories.user_points import UserPointsRepository
 from utils.cache import CacheService, CacheStrategy
@@ -484,4 +490,66 @@ async def get_sprint_status(
         target_points=target_points,
         week_start_at=week_start_at,
         winner=winner,
+    )
+
+
+@router.get(
+    "/weekly",
+    response_model=WeeklySprintCardDTO,
+    summary="Еженедельный спринт — данные для карточки на Главной",
+)
+async def get_weekly_sprint(
+    session: Session = Depends(get_db_session),
+    idp: IdentityProviderClientKeycloak = Depends(get_identity_provider_client_keycloak),
+    file_service: FileService = Depends(get_file_service),
+    cache: CacheService = Depends(get_cache_service),
+    sprint_service: SprintService = Depends(get_sprint_service),
+):
+    """Public, no auth (CRM #19). One request feeds the whole home card:
+    the admin-entered title/prize, the week's deadline for the countdown,
+    how many people are competing, and who currently leads.
+
+    Always 200 with the same shape — never 404. The card is shown to every
+    user, including those not competing, and it renders a reduced layout
+    (title + prize + countdown, no right column) whenever `leader` is null.
+    That covers all three of "nobody has scored yet", "the allowlist is
+    empty" and "the request failed", so the client needs no branching.
+
+    `finished: true` means this week already has a threshold winner: the
+    card swaps the countdown for "Спринт завершён" and shows that winner,
+    so nobody keeps competing for a prize that is already awarded.
+
+    `participants_total` counts everyone the admin let in — including
+    entries granted to phone numbers that have not registered yet, since
+    they paid the same entry fee. Leader name/avatar resolution reuses the
+    same `_resolve_display` chain as `GET /leaderboard`."""
+    data = sprint_service.card_data()
+
+    leader: SprintStandingDTO | None = None
+    if data["leader"] is not None:
+        leader_id, points = data["leader"]
+        display_repo = UserDisplayRepository(session)
+        snapshots = display_repo.bulk_get([str(leader_id)])
+        display, wrote = _resolve_display(
+            str(leader_id), snapshots, idp, cache, display_repo
+        )
+        if wrote:
+            _commit_backfill(session)
+        name, raw_avatar = display if display is not None else ("Пользователь", None)
+        leader = SprintStandingDTO(
+            user_id=str(leader_id),
+            name=name,
+            avatar_url=_resolve_avatar(raw_avatar, file_service),
+            points=points,
+        )
+
+    return WeeklySprintCardDTO(
+        title_ru=data["title_ru"],
+        title_kk=data["title_kk"],
+        prize_amount=data["prize_amount"],
+        week_start_at=data["week_start_at"],
+        week_end_at=data["week_end_at"],
+        participants_total=data["participants_total"],
+        leader=leader,
+        finished=data["finished"],
     )

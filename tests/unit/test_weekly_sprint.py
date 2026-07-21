@@ -531,3 +531,24 @@ def test_snapshot_records_current_ranks_when_due():
     assert result == {"ran": True, "captured": 2}
     _, _, ranks = repo.save_rank_snapshot.call_args[0]
     assert ranks == [(a, 1), (b, 2)]
+
+
+def test_latest_snapshot_ranks_builds_a_valid_query():
+    """Regression: `func.max` was used in the repo without importing `func`,
+    which mocked-repo tests never exercised — it only blew up (NameError,
+    500) when the real repository ran. This drives the real method with a
+    mock session so a missing import fails here, not in production."""
+    from datetime import UTC, datetime as _dt
+
+    from leaderboard_points.repository import LeaderboardPointsRepository
+
+    session = MagicMock()
+    session.query.return_value.filter.return_value.scalar.return_value = None
+    repo = LeaderboardPointsRepository(session)
+
+    # No prior snapshot → empty dict, and — crucially — no NameError while
+    # constructing the func.max() query.
+    result = repo.latest_snapshot_ranks(
+        _dt(2026, 7, 20, tzinfo=UTC), _dt(2026, 7, 22, tzinfo=UTC)
+    )
+    assert result == {}

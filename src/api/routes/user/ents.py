@@ -1,11 +1,12 @@
 from datetime import UTC
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 
 from api.dependencies import (
     get_ent_attempts_service,
     get_ent_options_service,
+    get_sprint_service,
     get_student,
     get_subject_combination_service,
     get_user,
@@ -246,6 +247,49 @@ async def create_full_exam_attempt(
         attempt_id=getattr(result, "id", "unknown"),
     )
     return result
+
+
+@router.post(
+    "/attempts/create-full-exam-sprint",
+    response_model=EntAttemptServiceDTO,
+    summary="Начать тест еженедельного спринта",
+    description="То же, что полный экзамен, но БЕЗ гейта PRO-подписки — "
+    "доступ определяет участие в спринте (allowlist), а не подписка.",
+    responses={
+        **get_common_responses("create"),
+        **get_error_responses(EntOptionsDoesntExist, QuestionNotFound),
+    },
+)
+async def create_sprint_exam_attempt(
+    exam_data: StartFullExamRequestDTO,
+    user=Depends(get_user),
+    student: StudentDTO = Depends(get_student),
+    service: EntAttemptServiceInterface = Depends(get_ent_attempts_service),
+    sprint_service=Depends(get_sprint_service),
+    locale: str = Depends(get_locale),
+    __=Depends(require_not_restricted),
+):
+    """Creates the sprint test — same full-exam engine, but the gate is sprint
+    participation, NOT an active subscription. A non-participant gets 403 so
+    this can't be used as a free back door to a full exam."""
+    from datetime import datetime
+
+    from quiz.dtos.ent_attempts import EntAttemptCreateServiceDTO
+    from quiz.dtos.enums import ExamType
+
+    if not sprint_service.is_participant(user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not a sprint participant",
+        )
+
+    attempt_params = EntAttemptCreateServiceDTO(
+        student_guid=student.id,
+        exam_type=ExamType.full_exam,
+        subject_combination_id=exam_data.subject_combination_id,
+        started_at=datetime.now(UTC),
+    )
+    return service.create(attempt_params, locale=locale)
 
 
 @router.post(

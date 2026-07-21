@@ -24,6 +24,9 @@ class LeaderboardPointsSettingsDTO(BaseModel):
     sprint_prize_amount: int | None = None
     sprint_access_url: str | None = None
     sprint_points_per_answer: int | None = None
+    # Admin-defined sprint period. Both set → the sprint runs [start, end).
+    sprint_start_at: datetime | None = None
+    sprint_end_at: datetime | None = None
     updated_at: datetime
     updated_by: str | None = None
 
@@ -58,6 +61,18 @@ class LeaderboardPointsSettingsUpdateDTO(BaseModel):
     sprint_access_url: str | None = Field(default=None, max_length=500)
     # Points per correct answer in the sprint test. None/0 disables scoring.
     sprint_points_per_answer: int | None = Field(default=None, ge=0, le=10_000)
+    # Sprint period (arbitrary range). Set BOTH to define it; clearing either
+    # (explicit null) falls the sprint back to the implicit current week.
+    sprint_start_at: datetime | None = None
+    sprint_end_at: datetime | None = None
+
+    @field_validator("sprint_end_at")
+    @classmethod
+    def _end_after_start(cls, v, info):
+        start = info.data.get("sprint_start_at")
+        if v is not None and start is not None and v <= start:
+            raise ValueError("sprint_end_at must be after sprint_start_at")
+        return v
 
 
 class PointsAdjustDTO(BaseModel):

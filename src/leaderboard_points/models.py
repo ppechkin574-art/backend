@@ -79,6 +79,12 @@ class LeaderboardPointsSettings(Base):
     # normal ЕНТ test — one score at the end — the sprint test credits points
     # answer-by-answer, and this is how many. NULL/0 disables answer scoring.
     sprint_points_per_answer = Column(Integer, nullable=True)
+    # Admin-defined sprint period (arbitrary date range). When BOTH are set the
+    # sprint runs [start, end) — scoring window, standings, countdown, close and
+    # winner all key off these instead of the implicit Mon–Sun week. NULL/NULL
+    # falls back to the current Almaty week (legacy default, pre-configuration).
+    sprint_start_at = Column(DateTime(timezone=True), nullable=True)
+    sprint_end_at = Column(DateTime(timezone=True), nullable=True)
     updated_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),

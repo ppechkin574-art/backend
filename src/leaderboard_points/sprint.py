@@ -45,6 +45,7 @@ from leaderboard_points.repository import LeaderboardPointsRepository
 from leaderboard_points.service import (
     current_day_start_almaty,
     current_week_bounds_almaty,
+    sprint_bounds,
 )
 
 logger = logging.getLogger(__name__)
@@ -141,7 +142,8 @@ class SprintService:
         moved up. None when there's no earlier snapshot (first day of the
         week), so the client shows no badge rather than a fake zero."""
         now = now or datetime.now(UTC)
-        week_start_at, week_end_at = current_week_bounds_almaty(now)
+        settings = self.repo.get_or_create_settings()
+        week_start_at, week_end_at = sprint_bounds(settings, now)
         rows = self.repo.weekly_points(
             week_start_at, week_end_at, self._eligible_user_ids()
         )
@@ -156,8 +158,7 @@ class SprintService:
             delta = (prev - rank) if prev is not None else None
             entries.append((user_id, points, rank, delta))
 
-        settings = self.repo.get_or_create_settings()
-        winner_row = self.repo.get_current_sprint_winner_row(week_start_at)
+        winner, finished = self._resolve_finish(week_start_at, week_end_at, now)
         return {
             "title_ru": settings.sprint_title_ru,
             "title_kk": settings.sprint_title_kk,
@@ -169,10 +170,11 @@ class SprintService:
             "week_start_at": week_start_at,
             "week_end_at": week_end_at,
             "participants_total": self.repo.count_participants(),
-            "finished": winner_row is not None,
-            # (user_id, points_at_win) of the early-win threshold winner, or
-            # None. The route resolves the name/avatar like any other row.
-            "winner": (winner_row[0], winner_row[1]) if winner_row else None,
+            # finished = won early OR the period has ended. `winner` is
+            # (user_id, points) only once finished; live it's null (the top of
+            # `entries` is the current leader). The route resolves the name.
+            "finished": finished,
+            "winner": winner if finished else None,
             "entries": entries,
         }
 
@@ -207,9 +209,10 @@ class SprintService:
         Points go through the normal add_points funnel, so the threshold
         winner hook fires here too — a sprint test can win the week early."""
         now = datetime.now(UTC)
-        week_start_at, week_end_at = current_week_bounds_almaty(now)
+        settings = self.repo.get_or_create_settings()
+        week_start_at, week_end_at = sprint_bounds(settings, now)
 
-        per_answer = self.repo.get_or_create_settings().sprint_points_per_answer or 0
+        per_answer = settings.sprint_points_per_answer or 0
         correct_ids = self.repo.correct_variant_ids(question_id)
         correct = bool(correct_ids) and set(variant_ids) == correct_ids
 
@@ -257,7 +260,8 @@ class SprintService:
         must not take down the lifespan task it shares."""
         now = now or datetime.now(UTC)
         try:
-            week_start_at, week_end_at = current_week_bounds_almaty(now)
+            settings = self.repo.get_or_create_settings()
+            week_start_at, week_end_at = sprint_bounds(settings, now)
             day_start = current_day_start_almaty(now)
             if self.repo.snapshot_exists_for_day(week_start_at, day_start):
                 return {"ran": False, "reason": "already_captured_today"}
@@ -282,17 +286,10 @@ class SprintService:
         winner — the card then shows that winner and "Спринт завершён"
         instead of a live leader and a countdown."""
         now = now or datetime.now(UTC)
-        week_start_at, week_end_at = current_week_bounds_almaty(now)
         settings = self.repo.get_or_create_settings()
+        week_start_at, week_end_at = sprint_bounds(settings, now)
 
-        winner_row = self.repo.get_current_sprint_winner_row(week_start_at)
-        if winner_row is not None:
-            leader = (winner_row[0], winner_row[1])
-            finished = True
-        else:
-            rows = self.standings(week_start_at, week_end_at)
-            leader = (rows[0][0], rows[0][1]) if rows else None
-            finished = False
+        leader, finished = self._resolve_finish(week_start_at, week_end_at, now)
 
         return {
             "title_ru": settings.sprint_title_ru,
@@ -305,12 +302,34 @@ class SprintService:
             "finished": finished,
         }
 
+    def _resolve_finish(
+        self, start: datetime, end: datetime, now: datetime
+    ) -> tuple[tuple | None, bool]:
+        """`(leader_or_winner, finished)` for the card/screen.
+
+        finished is True when the sprint was won early (a `threshold` row) OR
+        the period has ended (`now >= end`). The tuple is `(user_id, points)`:
+        the locked winner when there is one, otherwise the current top scorer —
+        which, once the period is over, is effectively the `closest` winner even
+        before the scheduled close job records it. `None` when nobody scored."""
+        threshold = self.repo.get_current_sprint_winner_row(start)
+        if threshold is not None:
+            return (threshold[0], threshold[1]), True
+        over = now >= end
+        recorded = self.repo.list_winners_for_week(start) if over else []
+        if recorded:
+            w = recorded[0]
+            return (w.user_id, w.points_at_win), True
+        rows = self.standings(start, end)
+        leader = (rows[0][0], rows[0][1]) if rows else None
+        return leader, over
+
     # ---------- admin views ----------
 
     def current_week(self, now: datetime | None = None) -> dict:
         now = now or datetime.now(UTC)
-        week_start_at, week_end_at = current_week_bounds_almaty(now)
         settings = self.repo.get_or_create_settings()
+        week_start_at, week_end_at = sprint_bounds(settings, now)
         return {
             "week_start_at": week_start_at,
             "week_end_at": week_end_at,
@@ -367,9 +386,22 @@ class SprintService:
         that also drives the points auto-reset."""
         now = now or datetime.now(UTC)
         try:
-            current_start, _ = current_week_bounds_almaty(now)
-            week_start_at = current_start - timedelta(days=7)
-            week_end_at = current_start
+            settings = self.repo.get_or_create_settings()
+            configured = isinstance(settings.sprint_start_at, datetime) and isinstance(
+                settings.sprint_end_at, datetime
+            )
+            if configured:
+                # Date-based sprint: resolve it once its period is over. While
+                # it's still running there is nothing to close.
+                week_start_at, week_end_at = sprint_bounds(settings, now)
+                if now < week_end_at:
+                    return {"ran": False, "reason": "not_over"}
+            else:
+                # Legacy implicit-week sprint: resolve the PREVIOUS week (the
+                # one that just rolled over at Monday 00:00 Almaty).
+                current_start, _ = current_week_bounds_almaty(now)
+                week_start_at = current_start - timedelta(days=7)
+                week_end_at = current_start
 
             if self.repo.week_has_winner(week_start_at):
                 return {"ran": False, "reason": "already_resolved"}
@@ -382,7 +414,7 @@ class SprintService:
             tied = [(uid, pts) for uid, pts, _ in rows if pts == top_points]
 
             if len(tied) == 1:
-                prize = self.repo.get_or_create_settings().sprint_prize_amount
+                prize = settings.sprint_prize_amount
                 self.repo.record_week_winners(
                     week_start_at, tied, RESOLUTION_CLOSEST, prize
                 )

@@ -73,6 +73,21 @@ def current_day_start_almaty(now: datetime) -> datetime:
     return day.astimezone(UTC)
 
 
+def sprint_bounds(settings, now: datetime) -> tuple[datetime, datetime]:
+    """The active sprint window `[start, end)`. When the admin has set BOTH
+    `sprint_start_at` and `sprint_end_at` (arbitrary date range), those define
+    the sprint — scoring window, standings, countdown, close and the winner key
+    all use them. Otherwise falls back to the implicit current Almaty week, so
+    an un-configured sprint keeps the old Mon–Sun behaviour."""
+    start = getattr(settings, "sprint_start_at", None)
+    end = getattr(settings, "sprint_end_at", None)
+    # isinstance (not just truthiness) so a mock/placeholder can't be mistaken
+    # for a real configured range.
+    if isinstance(start, datetime) and isinstance(end, datetime):
+        return start, end
+    return current_week_bounds_almaty(now)
+
+
 def _next_reset_at(settings: LeaderboardPointsSettings) -> datetime | None:
     if not settings.auto_reset_enabled or settings.last_reset_at is None:
         return None
@@ -273,7 +288,7 @@ class LeaderboardPointsService:
                 if str(user_id) in hidden_ids:
                     return
 
-                week_start_at, week_end_at = current_week_bounds_almaty(datetime.now(UTC))
+                week_start_at, week_end_at = sprint_bounds(settings, datetime.now(UTC))
                 # The caller added its PointsAuditLog row to the session but
                 # has not committed; flush so the aggregate below counts the
                 # award that triggered this hook.

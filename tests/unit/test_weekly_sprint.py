@@ -163,6 +163,54 @@ def test_close_week_records_single_winner_with_whole_prize():
     assert share == 50_000
 
 
+def test_sprint_bounds_uses_configured_dates_over_the_week():
+    from leaderboard_points.service import sprint_bounds
+
+    start = datetime(2026, 8, 1, 0, 0, tzinfo=UTC)
+    end = datetime(2026, 8, 4, 0, 0, tzinfo=UTC)
+    settings = MagicMock(sprint_start_at=start, sprint_end_at=end)
+    assert sprint_bounds(settings, datetime(2026, 8, 2, tzinfo=UTC)) == (start, end)
+
+
+def test_sprint_bounds_falls_back_to_current_week_when_unset():
+    from leaderboard_points.service import sprint_bounds
+
+    settings = MagicMock(sprint_start_at=None, sprint_end_at=None)
+    now = datetime(2026, 7, 22, 10, tzinfo=UTC)
+    assert sprint_bounds(settings, now) == current_week_bounds_almaty(now)
+
+
+def test_close_is_a_noop_while_a_configured_sprint_is_still_running():
+    now = datetime(2026, 8, 2, 10, tzinfo=UTC)  # inside [Aug 1, Aug 5)
+    service, repo = _service(participants=[uuid4()])
+    repo.get_or_create_settings.return_value = MagicMock(
+        sprint_start_at=datetime(2026, 8, 1, tzinfo=UTC),
+        sprint_end_at=datetime(2026, 8, 5, tzinfo=UTC),
+        sprint_prize_amount=50_000,
+    )
+    result = service.close_week_if_due(now)
+    assert result["ran"] is False and result["reason"] == "not_over"
+    repo.record_week_winners.assert_not_called()
+
+
+def test_close_records_winner_once_the_configured_sprint_has_ended():
+    winner = uuid4()
+    now = datetime(2026, 8, 6, 10, tzinfo=UTC)  # after Aug 5 end
+    service, repo = _service(
+        standings=[(winner, 120, now)], participants=[winner], prize=50_000
+    )
+    repo.get_or_create_settings.return_value = MagicMock(
+        sprint_start_at=datetime(2026, 8, 1, tzinfo=UTC),
+        sprint_end_at=datetime(2026, 8, 5, tzinfo=UTC),
+        sprint_prize_amount=50_000,
+    )
+    repo.week_has_winner.return_value = False
+    result = service.close_week_if_due(now)
+    assert result["ran"] is True
+    entries = repo.record_week_winners.call_args[0][1]
+    assert entries == [(winner, 120)]
+
+
 def test_close_week_leaves_a_tie_for_the_admin_instead_of_splitting_it():
     """Two users on the same score must NOT be resolved automatically —
     the runner-up ordering inside `weekly_points` is display-only."""

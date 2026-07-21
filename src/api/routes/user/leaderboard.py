@@ -19,8 +19,10 @@ from clients.identity_provider import IdentityNotFound
 from clients.identity_provider.client import IdentityProviderClientKeycloak
 from leaderboard_points.dtos import (
     SprintStandingDTO,
+    SprintStandingEntryDTO,
     SprintWinnerDTO,
     WeeklySprintCardDTO,
+    WeeklyStandingsDTO,
 )
 from leaderboard_points.service import LeaderboardPointsService
 from leaderboard_points.sprint import SprintService
@@ -552,4 +554,78 @@ async def get_weekly_sprint(
         participants_total=data["participants_total"],
         leader=leader,
         finished=data["finished"],
+    )
+
+
+@router.get(
+    "/weekly/standings",
+    response_model=WeeklyStandingsDTO,
+    summary="Еженедельный спринт — полный рейтинг недели (экран)",
+)
+async def get_weekly_standings(
+    user: UserDTO = Depends(get_user),
+    session: Session = Depends(get_db_session),
+    idp: IdentityProviderClientKeycloak = Depends(get_identity_provider_client_keycloak),
+    file_service: FileService = Depends(get_file_service),
+    cache: CacheService = Depends(get_cache_service),
+    sprint_service: SprintService = Depends(get_sprint_service),
+):
+    """Auth required (the screen lives behind login). Feeds the weekly-sprint
+    screen: the ranked list of allowlisted participants who scored this week,
+    plus the caller's own pinned "вы" row.
+
+    `me` is present only when the caller is an allowlisted participant who has
+    scored — the screen hides that row for everyone else, since a
+    non-participant has no position in a contest they're not entered in.
+
+    Each row carries `delta`: how many places the user moved since the start
+    of today (positive = up). It's null on the first day of the week, before
+    any snapshot exists to diff against — the client then shows no badge.
+
+    Names and avatars resolve through the same `_resolve_display` chain as the
+    rest of the leaderboard."""
+    data = sprint_service.ranked_standings()
+    entries = data["entries"]  # [(user_id, points, rank, delta)]
+
+    me_id = str(user.id)
+    ids = [str(uid) for uid, _, _, _ in entries]
+    if me_id not in ids:
+        ids.append(me_id)  # resolve the caller too, even if off the list
+
+    display_repo = UserDisplayRepository(session)
+    snapshots = display_repo.bulk_get(ids)
+    resolved: dict[str, tuple[str, str | None]] = {}
+    wrote_any = False
+    for uid in ids:
+        disp, wrote = _resolve_display(uid, snapshots, idp, cache, display_repo)
+        wrote_any = wrote_any or wrote
+        name, raw_avatar = disp if disp is not None else ("Пользователь", None)
+        resolved[uid] = (name, _resolve_avatar(raw_avatar, file_service))
+    if wrote_any:
+        _commit_backfill(session)
+
+    def _entry(uid, points, rank, delta) -> SprintStandingEntryDTO:
+        name, avatar = resolved.get(str(uid), ("Пользователь", None))
+        return SprintStandingEntryDTO(
+            user_id=str(uid),
+            name=name,
+            avatar_url=avatar,
+            points=points,
+            rank=rank,
+            delta=delta,
+        )
+
+    rows = [_entry(*e) for e in entries]
+    me = next((r for r in rows if r.user_id == me_id), None)
+
+    return WeeklyStandingsDTO(
+        title_ru=data["title_ru"],
+        title_kk=data["title_kk"],
+        prize_amount=data["prize_amount"],
+        week_start_at=data["week_start_at"],
+        week_end_at=data["week_end_at"],
+        participants_total=data["participants_total"],
+        finished=data["finished"],
+        me=me,
+        entries=rows,
     )

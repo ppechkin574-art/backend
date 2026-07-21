@@ -65,6 +65,14 @@ def current_week_bounds_almaty(now: datetime) -> tuple[datetime, datetime]:
     return start, start + timedelta(days=7)
 
 
+def current_day_start_almaty(now: datetime) -> datetime:
+    """Today's 00:00 Asia/Almaty as a UTC-aware datetime. Used to stamp the
+    daily rank snapshot the movement badge diffs against."""
+    local = now.astimezone(ALMATY_TZ)
+    day = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    return day.astimezone(UTC)
+
+
 def _next_reset_at(settings: LeaderboardPointsSettings) -> datetime | None:
     if not settings.auto_reset_enabled or settings.last_reset_at is None:
         return None

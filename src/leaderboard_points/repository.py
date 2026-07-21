@@ -10,6 +10,7 @@ from leaderboard_points.models import (
     RESOLUTION_TIE_SPLIT,
     LeaderboardPointsSettings,
     SprintParticipant,
+    SprintRankSnapshot,
     SprintWinner,
 )
 from quiz.models.user_points import UserPoints
@@ -419,3 +420,80 @@ class LeaderboardPointsRepository:
         )
         self.db.flush()
         return affected
+
+    # ---------- daily rank snapshots (movement badge, CRM #19) ----------
+
+    def latest_snapshot_ranks(
+        self, week_start_at: datetime, before_day: datetime
+    ) -> dict[UUID, int]:
+        """user_id → rank from the most recent snapshot day STRICTLY BEFORE
+        `before_day`, for the given week. `before_day` is today's 00:00
+        Almaty, so this returns yesterday's (or the latest earlier day's)
+        ranks — the baseline the movement badge diffs against.
+
+        Returns {} when the week has no earlier snapshot yet (its first
+        day): the standings endpoint then emits no badges rather than
+        pretending everyone is unchanged."""
+        latest_day = (
+            self.db.query(func.max(SprintRankSnapshot.captured_for_day))
+            .filter(
+                SprintRankSnapshot.week_start_at == week_start_at,
+                SprintRankSnapshot.captured_for_day < before_day,
+            )
+            .scalar()
+        )
+        if latest_day is None:
+            return {}
+        rows = (
+            self.db.query(SprintRankSnapshot.user_id, SprintRankSnapshot.rank)
+            .filter(
+                SprintRankSnapshot.week_start_at == week_start_at,
+                SprintRankSnapshot.captured_for_day == latest_day,
+            )
+            .all()
+        )
+        return {r[0]: r[1] for r in rows}
+
+    def save_rank_snapshot(
+        self,
+        week_start_at: datetime,
+        captured_for_day: datetime,
+        ranks: list[tuple[UUID, int]],
+    ) -> int:
+        """Write today's rank snapshot, one row per participant. Idempotent
+        via `uq_sprint_rank_snapshot` — a same-day re-run refreshes each
+        row's rank instead of duplicating, so running the job hourly is
+        safe even though it only needs to land once a day."""
+        if not ranks:
+            return 0
+        for user_id, rank in ranks:
+            self.db.execute(
+                text("""
+                    INSERT INTO sprint_rank_snapshots
+                        (week_start_at, captured_for_day, user_id, rank)
+                    VALUES (:week, :day, :user_id, :rank)
+                    ON CONFLICT (week_start_at, captured_for_day, user_id)
+                    DO UPDATE SET rank = EXCLUDED.rank
+                """),
+                {
+                    "week": week_start_at,
+                    "day": captured_for_day,
+                    "user_id": user_id,
+                    "rank": rank,
+                },
+            )
+        self.db.flush()
+        return len(ranks)
+
+    def snapshot_exists_for_day(
+        self, week_start_at: datetime, captured_for_day: datetime
+    ) -> bool:
+        return (
+            self.db.query(SprintRankSnapshot.id)
+            .filter(
+                SprintRankSnapshot.week_start_at == week_start_at,
+                SprintRankSnapshot.captured_for_day == captured_for_day,
+            )
+            .first()
+            is not None
+        )

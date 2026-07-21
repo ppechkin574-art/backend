@@ -106,6 +106,45 @@ class SprintParticipant(Base):
         return f"<SprintParticipant phone={self.phone_number}>"
 
 
+class SprintRankSnapshot(Base):
+    """A participant's rank at a point in time, so the weekly-standings
+    screen can show a "moved up/down N places" badge (CRM #19).
+
+    Movement is measured against the START OF THE CURRENT DAY: a background
+    job records one snapshot per participant at ~00:00 Asia/Almaty, and the
+    standings endpoint diffs today's live rank against it, so the badge
+    reads "how you moved today". Without a stored snapshot there is nothing
+    to diff, so on the first day of a week (no prior snapshot) badges are
+    simply absent rather than wrong.
+
+    `(week_start_at, captured_for_day, user_id)` is unique — one row per
+    participant per day. `captured_for_day` is the Almaty date the snapshot
+    represents, stored as that day's 00:00 in UTC."""
+
+    __tablename__ = "sprint_rank_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    week_start_at = Column(DateTime(timezone=True), nullable=False)
+    captured_for_day = Column(DateTime(timezone=True), nullable=False)
+    user_id = Column(UUID(as_uuid=True), nullable=False)
+    rank = Column(Integer, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "week_start_at",
+            "captured_for_day",
+            "user_id",
+            name="uq_sprint_rank_snapshot",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<SprintRankSnapshot day={self.captured_for_day} "
+            f"user_id={self.user_id} rank={self.rank}>"
+        )
+
+
 class SprintWinner(Base):
     """One row per (week, winner). `week_start_at` is the Monday 00:00
     Asia/Almaty identifying the week — see `current_week_start_almaty`.

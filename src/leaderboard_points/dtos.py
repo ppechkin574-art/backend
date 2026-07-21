@@ -188,3 +188,37 @@ class WeeklySprintCardDTO(BaseModel):
     participants_total: int
     leader: SprintStandingDTO | None = None
     finished: bool = False
+
+
+class SprintStandingEntryDTO(BaseModel):
+    """One row of the weekly-standings screen. `rank` is 1-based position
+    among allowlisted participants who scored this week. `delta` is how
+    many places the user moved since the start of today (positive = up,
+    negative = down); None means no baseline snapshot yet (first day of
+    the week) — the client shows no movement badge."""
+
+    user_id: str
+    name: str
+    avatar_url: str | None = None
+    points: int
+    rank: int
+    delta: int | None = None
+
+
+class WeeklyStandingsDTO(BaseModel):
+    """Everything the weekly-sprint screen renders in one request.
+
+    `me` is the caller's own row, present only when they are an
+    allowlisted participant who has scored — the screen pins it at the top
+    and hides it entirely otherwise (a non-participant has no position in a
+    contest they are not in). `entries` is the ranked list (top-N)."""
+
+    title_ru: str | None = None
+    title_kk: str | None = None
+    prize_amount: int | None = None
+    week_start_at: datetime
+    week_end_at: datetime
+    participants_total: int
+    finished: bool = False
+    me: SprintStandingEntryDTO | None = None
+    entries: list[SprintStandingEntryDTO] = Field(default_factory=list)

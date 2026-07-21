@@ -281,6 +281,33 @@ async def _sprint_week_close_check(db_settings: DatabaseSettings) -> None:
             logger.exception("[sprint-week-close] cycle error")
 
 
+async def _sprint_rank_snapshot_check(db_settings: DatabaseSettings) -> None:
+    """Hourly: record the day's rank snapshot for the movement badge on the
+    weekly-standings screen (CRM #19). Writes at most once per Almaty day —
+    the unique constraint no-ops a same-day re-run — so the first cycle after
+    00:00 does the work and the rest are cheap no-ops. A missed midnight
+    (deploy, restart) is still captured within the hour."""
+    from leaderboard_points.repository import LeaderboardPointsRepository
+    from leaderboard_points.sprint import SprintService
+
+    db = Database(db_settings)
+    while True:
+        await asyncio.sleep(_POINTS_RESET_CHECK_INTERVAL_SECONDS)
+        try:
+            with db.session as session:
+                result = SprintService(
+                    LeaderboardPointsRepository(session)
+                ).capture_rank_snapshot()
+                if result.get("ran"):
+                    session.commit()
+                    logger.info(
+                        "[sprint-rank-snapshot] captured %s ranks",
+                        result.get("captured"),
+                    )
+        except Exception:
+            logger.exception("[sprint-rank-snapshot] cycle error")
+
+
 async def lifespan(app: FastAPI):
     # Startup
     settings = Settings()
@@ -319,6 +346,9 @@ async def lifespan(app: FastAPI):
     sprint_week_close_task = asyncio.create_task(
         _sprint_week_close_check(db_settings)
     )
+    sprint_rank_snapshot_task = asyncio.create_task(
+        _sprint_rank_snapshot_check(db_settings)
+    )
 
     yield
 
@@ -328,6 +358,7 @@ async def lifespan(app: FastAPI):
     activity_cleanup_task.cancel()
     points_auto_reset_task.cancel()
     sprint_week_close_task.cancel()
+    sprint_rank_snapshot_task.cancel()
     stop_poller_on_app(app)
     await manager.stop_heartbeat()
     await notification_scheduler.stop()

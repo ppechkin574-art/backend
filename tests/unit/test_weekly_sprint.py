@@ -450,3 +450,84 @@ def test_settings_dto_returns_every_sprint_field_it_stores():
     assert dto.sprint_title_ru == "Еженедельный спринт"
     assert dto.sprint_title_kk == "Апталық спринт"
     assert dto.sprint_prize_amount == 50_000
+
+
+# --------------------------------------------------------------------
+# ranked standings + movement delta (weekly-sprint screen)
+# --------------------------------------------------------------------
+
+
+def _standings_service(*, standings, participants, prev_ranks, prize=50_000):
+    repo = MagicMock()
+    repo.weekly_points.return_value = standings
+    repo.participant_user_ids.return_value = participants
+    repo.count_participants.return_value = len(participants)
+    repo.latest_snapshot_ranks.return_value = prev_ranks
+    repo.get_current_sprint_winner_row.return_value = None
+    repo.get_or_create_settings.return_value = MagicMock(
+        sprint_prize_amount=prize, sprint_title_ru="Спринт", sprint_title_kk="Спринт"
+    )
+    service = SprintService(repo)
+    service._eligible_user_ids = lambda: participants
+    return service, repo
+
+
+def test_standings_are_ranked_one_based_best_first():
+    a, b, c = uuid4(), uuid4(), uuid4()
+    now = datetime(2026, 7, 22, 10, 0, tzinfo=UTC)
+    service, _ = _standings_service(
+        standings=[(a, 500, now), (b, 300, now), (c, 100, now)],
+        participants=[a, b, c],
+        prev_ranks={},
+    )
+    entries = service.ranked_standings(now)["entries"]
+    assert [(uid, rank) for uid, _, rank, _ in entries] == [(a, 1), (b, 2), (c, 3)]
+
+
+def test_delta_is_positive_when_a_user_climbs_since_the_morning():
+    a, b = uuid4(), uuid4()
+    now = datetime(2026, 7, 22, 10, 0, tzinfo=UTC)
+    # This morning a was 2nd, b was 1st; now a leads.
+    service, _ = _standings_service(
+        standings=[(a, 900, now), (b, 800, now)],
+        participants=[a, b],
+        prev_ranks={a: 2, b: 1},
+    )
+    by_user = {uid: delta for uid, _, _, delta in service.ranked_standings(now)["entries"]}
+    assert by_user[a] == 1   # 2nd → 1st, up one
+    assert by_user[b] == -1  # 1st → 2nd, down one
+
+
+def test_delta_is_null_on_the_first_day_with_no_prior_snapshot():
+    a, b = uuid4(), uuid4()
+    now = datetime(2026, 7, 20, 10, 0, tzinfo=UTC)
+    service, _ = _standings_service(
+        standings=[(a, 500, now), (b, 300, now)],
+        participants=[a, b],
+        prev_ranks={},  # nothing recorded yet
+    )
+    assert all(d is None for _, _, _, d in service.ranked_standings(now)["entries"])
+
+
+def test_snapshot_is_skipped_when_already_captured_today():
+    a = uuid4()
+    now = datetime(2026, 7, 22, 10, 0, tzinfo=UTC)
+    service, repo = _standings_service(
+        standings=[(a, 500, now)], participants=[a], prev_ranks={}
+    )
+    repo.snapshot_exists_for_day.return_value = True
+    assert service.capture_rank_snapshot(now)["ran"] is False
+    repo.save_rank_snapshot.assert_not_called()
+
+
+def test_snapshot_records_current_ranks_when_due():
+    a, b = uuid4(), uuid4()
+    now = datetime(2026, 7, 22, 10, 0, tzinfo=UTC)
+    service, repo = _standings_service(
+        standings=[(a, 500, now), (b, 300, now)], participants=[a, b], prev_ranks={}
+    )
+    repo.snapshot_exists_for_day.return_value = False
+    result = service.capture_rank_snapshot(now)
+    assert result == {"ran": True, "captured": 2}
+    _, _, ranks = repo.save_rank_snapshot.call_args[0]
+    assert ranks == [(a, 1), (b, 2)]

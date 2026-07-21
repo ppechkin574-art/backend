@@ -42,7 +42,10 @@ from leaderboard_points.models import (
     SprintParticipant,
 )
 from leaderboard_points.repository import LeaderboardPointsRepository
-from leaderboard_points.service import current_week_bounds_almaty
+from leaderboard_points.service import (
+    current_day_start_almaty,
+    current_week_bounds_almaty,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +126,71 @@ class SprintService:
         return self.repo.weekly_points(
             week_start_at, week_end_at, self._eligible_user_ids()
         )
+
+    def ranked_standings(
+        self, now: datetime | None = None, limit: int = 100
+    ) -> dict:
+        """Ranked weekly standings for `GET /leaderboard/weekly/standings`.
+
+        Returns raw rows the route enriches with names/avatars:
+          {settings…, week bounds, participants_total, finished,
+           entries: [(user_id, points, rank, delta)], ...}
+
+        `delta` is today's movement: this row's live rank minus its rank in
+        the most recent snapshot before today's 00:00 Almaty. Positive =
+        moved up. None when there's no earlier snapshot (first day of the
+        week), so the client shows no badge rather than a fake zero."""
+        now = now or datetime.now(UTC)
+        week_start_at, week_end_at = current_week_bounds_almaty(now)
+        rows = self.repo.weekly_points(
+            week_start_at, week_end_at, self._eligible_user_ids()
+        )
+
+        day_start = current_day_start_almaty(now)
+        prev_ranks = self.repo.latest_snapshot_ranks(week_start_at, day_start)
+
+        entries = []
+        for i, (user_id, points, _) in enumerate(rows[:limit]):
+            rank = i + 1
+            prev = prev_ranks.get(user_id)
+            delta = (prev - rank) if prev is not None else None
+            entries.append((user_id, points, rank, delta))
+
+        settings = self.repo.get_or_create_settings()
+        winner_row = self.repo.get_current_sprint_winner_row(week_start_at)
+        return {
+            "title_ru": settings.sprint_title_ru,
+            "title_kk": settings.sprint_title_kk,
+            "prize_amount": settings.sprint_prize_amount,
+            "week_start_at": week_start_at,
+            "week_end_at": week_end_at,
+            "participants_total": self.repo.count_participants(),
+            "finished": winner_row is not None,
+            "entries": entries,
+        }
+
+    def capture_rank_snapshot(self, now: datetime | None = None) -> dict:
+        """Record today's rank snapshot (movement-badge baseline). Called on
+        a schedule; only writes once per Almaty day thanks to the unique
+        constraint, so an hourly poll is safe. Never raises — a failure here
+        must not take down the lifespan task it shares."""
+        now = now or datetime.now(UTC)
+        try:
+            week_start_at, week_end_at = current_week_bounds_almaty(now)
+            day_start = current_day_start_almaty(now)
+            if self.repo.snapshot_exists_for_day(week_start_at, day_start):
+                return {"ran": False, "reason": "already_captured_today"}
+            rows = self.repo.weekly_points(
+                week_start_at, week_end_at, self._eligible_user_ids()
+            )
+            if not rows:
+                return {"ran": False, "reason": "no_scorers"}
+            ranks = [(user_id, i + 1) for i, (user_id, _, _) in enumerate(rows)]
+            self.repo.save_rank_snapshot(week_start_at, day_start, ranks)
+            return {"ran": True, "captured": len(ranks)}
+        except Exception:
+            logger.exception("capture_rank_snapshot failed (non-fatal)")
+            return {"ran": False, "reason": "error"}
 
     # ---------- the mobile home card ----------
 

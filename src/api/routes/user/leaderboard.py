@@ -376,6 +376,11 @@ async def get_my_rank(
     """
     points_repo = UserPointsRepository(session)
     display_repo = UserDisplayRepository(session)
+    # Enroll the caller into the leaderboard (zero-points row) if they aren't
+    # already — so every registered user appears in the global Рейтинг even
+    # before earning anything. Idempotent; the app hits /me on both Home and
+    # Рейтинг, so this covers new registrants without a registration hook.
+    points_repo.ensure_row(user.id)
     total = points_repo.get_total_points(user.id)
 
     # Bulk-fetch the snapshot once for the caller + the whole oversample, so the
@@ -423,8 +428,10 @@ async def get_my_rank(
             if gap > 0:
                 gap_to_milestone_pts = gap
 
-    if dirty:
-        _commit_backfill(session)
+    # Always commit: `ensure_row` above may have inserted the caller's
+    # enrollment row, and `dirty` only tracks display-snapshot back-fills.
+    # A commit with nothing pending is a cheap no-op.
+    _commit_backfill(session)
 
     return MyRankEntry(
         rank=rank,

@@ -3,6 +3,7 @@ from .payments import router as admin_payments_router
 from .app_update_config import router as app_update_config_router
 from .bank import router as bank_router
 from .leaderboard_hidden import router as leaderboard_hidden_router
+from .leaderboard_backfill import router as leaderboard_backfill_router
 from .leaderboard_prizes import router as leaderboard_prizes_router
 from .daily_notification_template import router as daily_notification_template_router
 from .streak_push_template import router as streak_push_template_router
@@ -59,6 +60,7 @@ routers = [
     app_settings_router,
     leaderboard_prizes_router,
     leaderboard_hidden_router,
+    leaderboard_backfill_router,
     streak_reward_tiers_router,
     streak_push_template_router,
     daily_notification_template_router,

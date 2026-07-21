@@ -54,6 +54,7 @@ class EntAttemptServiceInterface(Protocol):
         self,
         attempt_params: EntAttemptCreateServiceDTO,
         locale: str = "ru",
+        force_new: bool = False,
     ) -> EntAttemptServiceDTO:
         raise NotImplementedError
 
@@ -94,6 +95,7 @@ class EntAttemptService:
         self,
         attempt_params: EntAttemptCreateServiceDTO,
         locale: str = "ru",
+        force_new: bool = False,
     ) -> EntAttemptServiceDTO:
         logger.info(
             "Starting ENT attempt creation for student: %s, exam_type: %s, option: %s, combination: %s, locale: %s",
@@ -133,12 +135,18 @@ class EntAttemptService:
         with self._uow:
             logger.info("Checking for existing active attempts...")
 
-            # Проверяем наличие активной попытки
-            existing = self._get_active_attempt(
-                student_guid=attempt_params.student_guid,
-                exam_type=attempt_params.exam_type,
-                ent_option_id=attempt_params.ent_option_id,
-                subject_combination_id=attempt_params.subject_combination_id,
+            # Проверяем наличие активной попытки. force_new (спринт) пропускает
+            # резюм — каждый запуск спринт-теста должен быть новой попыткой с
+            # новым test_id, иначе те же вопросы за неделю платят один раз.
+            existing = (
+                None
+                if force_new
+                else self._get_active_attempt(
+                    student_guid=attempt_params.student_guid,
+                    exam_type=attempt_params.exam_type,
+                    ent_option_id=attempt_params.ent_option_id,
+                    subject_combination_id=attempt_params.subject_combination_id,
+                )
             )
 
             if existing:

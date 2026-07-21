@@ -289,7 +289,9 @@ async def create_sprint_exam_attempt(
         subject_combination_id=exam_data.subject_combination_id,
         started_at=datetime.now(UTC),
     )
-    return service.create(attempt_params, locale=locale)
+    # force_new: never resume an active attempt — every sprint launch is a
+    # fresh test_id so «платить каждый тест» holds even for the same subjects.
+    return service.create(attempt_params, locale=locale, force_new=True)
 
 
 @router.post(

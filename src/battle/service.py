@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from bank.models import Transaction, TransactionStatus, TransactionType, UserBankAccount
 from battle.models import BattleAnswer, BattleSession
+from battle.settings import battle_setting
 from battle.schemas import (
     BattleOpponent,
     BattleQuestion,
@@ -112,7 +113,7 @@ def fetch_battle_questions(db: Session, subject_ids: list[int]) -> list[dict]:
             db.query(Question.id)
             .filter(Question.subject_id == sid)
             .order_by(func.random())
-            .limit(BATTLE_QUESTIONS_PER_SUBJECT)
+            .limit(battle_setting(db, "questions_per_subject"))
             .all()
         )
         if not question_ids:
@@ -288,7 +289,10 @@ class BattleService:
             "questions": questions,
             "correct_answers": build_correct_answers(questions),
         }
-        win_rate = random.randint(50, 62)  # mid-tier only
+        win_rate = random.randint(
+            battle_setting(self.db, "bot_win_rate_min"),
+            battle_setting(self.db, "bot_win_rate_max"),
+        )  # admin-editable bot difficulty
         bot_name = random.choice(BOT_NAMES)
 
         bot_player_id = f"bot:{bot_name}"
@@ -457,20 +461,25 @@ class BattleService:
         p1 = session.player1_score
         p2 = session.player2_score
 
+        # Admin-editable star amounts (fall back to code defaults if unset).
+        win = battle_setting(self.db, "stars_win")
+        draw = battle_setting(self.db, "stars_draw")
+        loss = battle_setting(self.db, "stars_loss")
+
         if p1 > p2:
             session.winner_id = session.player1_id
-            session.stars_player1 = BATTLE_STARS_WIN
-            session.stars_player2 = 0
+            session.stars_player1 = win
+            session.stars_player2 = loss
             bank_desc = "Победа в баттле"
         elif p2 > p1:
             session.winner_id = session.player2_id or "bot"
-            session.stars_player1 = 0
-            session.stars_player2 = BATTLE_STARS_WIN
+            session.stars_player1 = loss
+            session.stars_player2 = win
             bank_desc = "Поражение в баттле"
         else:
             session.winner_id = "draw"
-            session.stars_player1 = BATTLE_STARS_DRAW
-            session.stars_player2 = BATTLE_STARS_DRAW
+            session.stars_player1 = draw
+            session.stars_player2 = draw
             bank_desc = "Ничья в баттле"
 
         session.status = "finished"
@@ -554,15 +563,17 @@ class BattleService:
         user_id = str(user_id)  # normalize UUID → str
         if session.status != "active":
             return
-        # Opponent wins
+        # Opponent wins (forfeiter gets the loss amount).
+        win = battle_setting(self.db, "stars_win")
+        loss = battle_setting(self.db, "stars_loss")
         if user_id == session.player1_id:
             session.winner_id = session.player2_id or "bot"
-            session.stars_player1 = 0
-            session.stars_player2 = BATTLE_STARS_WIN
+            session.stars_player1 = loss
+            session.stars_player2 = win
         else:
             session.winner_id = session.player1_id
-            session.stars_player1 = BATTLE_STARS_WIN
-            session.stars_player2 = 0
+            session.stars_player1 = win
+            session.stars_player2 = loss
         session.status = "finished"
         session.finished_at = datetime.now(UTC)
         self.db.commit()

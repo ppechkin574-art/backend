@@ -234,19 +234,16 @@ class LeaderboardPointsRepository:
         week_end_at: datetime,
         user_ids: list[UUID],
     ) -> list[tuple[UUID, int, datetime]]:
-        """Sum of `points_delta` inside the week window, per participant,
-        best first. Returns (user_id, points, last_scored_at).
+        """Sum of the sprint-test `points_delta` inside the week window, per
+        participant, best first. Returns (user_id, points, last_scored_at).
 
-        This — not `user_points.total_points` — is what "points this week"
-        means for the sprint. Deriving it from the audit log keeps the
-        all-time "Кубок" rating (`total_points`) completely untouched, so
-        the two leaderboards can coexist without one resetting the other.
-
-        Excludes `auto_reset` rows: those are the bookkeeping entries the
-        global reset job writes (a negative delta cancelling a balance),
-        not points anybody won or lost by playing. Rows are dropped once
-        the participant's net for the week is <= 0, so a purely negative
-        admin correction cannot put someone on the board.
+        SPRINT IS A SEPARATE CURRENCY: this counts ONLY `source_type =
+        'sprint_answer'` rows, so the weekly-sprint score is exactly what a
+        user earned in the sprint test this week — nothing else (ЕНТ tests,
+        trainers, battles) leaks in, and those in turn never touch the sprint.
+        `sprint_answer` rows are also written WITHOUT changing
+        `user_points.total_points`, so sprint play never inflates the all-time
+        "Кубок" either. The two ratings are fully independent.
 
         Ordering is by points desc, then by `last_scored_at` asc — whoever
         reached the score first ranks higher. That only decides DISPLAY
@@ -263,7 +260,7 @@ class LeaderboardPointsRepository:
                 FROM points_audit_log
                 WHERE created_at >= :week_start
                   AND created_at <  :week_end
-                  AND source_type <> 'auto_reset'
+                  AND source_type = 'sprint_answer'
                   AND user_id = ANY(:user_ids)
                 GROUP BY user_id
                 HAVING SUM(points_delta) > 0
@@ -512,6 +509,52 @@ class LeaderboardPointsRepository:
         )
 
     # ---------- sprint test: per-answer scoring (CRM #19) ----------
+
+    def record_sprint_answer_points(
+        self, user_id: UUID, points: int, source_id: str
+    ) -> bool:
+        """Credit sprint-test points as a SEPARATE currency. Writes a
+        `points_audit_log` row (source_type='sprint_answer') — that's what the
+        weekly sum + the per-answer idempotency read — but does NOT touch
+        `user_points.total_points`, so sprint play never inflates the all-time
+        «Кубок». `points_before == points_after` on purpose: the all-time total
+        is unchanged; `points_delta` carries the sprint award. Returns False
+        (nothing credited) when the user's points are admin-frozen.
+
+        Deliberately NOT routed through `UserPointsRepository.add_points`
+        (which bumps total_points and fires the shared winner hook) — sprint
+        scoring is isolated, and `SprintService.score_answer` runs the winner
+        check itself after crediting."""
+        from security.models import PointsAuditLog, UserRiskProfile
+
+        frozen = (
+            self.db.query(UserRiskProfile.points_frozen)
+            .filter(UserRiskProfile.user_id == user_id)
+            .scalar()
+        )
+        if frozen:
+            return False
+
+        total_row = (
+            self.db.query(UserPoints.total_points)
+            .filter(UserPoints.user_id == user_id)
+            .first()
+        )
+        total = total_row[0] if total_row else 0
+
+        self.db.add(
+            PointsAuditLog(
+                user_id=user_id,
+                points_before=total,
+                points_after=total,  # unchanged — sprint is a separate currency
+                points_delta=points,
+                source_type="sprint_answer",
+                source_id=source_id,
+                reason="Верный ответ в тесте спринта",
+                is_suspicious=False,
+            )
+        )
+        return True
 
     def sprint_answer_already_scored(
         self, user_id: UUID, week_start_at: datetime, source_id: str

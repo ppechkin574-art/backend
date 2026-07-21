@@ -633,6 +633,7 @@ async def get_weekly_standings(
         title_ru=data["title_ru"],
         title_kk=data["title_kk"],
         prize_amount=data["prize_amount"],
+        target_points=data["target_points"],
         week_start_at=data["week_start_at"],
         week_end_at=data["week_end_at"],
         participants_total=data["participants_total"],

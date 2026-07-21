@@ -163,6 +163,9 @@ class SprintService:
             "title_kk": settings.sprint_title_kk,
             "prize_amount": settings.sprint_prize_amount,
             "access_url": settings.sprint_access_url,
+            # Admin-set weekly goal (early-win threshold). Shown on the screen
+            # as «Цель недели: N ★»; null → no goal configured, nothing shown.
+            "target_points": settings.sprint_target_points,
             "week_start_at": week_start_at,
             "week_end_at": week_end_at,
             "participants_total": self.repo.count_participants(),
@@ -224,19 +227,27 @@ class SprintService:
                 user_id, week_start_at, source_id
             )
         ):
-            from quiz.repositories.user_points import UserPointsRepository
-
-            UserPointsRepository(self.repo.db).add_points(
-                user_id,
-                per_answer,
-                source_type="sprint_answer",
-                source_id=source_id,
-                reason="Верный ответ в тесте спринта",
-            )
-            awarded = per_answer
+            # Separate currency: writes the audit row WITHOUT touching
+            # total_points, so sprint play doesn't feed the global «Кубок».
+            if self.repo.record_sprint_answer_points(user_id, per_answer, source_id):
+                awarded = per_answer
+                # autoflush is off on this session, so push the new row out now
+                # — the weekly sum + winner check below must count this answer.
+                self.repo.db.flush()
 
         rows = self.repo.weekly_points(week_start_at, week_end_at, [user_id])
         week_points = rows[0][1] if rows else 0
+
+        # Threshold early-win. Sprint points no longer flow through add_points'
+        # shared hook, so the winner check runs here. Reuses the same gates
+        # (target / participant / hidden / partial-unique lock).
+        if awarded > 0:
+            from leaderboard_points.service import LeaderboardPointsService
+
+            LeaderboardPointsService(self.repo).check_and_lock_sprint_winner(
+                user_id, week_points
+            )
+
         return {"correct": correct, "awarded": awarded, "week_points": week_points}
 
     def capture_rank_snapshot(self, now: datetime | None = None) -> dict:

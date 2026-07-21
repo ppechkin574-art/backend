@@ -222,6 +222,9 @@ class WeeklyStandingsDTO(BaseModel):
     title_ru: str | None = None
     title_kk: str | None = None
     prize_amount: int | None = None
+    # Weekly goal (early-win threshold) the screen shows as «Цель недели: N ★».
+    # null when the admin hasn't set a threshold — the screen then shows nothing.
+    target_points: int | None = None
     week_start_at: datetime
     week_end_at: datetime
     participants_total: int

@@ -616,25 +616,22 @@ def test_is_participant_delegates_to_the_allowlist():
 def _answer_service(*, per_answer, correct_ids, already=False, weekly_after=None):
     repo = MagicMock()
     repo.get_or_create_settings.return_value = MagicMock(
-        sprint_points_per_answer=per_answer
+        sprint_points_per_answer=per_answer,
+        sprint_target_points=None,  # threshold off — winner check short-circuits
     )
     repo.correct_variant_ids.return_value = set(correct_ids)
     repo.sprint_answer_already_scored.return_value = already
+    repo.record_sprint_answer_points.return_value = True  # not frozen
     repo.weekly_points.return_value = weekly_after or []
     repo.db = MagicMock()
     return SprintService(repo), repo
 
 
-def test_correct_answer_awards_configured_points(monkeypatch):
+def test_correct_answer_awards_configured_points():
     player = uuid4()
     now = datetime.now(UTC)
     service, repo = _answer_service(
         per_answer=10, correct_ids=[7], weekly_after=[(player, 40, now)]
-    )
-    added = MagicMock()
-    monkeypatch.setattr(
-        "quiz.repositories.user_points.UserPointsRepository",
-        lambda _db: MagicMock(add_points=added),
     )
 
     result = service.score_answer(player, question_id=99, variant_ids=[7])
@@ -642,26 +639,36 @@ def test_correct_answer_awards_configured_points(monkeypatch):
     assert result["correct"] is True
     assert result["awarded"] == 10
     assert result["week_points"] == 40
-    added.assert_called_once()
+    # Credited through the ISOLATED sprint path, NOT the shared add_points
+    # (which would also bump the global total_points).
+    repo.record_sprint_answer_points.assert_called_once()
 
 
-def test_wrong_answer_awards_nothing(monkeypatch):
+def test_wrong_answer_awards_nothing():
     player = uuid4()
     service, repo = _answer_service(per_answer=10, correct_ids=[7])
-    added = MagicMock()
-    monkeypatch.setattr(
-        "quiz.repositories.user_points.UserPointsRepository",
-        lambda _db: MagicMock(add_points=added),
-    )
 
     result = service.score_answer(player, question_id=99, variant_ids=[3])
 
     assert result["correct"] is False
     assert result["awarded"] == 0
-    added.assert_not_called()
+    repo.record_sprint_answer_points.assert_not_called()
 
 
-def test_replayed_answer_is_not_scored_twice(monkeypatch):
+def test_frozen_user_earns_no_sprint_points():
+    """An admin-frozen user's correct answer credits nothing — the repo
+    returns False, so awarded stays 0 even though the answer was right."""
+    player = uuid4()
+    service, repo = _answer_service(per_answer=10, correct_ids=[7])
+    repo.record_sprint_answer_points.return_value = False  # frozen
+
+    result = service.score_answer(player, question_id=99, variant_ids=[7])
+
+    assert result["correct"] is True
+    assert result["awarded"] == 0
+
+
+def test_replayed_answer_is_not_scored_twice():
     """Anti-abuse: the same correct answer, resubmitted, earns nothing —
     a flaky-connection retry can't double-credit and neither can a farmer."""
     player = uuid4()
@@ -669,20 +676,15 @@ def test_replayed_answer_is_not_scored_twice(monkeypatch):
     service, repo = _answer_service(
         per_answer=10, correct_ids=[7], already=True, weekly_after=[(player, 10, now)]
     )
-    added = MagicMock()
-    monkeypatch.setattr(
-        "quiz.repositories.user_points.UserPointsRepository",
-        lambda _db: MagicMock(add_points=added),
-    )
 
     result = service.score_answer(player, question_id=99, variant_ids=[7])
 
     assert result["correct"] is True
     assert result["awarded"] == 0, "already scored this week"
-    added.assert_not_called()
+    repo.record_sprint_answer_points.assert_not_called()
 
 
-def test_per_attempt_scoring_uses_test_scoped_source_id(monkeypatch):
+def test_per_attempt_scoring_uses_test_scoped_source_id():
     """With a test_id the idempotency key AND the audit source_id are scoped to
     the attempt ("{test_id}:{question_id}"), so the same question in a new test
     scores again while a re-tap in the same test still can't double-credit."""
@@ -690,11 +692,6 @@ def test_per_attempt_scoring_uses_test_scoped_source_id(monkeypatch):
     now = datetime.now(UTC)
     service, repo = _answer_service(
         per_answer=10, correct_ids=[7], weekly_after=[(player, 10, now)]
-    )
-    added = MagicMock()
-    monkeypatch.setattr(
-        "quiz.repositories.user_points.UserPointsRepository",
-        lambda _db: MagicMock(add_points=added),
     )
 
     result = service.score_answer(
@@ -706,17 +703,13 @@ def test_per_attempt_scoring_uses_test_scoped_source_id(monkeypatch):
     # attempt-scoped source id, not the bare question id.
     already_args = repo.sprint_answer_already_scored.call_args
     assert "504:99" in (list(already_args.args) + list(already_args.kwargs.values()))
-    assert added.call_args.kwargs["source_id"] == "504:99"
+    rec_args = repo.record_sprint_answer_points.call_args
+    assert "504:99" in (list(rec_args.args) + list(rec_args.kwargs.values()))
 
 
-def test_answer_scoring_disabled_when_per_answer_zero(monkeypatch):
+def test_answer_scoring_disabled_when_per_answer_zero():
     player = uuid4()
     service, repo = _answer_service(per_answer=0, correct_ids=[7])
-    added = MagicMock()
-    monkeypatch.setattr(
-        "quiz.repositories.user_points.UserPointsRepository",
-        lambda _db: MagicMock(add_points=added),
-    )
     result = service.score_answer(player, question_id=99, variant_ids=[7])
     assert result["awarded"] == 0
-    added.assert_not_called()
+    repo.record_sprint_answer_points.assert_not_called()

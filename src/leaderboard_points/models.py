@@ -70,6 +70,11 @@ class LeaderboardPointsSettings(Base):
     sprint_title_ru = Column(String(120), nullable=True)
     sprint_title_kk = Column(String(120), nullable=True)
     sprint_prize_amount = Column(Integer, nullable=True)
+    # Where the "Купить доступ" button on the weekly-sprint screen sends a
+    # non-participant (CRM #19). Entry is granted by the admin, so this is
+    # just a link they control — a payment page, a WhatsApp chat, whatever.
+    # NULL means the button has nowhere to go and the client hides/disables it.
+    sprint_access_url = Column(String(500), nullable=True)
     updated_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),

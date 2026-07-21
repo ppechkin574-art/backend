@@ -43,6 +43,7 @@ class LeaderboardPointsRepository:
             "sprint_title_ru",
             "sprint_title_kk",
             "sprint_prize_amount",
+            "sprint_access_url",
         }
     )
     # Changing any of these restarts the auto-reset countdown; the sprint
@@ -294,6 +295,17 @@ class LeaderboardPointsRepository:
             .all()
         )
         return [r[0] for r in rows]
+
+    def is_participant(self, user_id: UUID) -> bool:
+        """Whether this user is on the allowlist — regardless of whether they
+        have scored. Drives the "Начать тест" vs "Купить доступ" button; `me`
+        alone can't, since a participant who hasn't scored yet has no row."""
+        return (
+            self.db.query(SprintParticipant.id)
+            .filter(SprintParticipant.user_id == user_id)
+            .first()
+            is not None
+        )
 
     def count_participants(self) -> int:
         """Size of the whole allowlist, including entries granted in

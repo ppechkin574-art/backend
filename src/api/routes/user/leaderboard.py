@@ -626,6 +626,8 @@ async def get_weekly_standings(
         week_end_at=data["week_end_at"],
         participants_total=data["participants_total"],
         finished=data["finished"],
+        is_participant=sprint_service.is_participant(user.id),
+        access_url=data["access_url"],
         me=me,
         entries=rows,
     )

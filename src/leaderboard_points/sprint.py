@@ -162,12 +162,16 @@ class SprintService:
             "title_ru": settings.sprint_title_ru,
             "title_kk": settings.sprint_title_kk,
             "prize_amount": settings.sprint_prize_amount,
+            "access_url": settings.sprint_access_url,
             "week_start_at": week_start_at,
             "week_end_at": week_end_at,
             "participants_total": self.repo.count_participants(),
             "finished": winner_row is not None,
             "entries": entries,
         }
+
+    def is_participant(self, user_id: UUID) -> bool:
+        return self.repo.is_participant(user_id)
 
     def capture_rank_snapshot(self, now: datetime | None = None) -> dict:
         """Record today's rank snapshot (movement-badge baseline). Called on

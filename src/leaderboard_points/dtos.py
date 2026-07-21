@@ -22,6 +22,7 @@ class LeaderboardPointsSettingsDTO(BaseModel):
     sprint_title_ru: str | None = None
     sprint_title_kk: str | None = None
     sprint_prize_amount: int | None = None
+    sprint_access_url: str | None = None
     updated_at: datetime
     updated_by: str | None = None
 
@@ -52,6 +53,8 @@ class LeaderboardPointsSettingsUpdateDTO(BaseModel):
     sprint_title_kk: str | None = Field(default=None, max_length=120)
     # Whole tenge. None/0 == no prize configured.
     sprint_prize_amount: int | None = Field(default=None, ge=0, le=1_000_000_000)
+    # Link the "Купить доступ" button opens. None clears it.
+    sprint_access_url: str | None = Field(default=None, max_length=500)
 
 
 class PointsAdjustDTO(BaseModel):
@@ -220,5 +223,11 @@ class WeeklyStandingsDTO(BaseModel):
     week_end_at: datetime
     participants_total: int
     finished: bool = False
+    # Whether the CALLER is on the allowlist — drives the bottom button:
+    # true → "Начать тест", false → "Купить доступ". Independent of `me`,
+    # which is null for a participant who simply hasn't scored yet.
+    is_participant: bool = False
+    # Admin-set link the "Купить доступ" button opens; null hides the button.
+    access_url: str | None = None
     me: SprintStandingEntryDTO | None = None
     entries: list[SprintStandingEntryDTO] = Field(default_factory=list)

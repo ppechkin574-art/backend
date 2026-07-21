@@ -92,6 +92,7 @@ def _to_dto(settings: LeaderboardPointsSettings) -> LeaderboardPointsSettingsDTO
         sprint_title_ru=settings.sprint_title_ru,
         sprint_title_kk=settings.sprint_title_kk,
         sprint_prize_amount=settings.sprint_prize_amount,
+        sprint_access_url=settings.sprint_access_url,
         updated_at=settings.updated_at,
         updated_by=settings.updated_by,
     )

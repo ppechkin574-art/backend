@@ -440,6 +440,7 @@ def test_settings_dto_returns_every_sprint_field_it_stores():
         sprint_title_ru="Еженедельный спринт",
         sprint_title_kk="Апталық спринт",
         sprint_prize_amount=50_000,
+        sprint_access_url="https://wa.me/77001234567",
         updated_at=_dt.now(UTC),
         updated_by="admin@aima.kz",
     )
@@ -450,6 +451,7 @@ def test_settings_dto_returns_every_sprint_field_it_stores():
     assert dto.sprint_title_ru == "Еженедельный спринт"
     assert dto.sprint_title_kk == "Апталық спринт"
     assert dto.sprint_prize_amount == 50_000
+    assert dto.sprint_access_url == "https://wa.me/77001234567"
 
 
 # --------------------------------------------------------------------
@@ -552,3 +554,26 @@ def test_latest_snapshot_ranks_builds_a_valid_query():
         _dt(2026, 7, 20, tzinfo=UTC), _dt(2026, 7, 22, tzinfo=UTC)
     )
     assert result == {}
+
+
+def test_ranked_standings_exposes_access_url_for_the_buy_button():
+    a = uuid4()
+    now = datetime(2026, 7, 22, 10, 0, tzinfo=UTC)
+    service, repo = _standings_service(
+        standings=[(a, 500, now)], participants=[a], prev_ranks={}
+    )
+    repo.get_or_create_settings.return_value = MagicMock(
+        sprint_prize_amount=50_000,
+        sprint_title_ru="Спринт",
+        sprint_title_kk="Спринт",
+        sprint_access_url="https://wa.me/77001234567",
+    )
+    assert service.ranked_standings(now)["access_url"] == "https://wa.me/77001234567"
+
+
+def test_is_participant_delegates_to_the_allowlist():
+    a = uuid4()
+    service, repo = _standings_service(standings=[], participants=[a], prev_ranks={})
+    repo.is_participant.return_value = True
+    assert service.is_participant(a) is True
+    repo.is_participant.assert_called_once_with(a)

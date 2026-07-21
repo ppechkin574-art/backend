@@ -18,6 +18,7 @@ from .referrals import router as referrals_router
 from .leaderboard_prizes import router as leaderboard_prizes_router
 from .daily_streak import router as daily_streak_router
 from .events import router as events_router
+from .coming_soon import router as coming_soon_router
 from .onboarding import router as onboarding_router
 
 routers = [
@@ -41,5 +42,6 @@ routers = [
     leaderboard_prizes_router,
     daily_streak_router,
     events_router,
+    coming_soon_router,
     onboarding_router,
 ]

@@ -650,12 +650,13 @@ async def submit_sprint_answer(
     question here, the server re-checks correctness against the stored
     variants and awards `sprint_points_per_answer` for a correct one.
 
-    Idempotent per question per week — replaying the same answer earns nothing
-    the second time — so the client can safely retry on a flaky connection
-    without double-crediting. Returns the running weekly total so the live
-    rank pill updates without a second call."""
+    Idempotent per (attempt, question) when `test_id` is sent — a fresh test
+    scores the same question again, but a re-tap inside one test can't
+    double-credit — falling back to per-week per-question for a legacy client.
+    Returns the running weekly total so the live rank pill updates without a
+    second call."""
     result = sprint_service.score_answer(
-        user.id, body.question_id, body.variant_ids
+        user.id, body.question_id, body.variant_ids, test_id=body.test_id
     )
     sprint_service.repo.db.commit()
     return SprintAnswerResultDTO(**result)

@@ -514,11 +514,13 @@ class LeaderboardPointsRepository:
     # ---------- sprint test: per-answer scoring (CRM #19) ----------
 
     def sprint_answer_already_scored(
-        self, user_id: UUID, week_start_at: datetime, question_id: int
+        self, user_id: UUID, week_start_at: datetime, source_id: str
     ) -> bool:
-        """True if this user already earned points for this question this week.
-        Anti-abuse: a correct answer is worth points once per question per
-        week, so re-submitting the same answer can't farm points."""
+        """True if this user already earned points for this [source_id] this
+        week. `source_id` is `"{test_id}:{question_id}"` for per-attempt scoring
+        (the same question in a new test isn't "already scored"), or just
+        `"{question_id}"` for the legacy per-week key. Guards against a re-tap /
+        flaky-retry double-crediting the same answer."""
         from security.models import PointsAuditLog
 
         return (
@@ -526,7 +528,7 @@ class LeaderboardPointsRepository:
             .filter(
                 PointsAuditLog.user_id == user_id,
                 PointsAuditLog.source_type == "sprint_answer",
-                PointsAuditLog.source_id == str(question_id),
+                PointsAuditLog.source_id == source_id,
                 PointsAuditLog.created_at >= week_start_at,
             )
             .first()

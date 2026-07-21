@@ -176,7 +176,11 @@ class SprintService:
     # ---------- sprint test: per-answer scoring ----------
 
     def score_answer(
-        self, user_id: UUID, question_id: int, variant_ids: list[int]
+        self,
+        user_id: UUID,
+        question_id: int,
+        variant_ids: list[int],
+        test_id: int | None = None,
     ) -> dict:
         """Award sprint points for one correct answer in the sprint test.
 
@@ -203,12 +207,18 @@ class SprintService:
         correct_ids = self.repo.correct_variant_ids(question_id)
         correct = bool(correct_ids) and set(variant_ids) == correct_ids
 
+        # Idempotency scope. With a test_id the key is (attempt, question) —
+        # a fresh test scores the same question again ("платить каждый тест"),
+        # while a re-tap inside the SAME test still can't double-credit. Without
+        # one (legacy client) it falls back to per-week per-question.
+        source_id = f"{test_id}:{question_id}" if test_id is not None else str(question_id)
+
         awarded = 0
         if (
             correct
             and per_answer > 0
             and not self.repo.sprint_answer_already_scored(
-                user_id, week_start_at, question_id
+                user_id, week_start_at, source_id
             )
         ):
             from quiz.repositories.user_points import UserPointsRepository
@@ -217,7 +227,7 @@ class SprintService:
                 user_id,
                 per_answer,
                 source_type="sprint_answer",
-                source_id=str(question_id),
+                source_id=source_id,
                 reason="Верный ответ в тесте спринта",
             )
             awarded = per_answer

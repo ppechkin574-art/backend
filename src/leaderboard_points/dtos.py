@@ -244,6 +244,11 @@ class SprintAnswerDTO(BaseModel):
     question_id: int
     variant_ids: list[int] = Field(default_factory=list)
 
+    # Attempt id (the sprint test id). Scoring is idempotent per (attempt,
+    # question) — a new test scores the same question again — instead of per
+    # week. null falls back to the legacy per-week idempotency.
+    test_id: int | None = None
+
 
 class SprintAnswerResultDTO(BaseModel):
     correct: bool

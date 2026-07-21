@@ -653,6 +653,33 @@ def test_replayed_answer_is_not_scored_twice(monkeypatch):
     added.assert_not_called()
 
 
+def test_per_attempt_scoring_uses_test_scoped_source_id(monkeypatch):
+    """With a test_id the idempotency key AND the audit source_id are scoped to
+    the attempt ("{test_id}:{question_id}"), so the same question in a new test
+    scores again while a re-tap in the same test still can't double-credit."""
+    player = uuid4()
+    now = datetime.now(UTC)
+    service, repo = _answer_service(
+        per_answer=10, correct_ids=[7], weekly_after=[(player, 10, now)]
+    )
+    added = MagicMock()
+    monkeypatch.setattr(
+        "quiz.repositories.user_points.UserPointsRepository",
+        lambda _db: MagicMock(add_points=added),
+    )
+
+    result = service.score_answer(
+        player, question_id=99, variant_ids=[7], test_id=504
+    )
+
+    assert result["awarded"] == 10
+    # Both the idempotency lookup and the written audit row are keyed by the
+    # attempt-scoped source id, not the bare question id.
+    already_args = repo.sprint_answer_already_scored.call_args
+    assert "504:99" in (list(already_args.args) + list(already_args.kwargs.values()))
+    assert added.call_args.kwargs["source_id"] == "504:99"
+
+
 def test_answer_scoring_disabled_when_per_answer_zero(monkeypatch):
     player = uuid4()
     service, repo = _answer_service(per_answer=0, correct_ids=[7])

@@ -44,6 +44,7 @@ class LeaderboardPointsRepository:
             "sprint_title_kk",
             "sprint_prize_amount",
             "sprint_access_url",
+            "sprint_points_per_answer",
         }
     )
     # Changing any of these restarts the auto-reset countdown; the sprint
@@ -509,3 +510,38 @@ class LeaderboardPointsRepository:
             .first()
             is not None
         )
+
+    # ---------- sprint test: per-answer scoring (CRM #19) ----------
+
+    def sprint_answer_already_scored(
+        self, user_id: UUID, week_start_at: datetime, question_id: int
+    ) -> bool:
+        """True if this user already earned points for this question this week.
+        Anti-abuse: a correct answer is worth points once per question per
+        week, so re-submitting the same answer can't farm points."""
+        from security.models import PointsAuditLog
+
+        return (
+            self.db.query(PointsAuditLog.id)
+            .filter(
+                PointsAuditLog.user_id == user_id,
+                PointsAuditLog.source_type == "sprint_answer",
+                PointsAuditLog.source_id == str(question_id),
+                PointsAuditLog.created_at >= week_start_at,
+            )
+            .first()
+            is not None
+        )
+
+    def correct_variant_ids(self, question_id: int) -> set[int]:
+        """The set of correct variant ids for a question — the sprint-test
+        endpoint checks the client's answer against this rather than trusting
+        a client-sent `correct` flag."""
+        from quiz.models.edu_content import Variant
+
+        rows = (
+            self.db.query(Variant.id)
+            .filter(Variant.question_id == question_id, Variant.is_correct.is_(True))
+            .all()
+        )
+        return {r[0] for r in rows}

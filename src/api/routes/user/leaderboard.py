@@ -18,6 +18,8 @@ from auth.dtos.users import UserDTO
 from clients.identity_provider import IdentityNotFound
 from clients.identity_provider.client import IdentityProviderClientKeycloak
 from leaderboard_points.dtos import (
+    SprintAnswerDTO,
+    SprintAnswerResultDTO,
     SprintStandingDTO,
     SprintStandingEntryDTO,
     SprintWinnerDTO,
@@ -631,3 +633,29 @@ async def get_weekly_standings(
         me=me,
         entries=rows,
     )
+
+
+@router.post(
+    "/weekly/answer",
+    response_model=SprintAnswerResultDTO,
+    summary="Еженедельный спринт — начислить очки за верный ответ в тесте",
+)
+async def submit_sprint_answer(
+    body: SprintAnswerDTO,
+    user: UserDTO = Depends(get_user),
+    sprint_service: SprintService = Depends(get_sprint_service),
+):
+    """Auth required. The sprint test credits points answer-by-answer (unlike
+    a normal ЕНТ test, one score at the end): the client posts each answered
+    question here, the server re-checks correctness against the stored
+    variants and awards `sprint_points_per_answer` for a correct one.
+
+    Idempotent per question per week — replaying the same answer earns nothing
+    the second time — so the client can safely retry on a flaky connection
+    without double-crediting. Returns the running weekly total so the live
+    rank pill updates without a second call."""
+    result = sprint_service.score_answer(
+        user.id, body.question_id, body.variant_ids
+    )
+    sprint_service.repo.db.commit()
+    return SprintAnswerResultDTO(**result)

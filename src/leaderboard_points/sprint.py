@@ -173,6 +173,59 @@ class SprintService:
     def is_participant(self, user_id: UUID) -> bool:
         return self.repo.is_participant(user_id)
 
+    # ---------- sprint test: per-answer scoring ----------
+
+    def score_answer(
+        self, user_id: UUID, question_id: int, variant_ids: list[int]
+    ) -> dict:
+        """Award sprint points for one correct answer in the sprint test.
+
+        Correctness is checked SERVER-SIDE against the question's variants —
+        the client's chosen variant ids are compared to the stored correct
+        set, never a client-sent "correct" flag, so the answer can't be
+        faked. Each question is worth points once per week (guarded by the
+        audit log), so replaying the same answer earns nothing the second
+        time.
+
+        Returns {correct, awarded, week_points}:
+          - correct: whether the answer was right;
+          - awarded: points actually added (0 if wrong, already scored, or
+            feature disabled);
+          - week_points: the user's running sprint total this week, so the
+            client can update the live rank pill without a second request.
+
+        Points go through the normal add_points funnel, so the threshold
+        winner hook fires here too — a sprint test can win the week early."""
+        now = datetime.now(UTC)
+        week_start_at, week_end_at = current_week_bounds_almaty(now)
+
+        per_answer = self.repo.get_or_create_settings().sprint_points_per_answer or 0
+        correct_ids = self.repo.correct_variant_ids(question_id)
+        correct = bool(correct_ids) and set(variant_ids) == correct_ids
+
+        awarded = 0
+        if (
+            correct
+            and per_answer > 0
+            and not self.repo.sprint_answer_already_scored(
+                user_id, week_start_at, question_id
+            )
+        ):
+            from quiz.repositories.user_points import UserPointsRepository
+
+            UserPointsRepository(self.repo.db).add_points(
+                user_id,
+                per_answer,
+                source_type="sprint_answer",
+                source_id=str(question_id),
+                reason="Верный ответ в тесте спринта",
+            )
+            awarded = per_answer
+
+        rows = self.repo.weekly_points(week_start_at, week_end_at, [user_id])
+        week_points = rows[0][1] if rows else 0
+        return {"correct": correct, "awarded": awarded, "week_points": week_points}
+
     def capture_rank_snapshot(self, now: datetime | None = None) -> dict:
         """Record today's rank snapshot (movement-badge baseline). Called on
         a schedule; only writes once per Almaty day thanks to the unique

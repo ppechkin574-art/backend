@@ -75,6 +75,10 @@ class LeaderboardPointsSettings(Base):
     # just a link they control — a payment page, a WhatsApp chat, whatever.
     # NULL means the button has nowhere to go and the client hides/disables it.
     sprint_access_url = Column(String(500), nullable=True)
+    # Points awarded per correct answer in the sprint test (CRM #19). Unlike a
+    # normal ЕНТ test — one score at the end — the sprint test credits points
+    # answer-by-answer, and this is how many. NULL/0 disables answer scoring.
+    sprint_points_per_answer = Column(Integer, nullable=True)
     updated_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),

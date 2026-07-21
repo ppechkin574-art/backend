@@ -23,6 +23,7 @@ class LeaderboardPointsSettingsDTO(BaseModel):
     sprint_title_kk: str | None = None
     sprint_prize_amount: int | None = None
     sprint_access_url: str | None = None
+    sprint_points_per_answer: int | None = None
     updated_at: datetime
     updated_by: str | None = None
 
@@ -55,6 +56,8 @@ class LeaderboardPointsSettingsUpdateDTO(BaseModel):
     sprint_prize_amount: int | None = Field(default=None, ge=0, le=1_000_000_000)
     # Link the "Купить доступ" button opens. None clears it.
     sprint_access_url: str | None = Field(default=None, max_length=500)
+    # Points per correct answer in the sprint test. None/0 disables scoring.
+    sprint_points_per_answer: int | None = Field(default=None, ge=0, le=10_000)
 
 
 class PointsAdjustDTO(BaseModel):
@@ -231,3 +234,18 @@ class WeeklyStandingsDTO(BaseModel):
     access_url: str | None = None
     me: SprintStandingEntryDTO | None = None
     entries: list[SprintStandingEntryDTO] = Field(default_factory=list)
+
+
+class SprintAnswerDTO(BaseModel):
+    """Client submits one answered sprint-test question. Correctness is
+    re-checked server-side against the stored variants — `variant_ids` is the
+    user's choice, not a trusted verdict."""
+
+    question_id: int
+    variant_ids: list[int] = Field(default_factory=list)
+
+
+class SprintAnswerResultDTO(BaseModel):
+    correct: bool
+    awarded: int
+    week_points: int

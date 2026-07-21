@@ -167,6 +167,9 @@ class SprintService:
             "week_end_at": week_end_at,
             "participants_total": self.repo.count_participants(),
             "finished": winner_row is not None,
+            # (user_id, points_at_win) of the early-win threshold winner, or
+            # None. The route resolves the name/avatar like any other row.
+            "winner": (winner_row[0], winner_row[1]) if winner_row else None,
             "entries": entries,
         }
 

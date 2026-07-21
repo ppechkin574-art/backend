@@ -486,6 +486,35 @@ def test_standings_are_ranked_one_based_best_first():
     assert [(uid, rank) for uid, _, rank, _ in entries] == [(a, 1), (b, 2), (c, 3)]
 
 
+def test_standings_expose_winner_and_finished_when_threshold_taken():
+    """When the week has an early threshold winner, ranked_standings marks
+    finished and names that winner (id + points) — even if someone else now
+    leads on points, the winner is the one who took the week."""
+    a, b = uuid4(), uuid4()
+    now = datetime(2026, 7, 22, 10, 0, tzinfo=UTC)
+    service, repo = _standings_service(
+        standings=[(b, 900, now), (a, 800, now)],  # b now leads on points
+        participants=[a, b],
+        prev_ranks={},
+    )
+    # ...but `a` took the early-win threshold at 800.
+    repo.get_current_sprint_winner_row.return_value = (a, 800, now)
+    data = service.ranked_standings(now)
+    assert data["finished"] is True
+    assert data["winner"] == (a, 800)
+
+
+def test_standings_have_no_winner_while_week_is_live():
+    a = uuid4()
+    now = datetime(2026, 7, 22, 10, 0, tzinfo=UTC)
+    service, _ = _standings_service(
+        standings=[(a, 500, now)], participants=[a], prev_ranks={}
+    )
+    data = service.ranked_standings(now)
+    assert data["finished"] is False
+    assert data["winner"] is None
+
+
 def test_delta_is_positive_when_a_user_climbs_since_the_morning():
     a, b = uuid4(), uuid4()
     now = datetime(2026, 7, 22, 10, 0, tzinfo=UTC)

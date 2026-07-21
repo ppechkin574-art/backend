@@ -593,6 +593,9 @@ async def get_weekly_standings(
     ids = [str(uid) for uid, _, _, _ in entries]
     if me_id not in ids:
         ids.append(me_id)  # resolve the caller too, even if off the list
+    winner_raw = data.get("winner")  # (user_id, points) | None
+    if winner_raw is not None and str(winner_raw[0]) not in ids:
+        ids.append(str(winner_raw[0]))  # resolve the winner even if off the top-N
 
     display_repo = UserDisplayRepository(session)
     snapshots = display_repo.bulk_get(ids)
@@ -620,6 +623,12 @@ async def get_weekly_standings(
     rows = [_entry(*e) for e in entries]
     me = next((r for r in rows if r.user_id == me_id), None)
 
+    winner = None
+    if winner_raw is not None:
+        w_uid, w_points = winner_raw
+        # rank 1 by definition — the winner is the person who took the week.
+        winner = _entry(w_uid, w_points, 1, None)
+
     return WeeklyStandingsDTO(
         title_ru=data["title_ru"],
         title_kk=data["title_kk"],
@@ -632,6 +641,7 @@ async def get_weekly_standings(
         access_url=data["access_url"],
         me=me,
         entries=rows,
+        winner=winner,
     )
 
 

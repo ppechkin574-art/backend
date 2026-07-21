@@ -234,6 +234,10 @@ class WeeklyStandingsDTO(BaseModel):
     access_url: str | None = None
     me: SprintStandingEntryDTO | None = None
     entries: list[SprintStandingEntryDTO] = Field(default_factory=list)
+    # Present only when `finished`: the locked-in weekly winner (the person who
+    # took the early-win threshold). NOT necessarily entries[0] — others may
+    # keep scoring past them — so the screen names the real winner from here.
+    winner: SprintStandingEntryDTO | None = None
 
 
 class SprintAnswerDTO(BaseModel):

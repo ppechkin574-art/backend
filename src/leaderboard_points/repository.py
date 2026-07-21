@@ -47,6 +47,7 @@ class LeaderboardPointsRepository:
             "sprint_points_per_answer",
             "sprint_start_at",
             "sprint_end_at",
+            "sprint_open_to_all",
         }
     )
     # Changing any of these restarts the auto-reset countdown; the sprint

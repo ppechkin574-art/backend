@@ -85,6 +85,12 @@ class LeaderboardPointsSettings(Base):
     # falls back to the current Almaty week (legacy default, pre-configuration).
     sprint_start_at = Column(DateTime(timezone=True), nullable=True)
     sprint_end_at = Column(DateTime(timezone=True), nullable=True)
+    # When true, the sprint is OPEN to everyone: `is_participant` returns true
+    # for any user, so the client shows «Начать тест» (free participation)
+    # instead of «Купить доступ»/«по приглашению», without touching the
+    # allowlist. Flip it off to go back to invite-only — the sprint_participants
+    # rows are untouched. Single admin rubilnik for paid/free access.
+    sprint_open_to_all = Column(Boolean, nullable=False, server_default="false")
     updated_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),

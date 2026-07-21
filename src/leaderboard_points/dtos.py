@@ -27,6 +27,8 @@ class LeaderboardPointsSettingsDTO(BaseModel):
     # Admin-defined sprint period. Both set → the sprint runs [start, end).
     sprint_start_at: datetime | None = None
     sprint_end_at: datetime | None = None
+    # True → sprint open to everyone (free participation), allowlist ignored.
+    sprint_open_to_all: bool = False
     updated_at: datetime
     updated_by: str | None = None
 
@@ -65,6 +67,8 @@ class LeaderboardPointsSettingsUpdateDTO(BaseModel):
     # (explicit null) falls the sprint back to the implicit current week.
     sprint_start_at: datetime | None = None
     sprint_end_at: datetime | None = None
+    # Open the sprint to everyone (free) vs invite-only allowlist.
+    sprint_open_to_all: bool | None = None
 
     @field_validator("sprint_end_at")
     @classmethod

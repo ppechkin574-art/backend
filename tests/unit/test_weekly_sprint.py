@@ -515,7 +515,8 @@ def _standings_service(*, standings, participants, prev_ranks, prize=50_000):
     repo.latest_snapshot_ranks.return_value = prev_ranks
     repo.get_current_sprint_winner_row.return_value = None
     repo.get_or_create_settings.return_value = MagicMock(
-        sprint_prize_amount=prize, sprint_title_ru="Спринт", sprint_title_kk="Спринт"
+        sprint_prize_amount=prize, sprint_title_ru="Спринт", sprint_title_kk="Спринт",
+        sprint_open_to_all=False,
     )
     service = SprintService(repo)
     service._eligible_user_ids = lambda: participants
@@ -654,6 +655,16 @@ def test_is_participant_delegates_to_the_allowlist():
     repo.is_participant.return_value = True
     assert service.is_participant(a) is True
     repo.is_participant.assert_called_once_with(a)
+
+
+def test_is_participant_open_to_all_bypasses_allowlist():
+    """sprint_open_to_all on → everyone is a participant (free sprint), the
+    allowlist is not even consulted."""
+    service, repo = _standings_service(standings=[], participants=[], prev_ranks={})
+    repo.get_or_create_settings.return_value.sprint_open_to_all = True
+    repo.is_participant.return_value = False  # not on the allowlist
+    assert service.is_participant(uuid4()) is True
+    repo.is_participant.assert_not_called()
 
 
 # --------------------------------------------------------------------

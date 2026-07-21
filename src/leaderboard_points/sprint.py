@@ -179,6 +179,10 @@ class SprintService:
         }
 
     def is_participant(self, user_id: UUID) -> bool:
+        # Admin "open to all" rubilnik: when on, the sprint is free for
+        # everyone and the allowlist is bypassed (rows kept for later).
+        if self.repo.get_or_create_settings().sprint_open_to_all:
+            return True
         return self.repo.is_participant(user_id)
 
     # ---------- sprint test: per-answer scoring ----------

@@ -109,6 +109,7 @@ class EntAttemptRepository:
             "exam_type",
             "subject_combination_id",
             "full_exam_question_ids",
+            "is_sprint",
         }
         filtered = {k: v for k, v in raw.items() if k in allowed and v is not None}
         if "score" not in filtered:
@@ -166,6 +167,8 @@ class EntAttemptRepository:
                     EntAttempt.student_guid == student_guid,
                     EntAttempt.exam_type == ExamType.full_exam,
                     EntAttempt.subject_combination_id == subject_combination_id,
+                    # Never resume a sprint attempt as a normal ЕНТ exam.
+                    EntAttempt.is_sprint.is_(False),
                 )
             )
             .scalars()
@@ -629,7 +632,7 @@ class EntAttemptRepository:
         """Получить все завершенные попытки ЕНТ за период"""
         from sqlalchemy.orm import joinedload
 
-        additional_filters = []
+        additional_filters = [EntAttempt.is_sprint.is_(False)]
         if not exam_type:
             additional_filters.append(EntAttempt.exam_type == exam_type)
 
@@ -646,14 +649,18 @@ class EntAttemptRepository:
         )
 
     def get_all_attempts_for_student(self, student_guid: UUID, limit: int | None = None) -> list[EntAttempt]:
-        """Получить все попытки студента (история)"""
+        """Получить все попытки студента (история). Спринт-попытки исключены —
+        это отдельный флоу, не ЕНТ-история."""
         query = (
             self._session.query(EntAttempt)
             .options(
                 joinedload(EntAttempt.options).joinedload(EntOption.subject),
                 joinedload(EntAttempt.subject_combination),
             )
-            .filter(EntAttempt.student_guid == student_guid)
+            .filter(
+                EntAttempt.student_guid == student_guid,
+                EntAttempt.is_sprint.is_(False),
+            )
             .order_by(EntAttempt.started_at.desc())
         )
 

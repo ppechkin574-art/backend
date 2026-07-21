@@ -80,6 +80,12 @@ class EntAttempt(Base):
     # предотвращает двойное начисление при гонке конкурентных запросов.
     points_awarded = Column(Boolean, default=False, nullable=False, server_default="false")
 
+    # True for the weekly-sprint test. Keeps sprint attempts out of the normal
+    # ЕНТ active-attempt resume pool (so a regular ҰБТ can't pick up a leftover
+    # sprint attempt) and out of completed history/stats — the sprint is a
+    # separate flow that just reuses the full-exam engine.
+    is_sprint = Column(Boolean, default=False, nullable=False, server_default="false")
+
     options = relationship(EntOption, back_populates="attempts", passive_deletes=True)
     subject_combination = relationship(
         "EntSubjectCombination",

@@ -65,6 +65,7 @@ class EntAttemptCreateServiceDTO(BaseModel):
     subject_combination_id: int | None = None
     current_question_index: int = 0
     full_exam_question_ids: str | None = None
+    is_sprint: bool = False
 
 
 class EntAttemptCreateRepositoryDTO(BaseModel):
@@ -79,6 +80,7 @@ class EntAttemptCreateRepositoryDTO(BaseModel):
     subject_combination_id: int | None = None
     current_question_index: int = 0
     full_exam_question_ids: str | None = None
+    is_sprint: bool = False
 
 
 class EntAttemptRepositoryDTO(BaseModel):

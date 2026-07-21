@@ -288,9 +288,12 @@ async def create_sprint_exam_attempt(
         exam_type=ExamType.full_exam,
         subject_combination_id=exam_data.subject_combination_id,
         started_at=datetime.now(UTC),
+        is_sprint=True,
     )
     # force_new: never resume an active attempt — every sprint launch is a
     # fresh test_id so «платить каждый тест» holds even for the same subjects.
+    # is_sprint marks the row so a normal ЕНТ can't resume it and it stays out
+    # of ЕНТ history/stats.
     return service.create(attempt_params, locale=locale, force_new=True)
 
 

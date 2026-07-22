@@ -305,6 +305,25 @@ class LeaderboardPointsRepository:
         ).all()
         return [(r[0], int(r[1]), r[2]) for r in rows]
 
+    def sprint_scorer_ids(
+        self, week_start_at: datetime, week_end_at: datetime
+    ) -> list[UUID]:
+        """Everyone who earned any sprint points inside the week window,
+        regardless of the allowlist. Used in open-to-all mode, where the
+        standings must include every real competitor — not only enrolled
+        users — so a non-allowlisted player who's leading is still shown."""
+        rows = self.db.execute(
+            text("""
+                SELECT DISTINCT user_id
+                FROM points_audit_log
+                WHERE created_at >= :week_start
+                  AND created_at <  :week_end
+                  AND source_type = 'sprint_answer'
+            """),
+            {"week_start": week_start_at, "week_end": week_end_at},
+        ).all()
+        return [r[0] for r in rows]
+
     # ---------- participants allowlist (CRM #19) ----------
 
     def list_participants(self) -> list[SprintParticipant]:

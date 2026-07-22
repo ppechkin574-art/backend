@@ -149,22 +149,42 @@ class SprintService:
 
     # ---------- live standings ----------
 
-    def _eligible_user_ids(self) -> list[UUID]:
-        """Allowlisted users who have an account and are not hidden from
-        the leaderboard."""
+    def _eligible_user_ids(
+        self,
+        week_start_at: datetime | None = None,
+        week_end_at: datetime | None = None,
+    ) -> list[UUID]:
+        """Users who count in the standings, minus the leaderboard hide-list.
+
+        Allowlist mode: exactly the allowlisted accounts. Open-to-all mode
+        (`sprint_open_to_all`): the allowlist is BYPASSED — so the field is
+        everyone who has actually scored in the sprint this week, unioned with
+        anyone already enrolled. Without the union, a player who competed under
+        "open to all" but isn't on the admin allowlist would be invisible in
+        the very standings they're leading. Needs the week window to find this
+        week's scorers; callers that have it pass it in."""
         from quiz.repositories.leaderboard_hidden import LeaderboardHiddenRepository
 
         hidden = set(LeaderboardHiddenRepository(self.repo.db).get_all())
-        return [u for u in self.repo.participant_user_ids() if str(u) not in hidden]
+        ids = set(self.repo.participant_user_ids())
+        if (
+            self.repo.get_or_create_settings().sprint_open_to_all
+            and week_start_at is not None
+            and week_end_at is not None
+        ):
+            ids |= set(self.repo.sprint_scorer_ids(week_start_at, week_end_at))
+        return [u for u in ids if str(u) not in hidden]
 
     def standings(
         self, week_start_at: datetime, week_end_at: datetime
     ) -> list[tuple[UUID, int, datetime]]:
         """(user_id, points, last_scored_at), best first, for the given
-        week window. Empty when nobody is allowlisted — which is exactly
-        what an unconfigured sprint should look like."""
+        week window. Empty when nobody is eligible — which is exactly what an
+        unconfigured sprint should look like."""
         return self.repo.weekly_points(
-            week_start_at, week_end_at, self._eligible_user_ids()
+            week_start_at,
+            week_end_at,
+            self._eligible_user_ids(week_start_at, week_end_at),
         )
 
     def ranked_standings(
@@ -181,16 +201,17 @@ class SprintService:
         moved up. None when there's no earlier snapshot (first day of the
         week), so the client shows no badge rather than a fake zero.
 
-        When `me_id` is given, the caller is pulled OUT of `entries` and
-        returned separately as `me` (with the caller's true rank/delta) — the
-        screen pins «вы» on its own, so leaving the row in the list too would
-        show the caller twice. `me` is resolved from the FULL ranking, so a
-        caller ranked below `limit` still gets their real position rather than
-        vanishing."""
+        `entries` is the FULL ranked field (the caller INCLUDED — so the caller
+        appears on the podium when they're in the top 3). When `me_id` is given
+        the caller's own row is ALSO returned as `me` (same rank/delta) so the
+        screen can pin it when the caller is off the visible list; the screen is
+        responsible for not rendering the caller twice. `me` is computed from
+        the full ranking, so a caller ranked below `limit` (and thus absent from
+        `entries`) still gets their real position."""
         now = now or datetime.now(UTC)
         settings = self.repo.get_or_create_settings()
         week_start_at, week_end_at = sprint_bounds(settings, now)
-        eligible = self._eligible_user_ids()
+        eligible = self._eligible_user_ids(week_start_at, week_end_at)
         rows = self.repo.weekly_points(week_start_at, week_end_at, eligible)
 
         # Show ALL participants, not only scorers: someone who joined the
@@ -205,9 +226,9 @@ class SprintService:
         day_start = current_day_start_almaty(now)
         prev_ranks = self.repo.latest_snapshot_ranks(week_start_at, day_start)
 
-        # Rank over the FULL field so ranks and the caller's own position are
-        # correct even past `limit`; the caller is split out into `me` and the
-        # public list is capped at `limit`.
+        # Rank over the FULL field so ranks are correct even past `limit`. The
+        # caller stays IN `entries` (they belong on the podium/list at their
+        # real rank) and is ALSO surfaced as `me` for the off-list pinned row.
         entries = []
         me_entry = None
         for i, (user_id, points, _) in enumerate(rows):
@@ -216,10 +237,18 @@ class SprintService:
             delta = (prev - rank) if prev is not None else None
             row = (user_id, points, rank, delta)
             if me_id is not None and user_id == me_id:
-                me_entry = row  # caller pinned separately, never inside the list
-                continue
+                me_entry = row
             if len(entries) < limit:
                 entries.append(row)
+
+        # "из N": in open-to-all the phone allowlist is bypassed, so the field
+        # is the real competitors (eligible), not admin-granted phone rows that
+        # may never register; in allowlist mode it's everyone admitted.
+        participants_total = (
+            len(eligible)
+            if settings.sprint_open_to_all
+            else self.repo.count_participants()
+        )
 
         winner, finished = self._resolve_finish(week_start_at, week_end_at, now)
         return {
@@ -232,7 +261,7 @@ class SprintService:
             "target_points": settings.sprint_target_points,
             "week_start_at": week_start_at,
             "week_end_at": week_end_at,
-            "participants_total": self.repo.count_participants(),
+            "participants_total": participants_total,
             # finished = won early OR the period has ended. `winner` is
             # (user_id, points) only once finished; live it's null (the top of
             # `entries` is the current leader). The route resolves the name.
@@ -397,7 +426,9 @@ class SprintService:
             if self.repo.snapshot_exists_for_day(week_start_at, day_start):
                 return {"ran": False, "reason": "already_captured_today"}
             rows = self.repo.weekly_points(
-                week_start_at, week_end_at, self._eligible_user_ids()
+                week_start_at,
+                week_end_at,
+                self._eligible_user_ids(week_start_at, week_end_at),
             )
             if not rows:
                 return {"ran": False, "reason": "no_scorers"}
@@ -422,13 +453,21 @@ class SprintService:
 
         leader, finished = self._resolve_finish(week_start_at, week_end_at, now)
 
+        # "из N": open-to-all counts real competitors (allowlist bypassed);
+        # allowlist mode counts everyone admitted. Same rule as ranked_standings.
+        participants_total = (
+            len(self._eligible_user_ids(week_start_at, week_end_at))
+            if settings.sprint_open_to_all
+            else self.repo.count_participants()
+        )
+
         return {
             "title_ru": settings.sprint_title_ru,
             "title_kk": settings.sprint_title_kk,
             "prize_amount": settings.sprint_prize_amount,
             "week_start_at": week_start_at,
             "week_end_at": week_end_at,
-            "participants_total": self.repo.count_participants(),
+            "participants_total": participants_total,
             "leader": leader,
             "finished": finished,
         }

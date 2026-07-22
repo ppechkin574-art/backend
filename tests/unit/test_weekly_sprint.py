@@ -112,6 +112,7 @@ def _service(*, standings=None, participants=None, has_winner=False, prize=None)
         sprint_target_points=None,
         sprint_title_ru="Еженедельный спринт",
         sprint_title_kk="Апталық спринт",
+        sprint_open_to_all=False,
     )
     repo.get_current_sprint_winner_row.return_value = None
     repo.record_week_winners.return_value = 1
@@ -120,7 +121,8 @@ def _service(*, standings=None, participants=None, has_winner=False, prize=None)
     service = SprintService(repo)
     # _eligible_user_ids consults the leaderboard hide-list through the
     # session; stub it out — hide-list behaviour is covered by CRM #7 tests.
-    service._eligible_user_ids = lambda: participants or []
+    # Accepts the optional week bounds the real method now takes.
+    service._eligible_user_ids = lambda *a, **k: participants or []
     return service, repo
 
 
@@ -519,7 +521,7 @@ def _standings_service(*, standings, participants, prev_ranks, prize=50_000):
         sprint_open_to_all=False,
     )
     service = SprintService(repo)
-    service._eligible_user_ids = lambda: participants
+    service._eligible_user_ids = lambda *a, **k: participants
     return service, repo
 
 
@@ -663,6 +665,70 @@ def test_ranked_standings_exposes_access_url_for_the_buy_button():
         sprint_access_url="https://wa.me/77001234567",
     )
     assert service.ranked_standings(now)["access_url"] == "https://wa.me/77001234567"
+
+
+def test_caller_stays_in_entries_and_is_also_returned_as_me():
+    """Regression (podium): the caller belongs ON the podium/list at their real
+    rank (kept in `entries`) AND is surfaced as `me`. Dropping them from
+    `entries` used to empty the podium when the caller was the only scorer."""
+    now = datetime.now(UTC)
+    me, other = uuid4(), uuid4()
+    service, _ = _standings_service(
+        standings=[(me, 50, now), (other, 20, now)],
+        participants=[me, other],
+        prev_ranks={},
+    )
+    data = service.ranked_standings(now, me_id=me)
+    entry_ids = [e[0] for e in data["entries"]]
+    assert me in entry_ids, "caller must remain in the ranked entries (podium)"
+    assert data["me"] is not None
+    assert data["me"][0] == me and data["me"][2] == 1  # (user_id, points, rank)
+
+
+def test_open_to_all_includes_non_allowlisted_scorers_and_counts_them(monkeypatch):
+    """Open-to-all bypasses the allowlist: a player who scored but isn't
+    enrolled still appears in the standings, and «из N» counts real competitors
+    (eligible) rather than the admin phone allowlist."""
+    import quiz.repositories.leaderboard_hidden as lh
+
+    monkeypatch.setattr(
+        lh, "LeaderboardHiddenRepository", lambda _db: MagicMock(get_all=lambda: [])
+    )
+    now = datetime.now(UTC)
+    enrolled, walkin = uuid4(), uuid4()
+    pts = {walkin: 40, enrolled: 10}
+
+    repo = MagicMock()
+    repo.get_or_create_settings.return_value = MagicMock(
+        sprint_open_to_all=True,
+        sprint_prize_amount=None,
+        sprint_title_ru="",
+        sprint_title_kk="",
+        sprint_access_url=None,
+        sprint_target_points=None,
+        sprint_start_at=None,
+        sprint_end_at=None,
+    )
+    repo.participant_user_ids.return_value = [enrolled]  # allowlist has only one
+    repo.sprint_scorer_ids.return_value = [walkin, enrolled]
+    repo.latest_snapshot_ranks.return_value = {}
+    repo.get_current_sprint_winner_row.return_value = None
+    repo.list_winners_for_week.return_value = []
+    repo.count_participants.return_value = 1  # must NOT be used in open-to-all
+
+    def _weekly(_ws, _we, ids):
+        return sorted(
+            ((u, pts[u], now) for u in ids if u in pts), key=lambda r: -r[1]
+        )
+
+    repo.weekly_points.side_effect = _weekly
+
+    data = SprintService(repo).ranked_standings(now, me_id=enrolled)
+
+    entry_ids = [e[0] for e in data["entries"]]
+    assert walkin in entry_ids, "non-allowlisted scorer must be shown"
+    assert entry_ids[0] == walkin, "higher scorer ranks first"
+    assert data["participants_total"] == 2, "counts real competitors, not the allowlist"
 
 
 def test_is_participant_delegates_to_the_allowlist():

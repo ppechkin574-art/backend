@@ -678,3 +678,25 @@ async def submit_sprint_answer(
     )
     sprint_service.repo.db.commit()
     return SprintAnswerResultDTO(**result)
+
+
+class SprintJoinResult(BaseModel):
+    is_participant: bool
+
+
+@router.post(
+    "/weekly/join",
+    response_model=SprintJoinResult,
+    summary="Еженедельный спринт — самозапись (кнопка «Участвовать»)",
+)
+async def join_sprint(
+    user: UserDTO = Depends(get_user),
+    sprint_service: SprintService = Depends(get_sprint_service),
+):
+    """Auth required. Self-enroll into the sprint (join-based access): adds the
+    caller to the participant list so they show in the standings (0★ until
+    they score) and the button flips to «Начать тест». Idempotent — calling it
+    again when already a participant is a no-op."""
+    sprint_service.join(user.id, phone=user.phone)
+    sprint_service.repo.db.commit()
+    return SprintJoinResult(is_participant=True)

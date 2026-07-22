@@ -535,6 +535,22 @@ def test_standings_are_ranked_one_based_best_first():
     assert [(uid, rank) for uid, _, rank, _ in entries] == [(a, 1), (b, 2), (c, 3)]
 
 
+def test_standings_include_joined_participants_at_zero():
+    """A participant who joined but hasn't scored yet shows at the bottom with
+    0★ (join-based access — visible the moment they join, not only on score)."""
+    a, b = uuid4(), uuid4()
+    now = datetime(2026, 7, 22, 10, 0, tzinfo=UTC)
+    service, _ = _standings_service(
+        standings=[(a, 500, now)],  # only `a` scored
+        participants=[a, b],  # `b` joined, no score yet
+        prev_ranks={},
+    )
+    entries = service.ranked_standings(now)["entries"]
+    by_uid = {uid: (pts, rank) for uid, pts, rank, _ in entries}
+    assert by_uid[a] == (500, 1)
+    assert by_uid[b] == (0, 2)  # joined → 0★, at the bottom
+
+
 def test_standings_expose_winner_and_finished_when_threshold_taken():
     """When the week has an early threshold winner, ranked_standings marks
     finished and names that winner (id + points) — even if someone else now

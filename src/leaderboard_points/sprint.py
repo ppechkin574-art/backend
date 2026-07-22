@@ -144,9 +144,17 @@ class SprintService:
         now = now or datetime.now(UTC)
         settings = self.repo.get_or_create_settings()
         week_start_at, week_end_at = sprint_bounds(settings, now)
-        rows = self.repo.weekly_points(
-            week_start_at, week_end_at, self._eligible_user_ids()
-        )
+        eligible = self._eligible_user_ids()
+        rows = self.repo.weekly_points(week_start_at, week_end_at, eligible)
+
+        # Show ALL participants, not only scorers: someone who joined the
+        # sprint but hasn't answered correctly yet appears at the bottom with
+        # 0★ (access is join-based — a participant must be visible the moment
+        # they join). weekly_points returns scorers best-first; append the
+        # zero-score participants after them, keeping the allowlist order.
+        scored_ids = {r[0] for r in rows}
+        zeros = [(uid, 0, None) for uid in eligible if uid not in scored_ids]
+        rows = list(rows) + zeros
 
         day_start = current_day_start_almaty(now)
         prev_ranks = self.repo.latest_snapshot_ranks(week_start_at, day_start)
@@ -184,6 +192,27 @@ class SprintService:
         if self.repo.get_or_create_settings().sprint_open_to_all:
             return True
         return self.repo.is_participant(user_id)
+
+    def join(self, user_id: UUID, phone: str | None = None) -> None:
+        """Self-enroll the current user into the sprint (join-based access —
+        the «Участвовать» button). Idempotent: already a participant → no-op.
+
+        If the admin granted this phone entry in advance (user_id NULL), link
+        it to the account instead of creating a duplicate row — that is the
+        same backfill the phone would get on first score, done eagerly here so
+        the person joins their own pre-granted slot."""
+        if self.repo.is_participant(user_id):
+            return
+        if phone:
+            existing = self.repo.get_participant_by_phone(phone)
+            if existing is not None and existing.user_id is None:
+                self.repo.set_participant_user_id(existing.id, user_id)
+                return
+        self.repo.add_participant(
+            phone_number=phone or f"self:{user_id}",
+            user_id=user_id,
+            added_by_display="self",
+        )
 
     # ---------- sprint test: per-answer scoring ----------
 

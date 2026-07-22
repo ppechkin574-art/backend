@@ -31,10 +31,12 @@ from api.dependencies import (
     get_redis,
     get_subscription_service,
     get_user,
+    get_user_points_repository,
 )
 from security.geo_service import get_client_ip
 from auth.deletion_models import DELETION_GRACE_DAYS, AccountDeletionRequest
 from payments.models import Payment
+from quiz.repositories.user_points import UserPointsRepository
 from subscription.service import SubscriptionService
 from api.middlewares.rate_limit import limiter
 from api.middlewares.sms_quota import check_sms_quota, record_sms_request
@@ -320,6 +322,7 @@ async def registration_complete(
     service: AuthService = Depends(get_auth_service),
     subscription_service: SubscriptionService = Depends(get_subscription_service),
     app_settings: AppSettingsService = Depends(get_app_settings_service),
+    points_repo: UserPointsRepository = Depends(get_user_points_repository),
 ):
     """Complete registration after code verification"""
     log_info(
@@ -346,6 +349,17 @@ async def registration_complete(
         except Exception:
             logger.exception(
                 "Trial reconcile failed (non-fatal) after registration"
+            )
+
+        # Give every new user an immediate 0-point row so they show up in the
+        # global leaderboard right away instead of only after their first
+        # points-earning action. Best-effort — must never break registration.
+        try:
+            _points_user = service.get_user_from_token(tokens.access_token)
+            points_repo.ensure_user_row(_points_user.id)
+        except Exception:
+            logger.exception(
+                "Leaderboard row init failed (non-fatal) after registration"
             )
 
         # Telegram admin-channel notification — best-effort, never breaks registration.
@@ -521,6 +535,7 @@ async def oauth_callback(
     error: str | None = Query(None),
     auth_service: AuthService = Depends(get_auth_service),
     redis: Redis = Depends(get_redis),
+    points_repo: UserPointsRepository = Depends(get_user_points_repository),
 ):
     """OAuth callback endpoint"""
     try:
@@ -620,6 +635,18 @@ async def oauth_callback(
             raise HTTPException(status_code=400, detail="State provider mismatch")
 
         tokens = auth_service.login_via_oauth(code, provider)
+
+        # Same 0-point leaderboard-row init as the code-based registration
+        # path (see registration_complete) — idempotent, so this is a no-op
+        # for a returning user who already has a row. Best-effort — must
+        # never break an otherwise-successful OAuth login.
+        try:
+            _oauth_user = auth_service.get_user_from_token(tokens.access_token)
+            points_repo.ensure_user_row(_oauth_user.id)
+        except Exception:
+            logger.exception(
+                "Leaderboard row init failed (non-fatal) after OAuth login"
+            )
 
         log_info(
             "OAuth login successful",

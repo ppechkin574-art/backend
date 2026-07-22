@@ -305,12 +305,6 @@ def get_subscription_service(
     return SubscriptionService(auth_service, database)
 
 
-def get_user_points_repository(
-    db_session: Session = Depends(get_db_session),
-) -> UserPointsRepository:
-    return UserPointsRepository(db_session)
-
-
 # def get_user_with_subscription_check(
 #     token: str = Depends(oauth2_scheme),
 #     auth_service: AuthServiceInterface = Depends(get_auth_service),

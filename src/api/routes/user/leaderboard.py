@@ -1,7 +1,7 @@
 import re
 from datetime import datetime, timedelta, timezone, UTC
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -13,7 +13,9 @@ from api.dependencies import (
     get_leaderboard_points_service,
     get_sprint_service,
     get_user,
+    require_not_restricted,
 )
+from api.middlewares.rate_limit import limiter
 from auth.dtos.users import UserDTO
 from clients.identity_provider import IdentityNotFound
 from clients.identity_provider.client import IdentityProviderClientKeycloak
@@ -22,7 +24,6 @@ from leaderboard_points.dtos import (
     SprintAnswerResultDTO,
     SprintStandingDTO,
     SprintStandingEntryDTO,
-    SprintWinnerDTO,
     WeeklySprintCardDTO,
     WeeklyStandingsDTO,
 )
@@ -120,18 +121,6 @@ class MyRankEntry(BaseModel):
     # shows «Скоро новые цели» when disabled or target is None/0.
     reward_enabled: bool = False
     reward_target_points: int | None = None
-
-
-class SprintStatusEntry(BaseModel):
-    """Response shape for GET /leaderboard/sprint (CRM task #7,
-    "Еженедельный спринт"). Always a 200 with this shape — never a 404
-    — so the mobile client doesn't need a special "not configured"
-    error path: `target_points`/`week_start_at`/`winner` are simply
-    null when the admin hasn't configured a sprint threshold yet."""
-
-    target_points: int | None
-    week_start_at: datetime | None
-    winner: SprintWinnerDTO | None
 
 
 def _resolve_avatar(raw_avatar: str | None, file_service: FileService) -> str | None:
@@ -468,66 +457,6 @@ async def get_my_rank(
 
 
 @router.get(
-    "/sprint",
-    response_model=SprintStatusEntry,
-    summary="Статус недельного спринта (цель + текущий победитель)",
-)
-async def get_sprint_status(
-    session: Session = Depends(get_db_session),
-    idp: IdentityProviderClientKeycloak = Depends(get_identity_provider_client_keycloak),
-    file_service: FileService = Depends(get_file_service),
-    cache: CacheService = Depends(get_cache_service),
-    lb_points_service: LeaderboardPointsService = Depends(get_leaderboard_points_service),
-):
-    """Public, no auth (CRM task #7 — "Еженедельный спринт"): the first
-    user each week to reach the admin-configured `sprint_target_points`
-    threshold is locked in as that week's winner. The lock itself
-    happens inline in `UserPointsRepository.add_points` (every
-    points-award path: ЕНТ full-exam, battle wins, referral/payment
-    rewards) via `LeaderboardPointsService.check_and_lock_sprint_winner`
-    — this endpoint only reads the result.
-
-    Always returns 200 with this shape, never 404 — `target_points` /
-    `week_start_at` / `winner` are simply null when the sprint feature
-    hasn't been configured yet, so the mobile client has one shape to
-    render instead of a separate "not configured" error path.
-
-    Winner name/avatar resolution reuses the exact same user_display
-    snapshot + Keycloak-fallback mechanism `GET /leaderboard` and
-    `GET /leaderboard/me` already use (`_resolve_display`), not a
-    second lookup.
-    """
-    target_points, week_start_at, winner_row = lb_points_service.get_sprint_status_raw()
-    if target_points is None:
-        return SprintStatusEntry(target_points=None, week_start_at=None, winner=None)
-
-    winner: SprintWinnerDTO | None = None
-    if winner_row is not None:
-        winner_user_id, points_at_win, won_at = winner_row
-        display_repo = UserDisplayRepository(session)
-        snapshots = display_repo.bulk_get([str(winner_user_id)])
-        display, wrote = _resolve_display(
-            str(winner_user_id), snapshots, idp, cache, display_repo
-        )
-        if wrote:
-            _commit_backfill(session)
-        name, raw_avatar = display if display is not None else ("Пользователь", None)
-        winner = SprintWinnerDTO(
-            user_id=str(winner_user_id),
-            name=name,
-            avatar_url=_resolve_avatar(raw_avatar, file_service),
-            points_at_win=points_at_win,
-            won_at=won_at,
-        )
-
-    return SprintStatusEntry(
-        target_points=target_points,
-        week_start_at=week_start_at,
-        winner=winner,
-    )
-
-
-@router.get(
     "/weekly",
     response_model=WeeklySprintCardDTO,
     summary="Еженедельный спринт — данные для карточки на Главной",
@@ -616,13 +545,17 @@ async def get_weekly_standings(
 
     Names and avatars resolve through the same `_resolve_display` chain as the
     rest of the leaderboard."""
-    data = sprint_service.ranked_standings()
-    entries = data["entries"]  # [(user_id, points, rank, delta)]
+    # me_id lets the service split the caller out of the ranked list and hand
+    # it back as `me` at its true rank — so «вы» is pinned once, never also
+    # duplicated inside the list, and is present even when the caller ranks
+    # below the top-N cutoff.
+    data = sprint_service.ranked_standings(me_id=user.id)
+    entries = data["entries"]  # [(user_id, points, rank, delta)] — excludes me
+    me_raw = data["me"]  # (user_id, points, rank, delta) | None
 
-    me_id = str(user.id)
     ids = [str(uid) for uid, _, _, _ in entries]
-    if me_id not in ids:
-        ids.append(me_id)  # resolve the caller too, even if off the list
+    if me_raw is not None:
+        ids.append(str(me_raw[0]))  # resolve the caller's own row
     winner_raw = data.get("winner")  # (user_id, points) | None
     if winner_raw is not None and str(winner_raw[0]) not in ids:
         ids.append(str(winner_raw[0]))  # resolve the winner even if off the top-N
@@ -651,7 +584,7 @@ async def get_weekly_standings(
         )
 
     rows = [_entry(*e) for e in entries]
-    me = next((r for r in rows if r.user_id == me_id), None)
+    me = _entry(*me_raw) if me_raw is not None else None
 
     winner = None
     if winner_raw is not None:
@@ -681,21 +614,26 @@ async def get_weekly_standings(
     response_model=SprintAnswerResultDTO,
     summary="Еженедельный спринт — начислить очки за верный ответ в тесте",
 )
+@limiter.limit("120/minute")
 async def submit_sprint_answer(
+    request: Request,
     body: SprintAnswerDTO,
     user: UserDTO = Depends(get_user),
     sprint_service: SprintService = Depends(get_sprint_service),
+    __=Depends(require_not_restricted),
 ):
     """Auth required. The sprint test credits points answer-by-answer (unlike
     a normal ЕНТ test, one score at the end): the client posts each answered
     question here, the server re-checks correctness against the stored
     variants and awards `sprint_points_per_answer` for a correct one.
 
-    Idempotent per (attempt, question) when `test_id` is sent — a fresh test
-    scores the same question again, but a re-tap inside one test can't
-    double-credit — falling back to per-week per-question for a legacy client.
-    Returns the running weekly total so the live rank pill updates without a
-    second call."""
+    Idempotent per (user, question, week): a question earns once per week no
+    matter how many tests replay it, backed by a partial unique index so
+    concurrent duplicate submits can't double-credit. Rate-limited and gated on
+    `require_not_restricted` (same as the ЕНТ/trainer answer routes) so a
+    scripted client can't hammer the scorer or farm while risk-restricted.
+    Returns the running weekly total (and `finished`, once the sprint is
+    decided) so the live rank pill updates without a second call."""
     result = sprint_service.score_answer(
         user.id, body.question_id, body.variant_ids, test_id=body.test_id
     )

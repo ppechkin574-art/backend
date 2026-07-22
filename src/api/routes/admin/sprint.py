@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from api.dependencies import (
+    allow_only_super_admins,
     allow_read_or_admin_write,
     get_cache_service,
     get_db_session,
@@ -40,7 +41,11 @@ from leaderboard_points.dtos import (
     SprintTieResolveResultDTO,
     SprintWinnerEntryDTO,
 )
-from leaderboard_points.sprint import InvalidPhoneNumber, SprintService
+from leaderboard_points.sprint import (
+    InvalidPhoneNumber,
+    SprintService,
+    SprintWeekPendingClose,
+)
 from quiz.repositories.user_display import UserDisplayRepository
 from utils.cache import CacheService
 
@@ -115,7 +120,8 @@ def list_participants(
 )
 def add_participant(
     body: SprintParticipantCreateDTO,
-    user: UserDTO = Depends(allow_read_or_admin_write),
+    # Admin-only (not manager): granting sprint entry is a paid-access decision.
+    user: UserDTO = Depends(allow_only_super_admins),
     service: SprintService = Depends(get_sprint_service),
 ):
     """Two entry paths, one endpoint: the admin either picks an existing
@@ -147,11 +153,24 @@ def add_participant(
 @router.delete("/participants/{participant_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_participant(
     participant_id: int,
+    # Admin-only (not manager): removing entry affects payouts.
+    _: UserDTO = Depends(allow_only_super_admins),
     service: SprintService = Depends(get_sprint_service),
 ):
     """Drops the person from future standings. Any week they already won
-    stays in history — recorded winners are never revoked."""
-    if not service.remove_participant(participant_id):
+    stays in history — recorded winners are never revoked.
+
+    409 while a just-ended week is still awaiting its winners (see
+    `SprintService.remove_participant`): deleting then could erase a pending
+    prize, so the admin must wait for the week to be closed first."""
+    try:
+        removed = service.remove_participant(participant_id)
+    except SprintWeekPendingClose as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Неделя завершилась, но итоги ещё не подведены — удалите участника после определения победителя",
+        ) from exc
+    if not removed:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Не найдено")
     service.repo.db.commit()
 
@@ -233,7 +252,8 @@ def history(
 )
 def resolve_tie(
     week_start_at: datetime,
-    user: UserDTO = Depends(allow_read_or_admin_write),
+    # Admin-only (not manager): splitting the prize is a payout decision.
+    user: UserDTO = Depends(allow_only_super_admins),
     service: SprintService = Depends(get_sprint_service),
 ):
     """Split the configured prize evenly between a week's tied winners.

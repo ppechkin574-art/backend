@@ -722,15 +722,23 @@ def test_join_links_pre_granted_phone_entry():
 # --------------------------------------------------------------------
 
 
-def _answer_service(*, per_answer, correct_ids, already=False, weekly_after=None):
+def _answer_service(
+    *, per_answer, correct_ids, already=False, weekly_after=None, participant=True
+):
     repo = MagicMock()
     repo.get_or_create_settings.return_value = MagicMock(
         sprint_points_per_answer=per_answer,
         sprint_target_points=None,  # threshold off — winner check short-circuits
+        sprint_open_to_all=False,  # allowlist mode; `participant` gates entry
+        sprint_start_at=None,  # no fixed window → sprint_bounds uses the week
+        sprint_end_at=None,
     )
     repo.correct_variant_ids.return_value = set(correct_ids)
-    repo.sprint_answer_already_scored.return_value = already
-    repo.record_sprint_answer_points.return_value = True  # not frozen
+    repo.get_current_sprint_winner_row.return_value = None  # not won yet
+    repo.is_participant.return_value = participant
+    # Idempotency + freeze both surface as record_sprint_answer_points → False
+    # (ON CONFLICT DO NOTHING, or points frozen). `already` simulates a repeat.
+    repo.record_sprint_answer_points.return_value = not already
     repo.weekly_points.return_value = weekly_after or []
     repo.db = MagicMock()
     return SprintService(repo), repo
@@ -778,8 +786,10 @@ def test_frozen_user_earns_no_sprint_points():
 
 
 def test_replayed_answer_is_not_scored_twice():
-    """Anti-abuse: the same correct answer, resubmitted, earns nothing —
-    a flaky-connection retry can't double-credit and neither can a farmer."""
+    """Anti-abuse: the same correct answer, resubmitted, earns nothing — the
+    insert conflicts on the partial unique index (record_... returns False), so
+    a flaky-connection retry can't double-credit and neither can a farmer. The
+    insert IS attempted; the DB, not a pre-check, is what rejects the dupe."""
     player = uuid4()
     now = datetime.now(UTC)
     service, repo = _answer_service(
@@ -789,14 +799,14 @@ def test_replayed_answer_is_not_scored_twice():
     result = service.score_answer(player, question_id=99, variant_ids=[7])
 
     assert result["correct"] is True
-    assert result["awarded"] == 0, "already scored this week"
-    repo.record_sprint_answer_points.assert_not_called()
+    assert result["awarded"] == 0, "already scored this week (ON CONFLICT)"
+    repo.record_sprint_answer_points.assert_called_once()
 
 
-def test_per_attempt_scoring_uses_test_scoped_source_id():
-    """With a test_id the idempotency key AND the audit source_id are scoped to
-    the attempt ("{test_id}:{question_id}"), so the same question in a new test
-    scores again while a re-tap in the same test still can't double-credit."""
+def test_source_id_is_week_scoped_not_per_test():
+    """Idempotency is per (user, question, week): the audit source_id is
+    "{week_date}:{question_id}" and deliberately IGNORES test_id, so replaying
+    the same question in a fresh test earns nothing until the week rolls over."""
     player = uuid4()
     now = datetime.now(UTC)
     service, repo = _answer_service(
@@ -808,12 +818,46 @@ def test_per_attempt_scoring_uses_test_scoped_source_id():
     )
 
     assert result["awarded"] == 10
-    # Both the idempotency lookup and the written audit row are keyed by the
-    # attempt-scoped source id, not the bare question id.
-    already_args = repo.sprint_answer_already_scored.call_args
-    assert "504:99" in (list(already_args.args) + list(already_args.kwargs.values()))
     rec_args = repo.record_sprint_answer_points.call_args
-    assert "504:99" in (list(rec_args.args) + list(rec_args.kwargs.values()))
+    passed = list(rec_args.args) + list(rec_args.kwargs.values())
+    source_ids = [v for v in passed if isinstance(v, str)]
+    # week-date-prefixed question id, and the attempt id 504 is NOT in the key
+    assert any(v.endswith(":99") for v in source_ids)
+    assert all("504" not in v for v in source_ids)
+
+
+def test_no_award_once_sprint_is_won():
+    """Winner-end: once the week has a locked threshold winner, further answers
+    earn nothing and report finished — the standings freeze and the winner can
+    never be overtaken."""
+    player = uuid4()
+    now = datetime.now(UTC)
+    service, repo = _answer_service(
+        per_answer=10, correct_ids=[7], weekly_after=[(player, 30, now)]
+    )
+    repo.get_current_sprint_winner_row.return_value = (uuid4(), 100, now)
+
+    result = service.score_answer(player, question_id=99, variant_ids=[7])
+
+    assert result["finished"] is True
+    assert result["awarded"] == 0
+    repo.record_sprint_answer_points.assert_not_called()
+
+
+def test_non_participant_earns_nothing_when_not_open_to_all():
+    """Participation gate: someone who isn't on the allowlist (and the sprint
+    isn't open to all) earns nothing even on a correct answer — the paid-entry
+    allowlist is the gate."""
+    player = uuid4()
+    now = datetime.now(UTC)
+    service, repo = _answer_service(
+        per_answer=10, correct_ids=[7], participant=False, weekly_after=[(player, 0, now)]
+    )
+
+    result = service.score_answer(player, question_id=99, variant_ids=[7])
+
+    assert result["awarded"] == 0
+    repo.record_sprint_answer_points.assert_not_called()
 
 
 def test_answer_scoring_disabled_when_per_answer_zero():

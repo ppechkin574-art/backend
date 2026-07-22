@@ -58,6 +58,14 @@ class InvalidPhoneNumber(ValueError):
     """Raised for input that cannot be normalized to +7XXXXXXXXXX."""
 
 
+class SprintWeekPendingClose(Exception):
+    """A sprint week has ended and had scorers, but its winners aren't
+    recorded yet. Removing a participant in this window could erase a pending
+    prize (the week-close job reads live standings, which exclude a
+    just-deleted participant), so deletion is refused until
+    `close_week_if_due` resolves the week. The admin route maps it to a 409."""
+
+
 def normalize_phone(raw: str) -> str:
     """Canonical `+7XXXXXXXXXX`. Accepts the shapes admins actually paste —
     `8 700 123 45 67`, `+7 (700) 123-45-67`, `7001234567` — because the
@@ -102,8 +110,39 @@ class SprintService:
     def remove_participant(self, participant_id: int) -> bool:
         """Removing someone mid-week drops them from the standings, but any
         week they already WON stays in history — `sprint_winners` rows are
-        never revoked."""
+        never revoked.
+
+        Refuses (raises `SprintWeekPendingClose`) when a just-ended week still
+        has its winners un-recorded and had scorers: deleting a participant
+        then would drop them from the live standings the close job reads, so a
+        deserved prize could silently vanish. The scheduled `close_week_if_due`
+        clears this window within its run interval, after which deletion is
+        allowed again."""
+        if self._has_unresolved_ended_week(datetime.now(UTC)):
+            raise SprintWeekPendingClose()
         return self.repo.delete_participant(participant_id)
+
+    def _has_unresolved_ended_week(self, now: datetime) -> bool:
+        """True while a sprint week has ended, had scorers, and hasn't had its
+        winners recorded yet — the narrow window in which removing a
+        participant could erase a pending prize (see `remove_participant`)."""
+        settings = self.repo.get_or_create_settings()
+        configured = isinstance(settings.sprint_start_at, datetime) and isinstance(
+            settings.sprint_end_at, datetime
+        )
+        if configured:
+            week_start_at, week_end_at = sprint_bounds(settings, now)
+            if now < week_end_at:
+                return False  # still running — no prize at stake yet
+        else:
+            # Legacy implicit-week sprint: the at-risk week is the PREVIOUS one
+            # that rolled over at Monday 00:00 Almaty.
+            current_start, _ = current_week_bounds_almaty(now)
+            week_start_at = current_start - timedelta(days=7)
+            week_end_at = current_start
+        if self.repo.week_has_winner(week_start_at):
+            return False  # already resolved — safe to delete
+        return bool(self.standings(week_start_at, week_end_at))
 
     def backfill_user_id(self, participant_id: int, user_id: UUID) -> None:
         self.repo.set_participant_user_id(participant_id, user_id)
@@ -129,18 +168,25 @@ class SprintService:
         )
 
     def ranked_standings(
-        self, now: datetime | None = None, limit: int = 100
+        self, now: datetime | None = None, limit: int = 100, me_id: UUID | None = None
     ) -> dict:
         """Ranked weekly standings for `GET /leaderboard/weekly/standings`.
 
         Returns raw rows the route enriches with names/avatars:
           {settings…, week bounds, participants_total, finished,
-           entries: [(user_id, points, rank, delta)], ...}
+           entries: [(user_id, points, rank, delta)], me, ...}
 
         `delta` is today's movement: this row's live rank minus its rank in
         the most recent snapshot before today's 00:00 Almaty. Positive =
         moved up. None when there's no earlier snapshot (first day of the
-        week), so the client shows no badge rather than a fake zero."""
+        week), so the client shows no badge rather than a fake zero.
+
+        When `me_id` is given, the caller is pulled OUT of `entries` and
+        returned separately as `me` (with the caller's true rank/delta) — the
+        screen pins «вы» on its own, so leaving the row in the list too would
+        show the caller twice. `me` is resolved from the FULL ranking, so a
+        caller ranked below `limit` still gets their real position rather than
+        vanishing."""
         now = now or datetime.now(UTC)
         settings = self.repo.get_or_create_settings()
         week_start_at, week_end_at = sprint_bounds(settings, now)
@@ -159,12 +205,21 @@ class SprintService:
         day_start = current_day_start_almaty(now)
         prev_ranks = self.repo.latest_snapshot_ranks(week_start_at, day_start)
 
+        # Rank over the FULL field so ranks and the caller's own position are
+        # correct even past `limit`; the caller is split out into `me` and the
+        # public list is capped at `limit`.
         entries = []
-        for i, (user_id, points, _) in enumerate(rows[:limit]):
+        me_entry = None
+        for i, (user_id, points, _) in enumerate(rows):
             rank = i + 1
             prev = prev_ranks.get(user_id)
             delta = (prev - rank) if prev is not None else None
-            entries.append((user_id, points, rank, delta))
+            row = (user_id, points, rank, delta)
+            if me_id is not None and user_id == me_id:
+                me_entry = row  # caller pinned separately, never inside the list
+                continue
+            if len(entries) < limit:
+                entries.append(row)
 
         winner, finished = self._resolve_finish(week_start_at, week_end_at, now)
         return {
@@ -184,6 +239,7 @@ class SprintService:
             "finished": finished,
             "winner": winner if finished else None,
             "entries": entries,
+            "me": me_entry,
         }
 
     def is_participant(self, user_id: UUID) -> bool:
@@ -231,19 +287,23 @@ class SprintService:
         Correctness is checked SERVER-SIDE against the question's variants —
         the client's chosen variant ids are compared to the stored correct
         set, never a client-sent "correct" flag, so the answer can't be
-        faked. Each question is worth points once per week (guarded by the
-        audit log), so replaying the same answer earns nothing the second
-        time.
+        faked. Each question is worth points ONCE PER WEEK per user (the week
+        is baked into the idempotency key and backed by a partial unique
+        index), so re-answering the same question — even in a brand-new test —
+        earns nothing more until the week rolls over.
 
-        Returns {correct, awarded, week_points}:
+        Returns {correct, awarded, week_points, finished}:
           - correct: whether the answer was right;
-          - awarded: points actually added (0 if wrong, already scored, or
-            feature disabled);
+          - awarded: points actually added (0 if wrong, already scored this
+            week, not a participant, feature disabled, or the sprint is over);
           - week_points: the user's running sprint total this week, so the
-            client can update the live rank pill without a second request.
+            client can update the live rank pill without a second request;
+          - finished: the sprint is already decided (won early or the period
+            ended) — the client should stop the test; no more points are given.
 
-        Points go through the normal add_points funnel, so the threshold
-        winner hook fires here too — a sprint test can win the week early."""
+        The threshold winner hook fires here (`check_and_lock_sprint_winner`),
+        so a sprint test can win the week early — and once it does, the sprint
+        ends and this method stops awarding, freezing the final standings."""
         now = datetime.now(UTC)
         settings = self.repo.get_or_create_settings()
         week_start_at, week_end_at = sprint_bounds(settings, now)
@@ -252,30 +312,60 @@ class SprintService:
         correct_ids = self.repo.correct_variant_ids(question_id)
         correct = bool(correct_ids) and set(variant_ids) == correct_ids
 
-        # Idempotency scope. With a test_id the key is (attempt, question) —
-        # a fresh test scores the same question again ("платить каждый тест"),
-        # while a re-tap inside the SAME test still can't double-credit. Without
-        # one (legacy client) it falls back to per-week per-question.
-        source_id = f"{test_id}:{question_id}" if test_id is not None else str(question_id)
+        def _week_points() -> int:
+            rows = self.repo.weekly_points(week_start_at, week_end_at, [user_id])
+            return rows[0][1] if rows else 0
+
+        # The sprint ends the moment it is won early (a threshold winner is
+        # locked) or the period is over: from then on the standings are frozen
+        # and NOBODY can be awarded more, so the winner can never be overtaken.
+        # We still report `correct` for UI feedback, but award nothing and flag
+        # `finished` so the client closes the test.
+        won = self.repo.get_current_sprint_winner_row(week_start_at) is not None
+        if won or now >= week_end_at:
+            return {
+                "correct": correct,
+                "awarded": 0,
+                "week_points": _week_points(),
+                "finished": True,
+            }
+
+        # Participation gate (+ auto-enroll). Only people entered in the sprint
+        # earn points. When the sprint is open to all, enrol the caller on their
+        # first answer so they appear in the standings and the participant
+        # count; otherwise a non-participant who reaches this endpoint earns
+        # nothing (the paid-entry allowlist is the gate).
+        if settings.sprint_open_to_all:
+            self.join(user_id)  # idempotent
+        elif not self.repo.is_participant(user_id):
+            return {
+                "correct": correct,
+                "awarded": 0,
+                "week_points": _week_points(),
+                "finished": False,
+            }
+
+        # Idempotency scope: one credit per (user, question, week). The week is
+        # baked into source_id, so the same question scores again next week but
+        # never twice in the same week — whatever the client sends as test_id. A
+        # partial unique index on (user_id, source_id) WHERE
+        # source_type='sprint_answer' enforces this at the DB level, so racing
+        # duplicate submits can't double-credit (record_sprint_answer_points
+        # does ON CONFLICT DO NOTHING and returns False for the loser).
+        source_id = f"{week_start_at.date().isoformat()}:{question_id}"
 
         awarded = 0
+        # Separate currency: writes the audit row WITHOUT touching total_points,
+        # so sprint play doesn't feed the global «Кубок». record_...  returns
+        # False on conflict (already scored this week) or when points are frozen.
         if (
             correct
             and per_answer > 0
-            and not self.repo.sprint_answer_already_scored(
-                user_id, week_start_at, source_id
-            )
+            and self.repo.record_sprint_answer_points(user_id, per_answer, source_id)
         ):
-            # Separate currency: writes the audit row WITHOUT touching
-            # total_points, so sprint play doesn't feed the global «Кубок».
-            if self.repo.record_sprint_answer_points(user_id, per_answer, source_id):
-                awarded = per_answer
-                # autoflush is off on this session, so push the new row out now
-                # — the weekly sum + winner check below must count this answer.
-                self.repo.db.flush()
+            awarded = per_answer
 
-        rows = self.repo.weekly_points(week_start_at, week_end_at, [user_id])
-        week_points = rows[0][1] if rows else 0
+        week_points = _week_points()
 
         # Threshold early-win. Sprint points no longer flow through add_points'
         # shared hook, so the winner check runs here. Reuses the same gates
@@ -287,7 +377,12 @@ class SprintService:
                 user_id, week_points
             )
 
-        return {"correct": correct, "awarded": awarded, "week_points": week_points}
+        return {
+            "correct": correct,
+            "awarded": awarded,
+            "week_points": week_points,
+            "finished": False,
+        }
 
     def capture_rank_snapshot(self, now: datetime | None = None) -> dict:
         """Record today's rank snapshot (movement-badge baseline). Called on

@@ -301,3 +301,7 @@ class SprintAnswerResultDTO(BaseModel):
     correct: bool
     awarded: int
     week_points: int
+    # The sprint is already decided (won early or the period ended): the client
+    # should stop the test — no further answers can earn points. Defaults false
+    # so older clients that don't read it are unaffected.
+    finished: bool = False

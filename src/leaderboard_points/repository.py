@@ -546,16 +546,26 @@ class LeaderboardPointsRepository:
     ) -> bool:
         """Credit sprint-test points as a SEPARATE currency. Writes a
         `points_audit_log` row (source_type='sprint_answer') — that's what the
-        weekly sum + the per-answer idempotency read — but does NOT touch
-        `user_points.total_points`, so sprint play never inflates the all-time
-        «Кубок». `points_before == points_after` on purpose: the all-time total
-        is unchanged; `points_delta` carries the sprint award. Returns False
-        (nothing credited) when the user's points are admin-frozen.
+        weekly sum reads — but does NOT touch `user_points.total_points`, so
+        sprint play never inflates the all-time «Кубок». `points_before ==
+        points_after` on purpose: the all-time total is unchanged;
+        `points_delta` carries the sprint award.
+
+        Returns True only when a NEW row was written. Returns False when the
+        user's points are admin-frozen OR this (user, source_id) was already
+        credited: the insert is `ON CONFLICT DO NOTHING` against the partial
+        unique index `uq_sprint_answer_user_source` (user_id, source_id WHERE
+        source_type='sprint_answer'), so two concurrent identical submits can
+        never both credit — the loser's insert is a no-op and returns False.
+        This is what makes per-(user, question, week) idempotency race-safe;
+        the caller bakes the week into `source_id`.
 
         Deliberately NOT routed through `UserPointsRepository.add_points`
         (which bumps total_points and fires the shared winner hook) — sprint
         scoring is isolated, and `SprintService.score_answer` runs the winner
         check itself after crediting."""
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
         from security.models import PointsAuditLog, UserRiskProfile
 
         frozen = (
@@ -573,8 +583,9 @@ class LeaderboardPointsRepository:
         )
         total = total_row[0] if total_row else 0
 
-        self.db.add(
-            PointsAuditLog(
+        stmt = (
+            pg_insert(PointsAuditLog)
+            .values(
                 user_id=user_id,
                 points_before=total,
                 points_after=total,  # unchanged — sprint is a separate currency
@@ -584,30 +595,13 @@ class LeaderboardPointsRepository:
                 reason="Верный ответ в тесте спринта",
                 is_suspicious=False,
             )
-        )
-        return True
-
-    def sprint_answer_already_scored(
-        self, user_id: UUID, week_start_at: datetime, source_id: str
-    ) -> bool:
-        """True if this user already earned points for this [source_id] this
-        week. `source_id` is `"{test_id}:{question_id}"` for per-attempt scoring
-        (the same question in a new test isn't "already scored"), or just
-        `"{question_id}"` for the legacy per-week key. Guards against a re-tap /
-        flaky-retry double-crediting the same answer."""
-        from security.models import PointsAuditLog
-
-        return (
-            self.db.query(PointsAuditLog.id)
-            .filter(
-                PointsAuditLog.user_id == user_id,
-                PointsAuditLog.source_type == "sprint_answer",
-                PointsAuditLog.source_id == source_id,
-                PointsAuditLog.created_at >= week_start_at,
+            .on_conflict_do_nothing(
+                index_elements=["user_id", "source_id"],
+                index_where=text("source_type = 'sprint_answer'"),
             )
-            .first()
-            is not None
+            .returning(PointsAuditLog.id)
         )
+        return self.db.execute(stmt).first() is not None
 
     def correct_variant_ids(self, question_id: int) -> set[int]:
         """The set of correct variant ids for a question — the sprint-test

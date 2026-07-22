@@ -8,15 +8,11 @@ Covers:
   DO NOTHING RETURNING user_id` semantics via a mocked `db.execute`
   that returns a row only on the first call.
 - `LeaderboardPointsRepository.get_current_sprint_winner_row` — raw
-  lookup used by the public endpoint.
+  lookup used by the card/standings and the winner-end scoring gate.
 - `LeaderboardPointsService.check_and_lock_sprint_winner` — the hook
   called from every points-award path. No-ops when the feature is off
   or the threshold isn't reached, respects the leaderboard hide-list,
   and NEVER raises (side-effect hook on the hot points-award path).
-- `LeaderboardPointsService.get_sprint_status_raw` — the read path
-  GET /leaderboard/sprint is built on.
-- `GET /leaderboard/sprint` — response shape in all three states (not
-  configured / configured no winner yet / configured with winner).
 - `UserPointsRepository.add_points` — savepoint isolation. If the
   sprint-winner check's DB work raises INSIDE Postgres (not just a
   Python exception — an aborted transaction), the SAVEPOINT wrapping
@@ -38,8 +34,6 @@ from payments import models as _payment_models  # noqa: F401
 from promocodes import models as _promocode_models  # noqa: F401
 from subscription import models as _subscription_models  # noqa: F401
 
-from api.routes.user.leaderboard import SprintStatusEntry, get_sprint_status
-from leaderboard_points.dtos import SprintWinnerDTO
 from leaderboard_points.repository import LeaderboardPointsRepository
 from leaderboard_points.service import LeaderboardPointsService
 from quiz.repositories.user_points import UserPointsRepository
@@ -276,156 +270,6 @@ def test_check_and_lock_never_raises_when_settings_lookup_fails():
 
     # Must not raise.
     service.check_and_lock_sprint_winner(uuid4(), 2000)
-
-
-# ─── LeaderboardPointsService.get_sprint_status_raw ──────────────────────
-
-
-def test_get_sprint_status_raw_feature_off():
-    settings = _fake_settings(sprint_target_points=None)
-    service, repo = _make_service(settings)
-
-    target, week_start_at, winner_row = service.get_sprint_status_raw()
-
-    assert target is None
-    assert week_start_at is None
-    assert winner_row is None
-    repo.get_current_sprint_winner_row.assert_not_called()
-
-
-def test_get_sprint_status_raw_configured_no_winner():
-    settings = _fake_settings(sprint_target_points=1000)
-    service, repo = _make_service(settings)
-    repo.get_current_sprint_winner_row.return_value = None
-
-    target, week_start_at, winner_row = service.get_sprint_status_raw()
-
-    assert target == 1000
-    assert week_start_at is not None
-    assert winner_row is None
-
-
-def test_get_sprint_status_raw_configured_with_winner():
-    settings = _fake_settings(sprint_target_points=1000)
-    service, repo = _make_service(settings)
-    user_id = uuid4()
-    won_at = datetime.now(UTC)
-    repo.get_current_sprint_winner_row.return_value = (user_id, 1200, won_at)
-
-    target, week_start_at, winner_row = service.get_sprint_status_raw()
-
-    assert target == 1000
-    assert week_start_at is not None
-    assert winner_row == (user_id, 1200, won_at)
-
-
-# ─── GET /leaderboard/sprint ─────────────────────────────────────────────
-
-
-def _make_idp_for(user_id: str, name: str = "Чемпион"):
-    idp = MagicMock()
-    kc_user = MagicMock()
-    kc_user.attributes.name = [name]
-    kc_user.attributes.avatar = None
-    idp.get_user.return_value = kc_user
-    return idp
-
-
-class _FakeDisplayRepo:
-    def __init__(self, *_a, **_k):
-        pass
-
-    def bulk_get(self, _ids):
-        return {}
-
-    def upsert(self, *_a, **_k):
-        pass
-
-
-@pytest.fixture(autouse=True)
-def _patch_user_display(monkeypatch):
-    import api.routes.user.leaderboard as lb
-
-    monkeypatch.setattr(lb, "UserDisplayRepository", lambda session: _FakeDisplayRepo())
-
-
-def _make_cache():
-    cache = MagicMock()
-    cache.get.return_value = None
-    return cache
-
-
-def _make_file_service():
-    fs = MagicMock()
-    fs.get_avatar_url.return_value = None
-    return fs
-
-
-class _FakeSprintService:
-    def __init__(self, target, week_start_at, winner_row):
-        self._result = (target, week_start_at, winner_row)
-
-    def get_sprint_status_raw(self):
-        return self._result
-
-
-@pytest.mark.asyncio
-async def test_endpoint_not_configured_returns_all_null():
-    service = _FakeSprintService(None, None, None)
-
-    response = await get_sprint_status(
-        session=MagicMock(),
-        idp=MagicMock(),
-        file_service=_make_file_service(),
-        cache=_make_cache(),
-        lb_points_service=service,
-    )
-
-    assert response == SprintStatusEntry(target_points=None, week_start_at=None, winner=None)
-
-
-@pytest.mark.asyncio
-async def test_endpoint_configured_no_winner_yet():
-    week_start_at = datetime(2026, 7, 19, 19, 0, tzinfo=UTC)
-    service = _FakeSprintService(1000, week_start_at, None)
-
-    response = await get_sprint_status(
-        session=MagicMock(),
-        idp=MagicMock(),
-        file_service=_make_file_service(),
-        cache=_make_cache(),
-        lb_points_service=service,
-    )
-
-    assert response.target_points == 1000
-    assert response.week_start_at == week_start_at
-    assert response.winner is None
-
-
-@pytest.mark.asyncio
-async def test_endpoint_configured_with_winner_resolves_display():
-    week_start_at = datetime(2026, 7, 19, 19, 0, tzinfo=UTC)
-    won_at = datetime(2026, 7, 20, 8, 30, tzinfo=UTC)
-    user_id = uuid4()
-    service = _FakeSprintService(1000, week_start_at, (user_id, 1200, won_at))
-
-    response = await get_sprint_status(
-        session=MagicMock(),
-        idp=_make_idp_for(str(user_id), name="Чемпион недели"),
-        file_service=_make_file_service(),
-        cache=_make_cache(),
-        lb_points_service=service,
-    )
-
-    assert response.target_points == 1000
-    assert response.week_start_at == week_start_at
-    assert response.winner == SprintWinnerDTO(
-        user_id=str(user_id),
-        name="Чемпион недели",
-        avatar_url=None,
-        points_at_win=1200,
-        won_at=won_at,
-    )
 
 
 # ─── UserPointsRepository.add_points — savepoint isolation ──────────────

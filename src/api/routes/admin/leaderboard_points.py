@@ -13,7 +13,7 @@ GET /admin/security/users/{user_id}/points-history (shared audit log,
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from api.dependencies import allow_read_or_admin_write, get_leaderboard_points_service
 from auth.dtos.users import UserDTO
@@ -25,7 +25,7 @@ from leaderboard_points.dtos import (
     RewardGoalSettingsDTO,
     RewardGoalSettingsUpdateDTO,
 )
-from leaderboard_points.service import LeaderboardPointsService
+from leaderboard_points.service import LeaderboardPointsService, SprintWindowInvalid
 
 router = APIRouter(
     prefix="/admin/leaderboard-points",
@@ -50,7 +50,15 @@ def update_settings(
     actor_display = user.name or user.email or str(user.id)
     # exclude_unset — only the fields this screen actually sent get written;
     # see LeaderboardPointsService.update_settings.
-    result = service.update_settings(body.model_dump(exclude_unset=True), actor_display)
+    try:
+        result = service.update_settings(
+            body.model_dump(exclude_unset=True), actor_display
+        )
+    except SprintWindowInvalid as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=str(exc),
+        ) from exc
     service.repo.db.commit()
     return result
 

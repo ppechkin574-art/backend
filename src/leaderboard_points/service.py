@@ -18,6 +18,12 @@ ALMATY_TZ = ZoneInfo("Asia/Almaty")
 WEEKLY_MONDAY = "weekly_monday"
 
 
+class SprintWindowInvalid(ValueError):
+    """The sprint end must be strictly after the start. Raised by
+    `update_settings` when the effective (saved + payload) window is inverted;
+    the admin route maps it to a 422."""
+
+
 def next_monday_midnight_almaty(after: datetime) -> datetime:
     """The next Monday 00:00 Asia/Almaty strictly after `after`, returned
     as a UTC-aware datetime. Almaty has no DST, so this is a plain
@@ -110,6 +116,12 @@ def _to_dto(settings: LeaderboardPointsSettings) -> LeaderboardPointsSettingsDTO
         sprint_prize_amount=settings.sprint_prize_amount,
         sprint_access_url=settings.sprint_access_url,
         sprint_points_per_answer=settings.sprint_points_per_answer,
+        # Date-based sprint window + open-to-all switch. Declared on the DTO but
+        # previously never populated here, so the admin never saw the saved
+        # values (they read back as null/false) — surface them now.
+        sprint_start_at=settings.sprint_start_at,
+        sprint_end_at=settings.sprint_end_at,
+        sprint_open_to_all=settings.sprint_open_to_all,
         updated_at=settings.updated_at,
         updated_by=settings.updated_by,
     )
@@ -167,6 +179,20 @@ class LeaderboardPointsService:
         defaults. An explicit `null` in the payload IS applied, since
         that is how the admin clears the threshold or the prize."""
         settings = self.repo.get_or_create_settings()
+
+        # Validate the sprint window against the EFFECTIVE values (saved row
+        # merged with this partial payload), not just the payload. The DTO's
+        # own validator only sees fields present in one request, so saving
+        # `start` and `end` in separate PATCHes could otherwise slip past it and
+        # leave end <= start. `None` on either side means "no window", which is
+        # always valid.
+        eff_start = changes.get("sprint_start_at", settings.sprint_start_at)
+        eff_end = changes.get("sprint_end_at", settings.sprint_end_at)
+        if eff_start is not None and eff_end is not None and eff_end <= eff_start:
+            raise SprintWindowInvalid(
+                "Конец спринта должен быть позже начала"
+            )
+
         settings = self.repo.save_settings(settings, changes, actor_display)
         return _to_dto(settings)
 
@@ -334,21 +360,3 @@ class LeaderboardPointsService:
                 "points award itself is unaffected)",
                 user_id,
             )
-
-    def get_sprint_status_raw(
-        self,
-    ) -> tuple[int | None, datetime | None, tuple[UUID, int, datetime] | None]:
-        """Returns `(target_points, week_start_at, winner_row)` for
-        `GET /leaderboard/sprint`. `winner_row` is the raw `(user_id,
-        points_at_win, won_at)` tuple — display-name/avatar resolution
-        happens at the route layer, reusing the same Keycloak/cache/
-        user_display lookup `GET /leaderboard` already uses, rather than
-        a second mechanism here. `week_start_at` is None iff
-        `target_points` is None/0 (feature off)."""
-        settings = self.repo.get_or_create_settings()
-        target = settings.sprint_target_points
-        if not target:
-            return None, None, None
-        week_start_at = current_week_start_almaty(datetime.now(UTC))
-        winner_row = self.repo.get_current_sprint_winner_row(week_start_at)
-        return target, week_start_at, winner_row

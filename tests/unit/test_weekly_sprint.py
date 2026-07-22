@@ -683,6 +683,40 @@ def test_is_participant_open_to_all_bypasses_allowlist():
     repo.is_participant.assert_not_called()
 
 
+def test_join_adds_new_participant_with_safe_phone():
+    """Self-join adds a participant; with no phone the fallback id must fit the
+    varchar(20) phone_number column."""
+    service, repo = _standings_service(standings=[], participants=[], prev_ranks={})
+    repo.is_participant.return_value = False
+    repo.get_participant_by_phone.return_value = None
+    uid = uuid4()
+    service.join(uid, phone=None)
+    repo.add_participant.assert_called_once()
+    kwargs = repo.add_participant.call_args.kwargs
+    assert kwargs["user_id"] == uid
+    assert len(kwargs["phone_number"]) <= 20
+
+
+def test_join_is_noop_when_already_participant():
+    service, repo = _standings_service(standings=[], participants=[], prev_ranks={})
+    repo.is_participant.return_value = True
+    service.join(uuid4())
+    repo.add_participant.assert_not_called()
+
+
+def test_join_links_pre_granted_phone_entry():
+    """If the admin granted this phone in advance (user_id NULL), join links it
+    instead of creating a duplicate row."""
+    service, repo = _standings_service(standings=[], participants=[], prev_ranks={})
+    repo.is_participant.return_value = False
+    pre = MagicMock(id=7, user_id=None)
+    repo.get_participant_by_phone.return_value = pre
+    uid = uuid4()
+    service.join(uid, phone="+77001234567")
+    repo.set_participant_user_id.assert_called_once_with(7, uid)
+    repo.add_participant.assert_not_called()
+
+
 # --------------------------------------------------------------------
 # sprint test: per-answer scoring
 # --------------------------------------------------------------------

@@ -208,8 +208,11 @@ class SprintService:
             if existing is not None and existing.user_id is None:
                 self.repo.set_participant_user_id(existing.id, user_id)
                 return
+        # phone_number is NOT NULL, UNIQUE, varchar(20). Self-joiners may have
+        # no phone (email/OAuth), so fall back to a 20-char id derived from the
+        # user_id — unique per user, never collides with a real "+7…" phone.
         self.repo.add_participant(
-            phone_number=phone or f"self:{user_id}",
+            phone_number=(phone or str(user_id).replace("-", ""))[:20],
             user_id=user_id,
             added_by_display="self",
         )

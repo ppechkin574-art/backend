@@ -22,6 +22,8 @@ from leaderboard_points.dtos import (
     LeaderboardPointsSettingsUpdateDTO,
     PointsAdjustDTO,
     PointsAdjustResultDTO,
+    RewardGoalSettingsDTO,
+    RewardGoalSettingsUpdateDTO,
 )
 from leaderboard_points.service import LeaderboardPointsService
 
@@ -49,6 +51,29 @@ def update_settings(
     # exclude_unset — only the fields this screen actually sent get written;
     # see LeaderboardPointsService.update_settings.
     result = service.update_settings(body.model_dump(exclude_unset=True), actor_display)
+    service.repo.db.commit()
+    return result
+
+
+@router.get("/reward-goal/settings", response_model=RewardGoalSettingsDTO)
+def get_reward_goal(
+    service: LeaderboardPointsService = Depends(get_leaderboard_points_service),
+):
+    """Config for the home «До следующей награды» card (admin page
+    «Турнир → Награды за баллы»)."""
+    result = service.get_reward_goal()
+    service.repo.db.commit()  # get_or_create may have inserted the singleton
+    return result
+
+
+@router.patch("/reward-goal/settings", response_model=RewardGoalSettingsDTO)
+def update_reward_goal(
+    body: RewardGoalSettingsUpdateDTO,
+    user: UserDTO = Depends(allow_read_or_admin_write),
+    service: LeaderboardPointsService = Depends(get_leaderboard_points_service),
+):
+    actor_display = user.name or user.email or str(user.id)
+    result = service.update_reward_goal(body.enabled, body.target_points, actor_display)
     service.repo.db.commit()
     return result
 

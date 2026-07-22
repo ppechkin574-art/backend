@@ -79,6 +79,27 @@ class LeaderboardPointsSettingsUpdateDTO(BaseModel):
         return v
 
 
+class RewardGoalSettingsDTO(BaseModel):
+    """Home «До следующей награды» card config (admin page «Турнир →
+    Награды за баллы»). Single global goal — `target_points` is the one
+    threshold every user's total is measured against. `enabled` is the
+    master toggle; when off (or target None/0) the mobile card renders
+    «Скоро новые цели»."""
+
+    enabled: bool
+    target_points: int | None = None
+    updated_at: datetime
+    updated_by: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class RewardGoalSettingsUpdateDTO(BaseModel):
+    enabled: bool
+    # None/0 == no active goal → card shows the «Скоро новые цели» state.
+    target_points: int | None = Field(default=None, ge=0, le=1_000_000)
+
+
 class PointsAdjustDTO(BaseModel):
     delta: int
     reason: str | None = Field(default=None, max_length=500)

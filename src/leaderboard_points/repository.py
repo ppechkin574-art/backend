@@ -32,6 +32,34 @@ class LeaderboardPointsRepository:
             self.db.flush()
         return settings
 
+    def get_settings_or_none(self) -> LeaderboardPointsSettings | None:
+        """Read the singleton without creating it. Used by read-only paths
+        (e.g. `GET /leaderboard/me` reading the reward-goal config) that must
+        not mutate on a GET — `get_or_create_settings` does an INSERT+flush
+        when the row is missing, which is wrong for a plain read."""
+        return (
+            self.db.query(LeaderboardPointsSettings)
+            .order_by(LeaderboardPointsSettings.id)
+            .first()
+        )
+
+    def save_reward_goal(
+        self,
+        settings: LeaderboardPointsSettings,
+        enabled: bool,
+        target_points: int | None,
+        actor_display: str,
+    ) -> LeaderboardPointsSettings:
+        """Update only the reward-goal columns. Deliberately does NOT touch
+        `last_reset_at` (unlike `save_settings`, which restarts the
+        auto-reset countdown) — editing the reward card must not move the
+        points-reset schedule."""
+        settings.reward_goal_enabled = enabled
+        settings.reward_goal_target_points = target_points
+        settings.updated_by = actor_display
+        self.db.flush()
+        return settings
+
     # Columns an admin PATCH is allowed to write. Anything else in the
     # payload is ignored rather than blindly setattr'd onto the model.
     _SETTINGS_WRITABLE = frozenset(

@@ -26,6 +26,7 @@ from leaderboard_points.dtos import (
     WeeklySprintCardDTO,
     WeeklyStandingsDTO,
 )
+from leaderboard_points.repository import LeaderboardPointsRepository
 from leaderboard_points.service import LeaderboardPointsService
 from leaderboard_points.sprint import SprintService
 from quiz.repositories.user_display import UserDisplayRepository
@@ -113,6 +114,12 @@ class MyRankEntry(BaseModel):
     total_points: int
     milestone_rank: int | None = None
     gap_to_milestone_pts: int | None = None
+    # Home «До следующей награды» card (admin «Турнир → Награды за баллы»).
+    # `reward_enabled` is the raw admin toggle; `reward_target_points` the
+    # single goal. The mobile client computes remaining/progress itself and
+    # shows «Скоро новые цели» when disabled or target is None/0.
+    reward_enabled: bool = False
+    reward_target_points: int | None = None
 
 
 class SprintStatusEntry(BaseModel):
@@ -433,6 +440,20 @@ async def get_my_rank(
     # A commit with nothing pending is a cheap no-op.
     _commit_backfill(session)
 
+    # Reward-goal card config (admin «Турнир → Награды за баллы»). Read-only
+    # (get_settings_or_none — never mutates). Wrapped defensively: a PS.KZ
+    # deploy doesn't guarantee the reward_goal_* migration ran before this
+    # code is live, so a missing column must not break the leaderboard pill.
+    reward_enabled = False
+    reward_target_points: int | None = None
+    try:
+        goal = LeaderboardPointsRepository(session).get_settings_or_none()
+        if goal is not None:
+            reward_enabled = bool(goal.reward_goal_enabled)
+            reward_target_points = goal.reward_goal_target_points
+    except Exception:
+        pass
+
     return MyRankEntry(
         rank=rank,
         user_id=str(user.id),
@@ -441,6 +462,8 @@ async def get_my_rank(
         total_points=total,
         milestone_rank=milestone,
         gap_to_milestone_pts=gap_to_milestone_pts,
+        reward_enabled=reward_enabled,
+        reward_target_points=reward_target_points,
     )
 
 

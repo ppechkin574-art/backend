@@ -7,6 +7,7 @@ from leaderboard_points.dtos import (
     LeaderboardPointsSettingsDTO,
     PointsAdjustResultDTO,
     PointsResetResultDTO,
+    RewardGoalSettingsDTO,
 )
 from leaderboard_points.models import LeaderboardPointsSettings
 from leaderboard_points.repository import LeaderboardPointsRepository
@@ -122,6 +123,34 @@ class LeaderboardPointsService:
 
     def get_settings(self) -> LeaderboardPointsSettingsDTO:
         return _to_dto(self.repo.get_or_create_settings())
+
+    # ---------- reward-goal card (home «До следующей награды») ----------
+
+    def get_reward_goal(self) -> RewardGoalSettingsDTO:
+        s = self.repo.get_or_create_settings()
+        return RewardGoalSettingsDTO(
+            enabled=s.reward_goal_enabled,
+            target_points=s.reward_goal_target_points,
+            updated_at=s.updated_at,
+            updated_by=s.updated_by,
+        )
+
+    def update_reward_goal(
+        self,
+        enabled: bool,
+        target_points: int | None,
+        actor_display: str,
+    ) -> RewardGoalSettingsDTO:
+        settings = self.repo.get_or_create_settings()
+        settings = self.repo.save_reward_goal(
+            settings, enabled, target_points, actor_display
+        )
+        return RewardGoalSettingsDTO(
+            enabled=settings.reward_goal_enabled,
+            target_points=settings.reward_goal_target_points,
+            updated_at=settings.updated_at,
+            updated_by=settings.updated_by,
+        )
 
     def update_settings(
         self,

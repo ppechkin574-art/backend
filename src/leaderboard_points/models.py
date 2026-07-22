@@ -91,6 +91,14 @@ class LeaderboardPointsSettings(Base):
     # allowlist. Flip it off to go back to invite-only — the sprint_participants
     # rows are untouched. Single admin rubilnik for paid/free access.
     sprint_open_to_all = Column(Boolean, nullable=False, server_default="false")
+    # Home «До следующей награды» card (admin page «Турнир → Награды за
+    # баллы»). `reward_goal_enabled` is the master on/off; when off — or
+    # `reward_goal_target_points` is NULL/0 — the mobile card shows its
+    # «Скоро новые цели» empty state instead of a progress bar. Single
+    # global goal (not a ladder). See GET /leaderboard/me
+    # (reward_enabled/reward_target_points) and RewardGoalSettingsDTO.
+    reward_goal_enabled = Column(Boolean, nullable=False, server_default="false")
+    reward_goal_target_points = Column(Integer, nullable=True)
     updated_at = Column(
         DateTime(timezone=True),
         server_default=func.now(),

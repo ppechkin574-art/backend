@@ -74,21 +74,6 @@ class UserPointsRepository:
                 user_id,
             )
 
-    def ensure_user_row(self, user_id) -> None:
-        """Create an empty (0-point) row for a brand-new user if one doesn't
-        already exist yet, so they show up in the global leaderboard right
-        away instead of only appearing after their first points-earning
-        action (a UserPoints row is otherwise only ever created lazily,
-        inside add_points()'s upsert). No-op — and safe to call
-        unconditionally — if a row is already there."""
-        stmt = text("""
-            INSERT INTO user_points (user_id, total_points)
-            VALUES (:user_id, 0)
-            ON CONFLICT (user_id) DO NOTHING
-        """)
-        self._session.execute(stmt, {"user_id": user_id})
-        self._session.commit()
-
     def get_total_points(self, user_id) -> int:
         """Вернуть сумму баллов пользователя."""
         row = (

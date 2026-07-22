@@ -491,13 +491,22 @@ class SubscriptionService:
 
         # Trial is kept → stamp it to the admin-configured duration (registration
         # set a placeholder 1 day; this honours app_settings `trial_duration_days`,
-        # and the TRIAL_DURATION_MINUTES QA override inside _trial_end).
+        # and the TRIAL_DURATION_MINUTES QA override inside _trial_end). Take the
+        # LATER of that and whatever `subscription_end` registration already set
+        # — complete_registration() may have granted a longer admin-configured
+        # `new_user_pro_days` auto-subscription just before this call, and this
+        # reconcile step must never shorten that back down to the 1-day default.
         try:
+            new_end = self._trial_end(trial_days)
+            existing_end = user.subscription_end
+            if existing_end is not None:
+                if existing_end.tzinfo is None:
+                    existing_end = existing_end.replace(tzinfo=UTC)
+                if existing_end > new_end:
+                    new_end = existing_end
             return self.auth_service.update_user_profile(
                 user,
-                UserUpdateDTO(
-                    plan=PlanType.PRO, subscription_end=self._trial_end(trial_days)
-                ),
+                UserUpdateDTO(plan=PlanType.PRO, subscription_end=new_end),
             )
         except Exception:  # noqa: BLE001 — never break registration
             logger.exception(

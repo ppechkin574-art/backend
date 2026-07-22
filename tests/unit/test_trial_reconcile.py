@@ -161,6 +161,48 @@ def test_registration_uses_configured_duration(monkeypatch):
     )
 
 
+def test_registration_preserves_longer_auto_grant(monkeypatch):
+    # complete_registration() just granted `new_user_pro_days` (e.g. 365) via
+    # subscription_end BEFORE this reconcile call runs — it must not be
+    # clobbered back down to the much shorter default trial_duration_days.
+    monkeypatch.delenv("TRIAL_PAYWALL_ENABLED", raising=False)
+    monkeypatch.delenv("TRIAL_DURATION_MINUTES", raising=False)
+    db = _FakeDatabase(existing_rows=[])
+    auth = _FakeAuthService()
+    auto_grant_end = datetime.now(UTC) + timedelta(days=365)
+
+    out = _svc(db, auth).reconcile_registration_trial(
+        _make_user(subscription_end=auto_grant_end), 1
+    )
+
+    end = auth.updates[0].subscription_end
+    assert end == auto_grant_end, (
+        f"365-day auto-grant should survive reconcile, got {end}"
+    )
+    assert out.plan == PlanType.PRO
+
+
+def test_registration_still_extends_when_existing_end_is_shorter(monkeypatch):
+    # The reverse case: existing subscription_end is shorter than the
+    # configured trial_days — reconcile should still extend up to trial_days
+    # (this is the pre-existing, already-correct behaviour; guards against a
+    # fix that always keeps `existing_end` instead of taking the max).
+    monkeypatch.delenv("TRIAL_PAYWALL_ENABLED", raising=False)
+    monkeypatch.delenv("TRIAL_DURATION_MINUTES", raising=False)
+    db = _FakeDatabase(existing_rows=[])
+    auth = _FakeAuthService()
+    before = datetime.now(UTC)
+    short_end = before + timedelta(hours=1)
+
+    _svc(db, auth).reconcile_registration_trial(_make_user(subscription_end=short_end), 3)
+
+    end = auth.updates[0].subscription_end
+    delta = end - before
+    assert timedelta(days=2, hours=23) < delta < timedelta(days=3, hours=1), (
+        f"expected ~3 days (trial_days should win over the shorter existing end), got {delta}"
+    )
+
+
 def test_known_phone_paywall_on_revokes(monkeypatch):
     monkeypatch.setenv("TRIAL_PAYWALL_ENABLED", "true")
     monkeypatch.delenv("TRIAL_DURATION_MINUTES", raising=False)

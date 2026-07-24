@@ -622,6 +622,27 @@ class LeaderboardPointsRepository:
         )
         return self.db.execute(stmt).first() is not None
 
+    def is_own_sprint_attempt(self, attempt_id: int, user_id: UUID) -> bool:
+        """True iff `attempt_id` is a real EntAttempt, belongs to `user_id`
+        (`student_guid`, which is created equal to the Keycloak user id —
+        see `api.dependencies.get_student`), and is flagged `is_sprint`.
+        Backs the per-attempt scoring idempotency key in `score_answer`:
+        without this check a client could send any made-up integer as
+        `test_id` and re-trigger scoring at will, since `EntAttempt` ids
+        are otherwise guessable sequential integers."""
+        from quiz.models.ent import EntAttempt
+
+        return (
+            self.db.query(EntAttempt.id)
+            .filter(
+                EntAttempt.id == attempt_id,
+                EntAttempt.student_guid == user_id,
+                EntAttempt.is_sprint.is_(True),
+            )
+            .first()
+            is not None
+        )
+
     def correct_variant_ids(self, question_id: int) -> set[int]:
         """The set of correct variant ids for a question — the sprint-test
         endpoint checks the client's answer against this rather than trusting

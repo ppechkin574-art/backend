@@ -869,27 +869,67 @@ def test_replayed_answer_is_not_scored_twice():
     repo.record_sprint_answer_points.assert_called_once()
 
 
-def test_source_id_is_week_scoped_not_per_test():
-    """Idempotency is per (user, question, week): the audit source_id is
-    "{week_date}:{question_id}" and deliberately IGNORES test_id, so replaying
-    the same question in a fresh test earns nothing until the week rolls over."""
+def test_source_id_is_attempt_scoped_for_a_valid_own_attempt():
+    """Idempotency is per (user, question, ATTEMPT) once `test_id` names a
+    real sprint attempt owned by this user: the same question pays again in
+    every new attempt (the sprint test is always `force_new`), so the audit
+    source_id must carry the attempt id rather than just the week date."""
     player = uuid4()
     now = datetime.now(UTC)
     service, repo = _answer_service(
         per_answer=10, correct_ids=[7], weekly_after=[(player, 10, now)]
     )
+    repo.is_own_sprint_attempt.return_value = True
 
     result = service.score_answer(
         player, question_id=99, variant_ids=[7], test_id=504
     )
 
     assert result["awarded"] == 10
+    repo.is_own_sprint_attempt.assert_called_once_with(504, player)
     rec_args = repo.record_sprint_answer_points.call_args
     passed = list(rec_args.args) + list(rec_args.kwargs.values())
     source_ids = [v for v in passed if isinstance(v, str)]
-    # week-date-prefixed question id, and the attempt id 504 is NOT in the key
-    assert any(v.endswith(":99") for v in source_ids)
-    assert all("504" not in v for v in source_ids)
+    assert any("504" in v and v.endswith(":99") for v in source_ids)
+
+
+def test_source_id_falls_back_to_week_scope_for_an_unverified_test_id():
+    """A `test_id` that doesn't resolve to a real, owned, is_sprint attempt
+    (foreign id, made-up id, normal ЕНТ attempt reused to try to bypass the
+    per-attempt limit) is NOT trusted — scoring falls back to the legacy
+    once-per-week key, so it can't be used to double-credit."""
+    player = uuid4()
+    now = datetime.now(UTC)
+    service, repo = _answer_service(
+        per_answer=10, correct_ids=[7], weekly_after=[(player, 10, now)]
+    )
+    repo.is_own_sprint_attempt.return_value = False
+
+    result = service.score_answer(
+        player, question_id=99, variant_ids=[7], test_id=999
+    )
+
+    assert result["awarded"] == 10
+    rec_args = repo.record_sprint_answer_points.call_args
+    passed = list(rec_args.args) + list(rec_args.kwargs.values())
+    source_ids = [v for v in passed if isinstance(v, str)]
+    assert any(v.endswith(":99") and "999" not in v for v in source_ids)
+
+
+def test_source_id_falls_back_to_week_scope_when_test_id_missing():
+    """No `test_id` at all (older client, or a call site that never had one)
+    still gets the legacy per-week key — never awaits DB-side validation of
+    a test_id that was never sent."""
+    player = uuid4()
+    now = datetime.now(UTC)
+    service, repo = _answer_service(
+        per_answer=10, correct_ids=[7], weekly_after=[(player, 10, now)]
+    )
+
+    result = service.score_answer(player, question_id=99, variant_ids=[7])
+
+    assert result["awarded"] == 10
+    repo.is_own_sprint_attempt.assert_not_called()
 
 
 def test_no_award_once_sprint_is_won():

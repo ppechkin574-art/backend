@@ -316,10 +316,17 @@ class SprintService:
         Correctness is checked SERVER-SIDE against the question's variants —
         the client's chosen variant ids are compared to the stored correct
         set, never a client-sent "correct" flag, so the answer can't be
-        faked. Each question is worth points ONCE PER WEEK per user (the week
-        is baked into the idempotency key and backed by a partial unique
-        index), so re-answering the same question — even in a brand-new test —
-        earns nothing more until the week rolls over.
+        faked. Each question is worth points ONCE PER ATTEMPT per user: a
+        question answered again inside the SAME sprint test attempt earns
+        nothing more, but a brand-new attempt (a fresh `test_id` — every
+        sprint test launch is `force_new`, see `create_sprint_exam_attempt`)
+        pays again for the same question. `test_id` is verified against a
+        real `EntAttempt` owned by this user with `is_sprint=True`
+        (`LeaderboardPointsRepository.is_own_sprint_attempt`) before it's
+        trusted as the idempotency scope — otherwise a client could send any
+        made-up integer to bypass the per-attempt limit. Falls back to the
+        legacy once-per-week key when `test_id` is missing or doesn't
+        validate, so an old/misbehaving client still can't double-credit.
 
         Returns {correct, awarded, week_points, finished}:
           - correct: whether the answer was right;
@@ -374,14 +381,21 @@ class SprintService:
                 "finished": False,
             }
 
-        # Idempotency scope: one credit per (user, question, week). The week is
-        # baked into source_id, so the same question scores again next week but
-        # never twice in the same week — whatever the client sends as test_id. A
-        # partial unique index on (user_id, source_id) WHERE
-        # source_type='sprint_answer' enforces this at the DB level, so racing
-        # duplicate submits can't double-credit (record_sprint_answer_points
-        # does ON CONFLICT DO NOTHING and returns False for the loser).
-        source_id = f"{week_start_at.date().isoformat()}:{question_id}"
+        # Idempotency scope: one credit per (user, question, attempt) when
+        # `test_id` names a real sprint attempt owned by this user — so the
+        # same question pays again in every new attempt, matching how the
+        # sprint test is actually played (force_new on every launch). Falls
+        # back to the legacy per-week key otherwise (missing/invalid
+        # test_id), which still blocks re-scoring within that week. Either
+        # way, a partial unique index on (user_id, source_id) WHERE
+        # source_type='sprint_answer' enforces the chosen scope at the DB
+        # level, so racing duplicate submits can't double-credit
+        # (record_sprint_answer_points does ON CONFLICT DO NOTHING and
+        # returns False for the loser).
+        if test_id is not None and self.repo.is_own_sprint_attempt(test_id, user_id):
+            source_id = f"attempt:{test_id}:{question_id}"
+        else:
+            source_id = f"{week_start_at.date().isoformat()}:{question_id}"
 
         awarded = 0
         # Separate currency: writes the audit row WITHOUT touching total_points,

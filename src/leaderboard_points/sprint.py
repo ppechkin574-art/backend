@@ -431,7 +431,17 @@ class SprintService:
         """Record today's rank snapshot (movement-badge baseline). Called on
         a schedule; only writes once per Almaty day thanks to the unique
         constraint, so an hourly poll is safe. Never raises — a failure here
-        must not take down the lifespan task it shares."""
+        must not take down the lifespan task it shares.
+
+        Includes EVERY eligible participant, not just scorers — mirrors the
+        zero-fill `ranked_standings` already does. Without this, someone who
+        hasn't scored yet (freshly joined, or on a day everyone is still at
+        0★) is simply absent from the snapshot; `ranked_standings`'s delta
+        lookup then finds no prior rank for them at all and shows no badge
+        the next time they climb — indistinguishable from "just no movement",
+        which is the bug this fixes. Ranking ties (multiple users on 0★)
+        break in `weekly_points`'s own order (score desc, then earliest
+        scorer first; the zero-scorers keep `_eligible_user_ids`' order)."""
         now = now or datetime.now(UTC)
         try:
             settings = self.repo.get_or_create_settings()
@@ -439,13 +449,13 @@ class SprintService:
             day_start = current_day_start_almaty(now)
             if self.repo.snapshot_exists_for_day(week_start_at, day_start):
                 return {"ran": False, "reason": "already_captured_today"}
-            rows = self.repo.weekly_points(
-                week_start_at,
-                week_end_at,
-                self._eligible_user_ids(week_start_at, week_end_at),
-            )
-            if not rows:
-                return {"ran": False, "reason": "no_scorers"}
+            eligible = self._eligible_user_ids(week_start_at, week_end_at)
+            if not eligible:
+                return {"ran": False, "reason": "no_participants"}
+            rows = self.repo.weekly_points(week_start_at, week_end_at, eligible)
+            scored_ids = {r[0] for r in rows}
+            zeros = [(uid, 0, None) for uid in eligible if uid not in scored_ids]
+            rows = list(rows) + zeros
             ranks = [(user_id, i + 1) for i, (user_id, _, _) in enumerate(rows)]
             self.repo.save_rank_snapshot(week_start_at, day_start, ranks)
             return {"ran": True, "captured": len(ranks)}

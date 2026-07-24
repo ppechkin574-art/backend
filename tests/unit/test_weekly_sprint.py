@@ -631,6 +631,54 @@ def test_snapshot_records_current_ranks_when_due():
     assert ranks == [(a, 1), (b, 2)]
 
 
+def test_snapshot_includes_eligible_participants_who_have_not_scored_yet():
+    """Regression: a participant sitting at 0★ (just joined, or everyone is
+    still at 0 on reset day) used to be silently missing from the snapshot —
+    weekly_points only returns scorers. That left them with no baseline rank,
+    so the movement badge could never show for them later, no matter how far
+    they climbed. The snapshot must zero-fill exactly like ranked_standings."""
+    a, b, c = uuid4(), uuid4(), uuid4()
+    now = datetime(2026, 7, 22, 10, 0, tzinfo=UTC)
+    service, repo = _standings_service(
+        standings=[(a, 500, now)],  # only `a` has scored
+        participants=[a, b, c],  # b and c are eligible but still at 0★
+        prev_ranks={},
+    )
+    repo.snapshot_exists_for_day.return_value = False
+    result = service.capture_rank_snapshot(now)
+    assert result == {"ran": True, "captured": 3}
+    _, _, ranks = repo.save_rank_snapshot.call_args[0]
+    assert ranks == [(a, 1), (b, 2), (c, 3)]
+
+
+def test_snapshot_writes_ranks_when_everyone_is_still_at_zero():
+    """The old `if not rows: return no_scorers` guard skipped writing a
+    snapshot entirely on a day nobody had scored yet (e.g. right after a
+    reset) — meaning even THAT all-tied baseline never got recorded, so the
+    badge stayed broken indefinitely rather than just for one day. Now the
+    guard is "no eligible participants", not "no scorers", so an all-zero
+    day still gets a real (tied) snapshot."""
+    a, b = uuid4(), uuid4()
+    now = datetime(2026, 7, 24, 10, 0, tzinfo=UTC)
+    service, repo = _standings_service(
+        standings=[], participants=[a, b], prev_ranks={}
+    )
+    repo.snapshot_exists_for_day.return_value = False
+    result = service.capture_rank_snapshot(now)
+    assert result == {"ran": True, "captured": 2}
+    _, _, ranks = repo.save_rank_snapshot.call_args[0]
+    assert ranks == [(a, 1), (b, 2)]
+
+
+def test_snapshot_skipped_when_nobody_is_eligible():
+    now = datetime(2026, 7, 22, 10, 0, tzinfo=UTC)
+    service, repo = _standings_service(standings=[], participants=[], prev_ranks={})
+    repo.snapshot_exists_for_day.return_value = False
+    result = service.capture_rank_snapshot(now)
+    assert result == {"ran": False, "reason": "no_participants"}
+    repo.save_rank_snapshot.assert_not_called()
+
+
 def test_latest_snapshot_ranks_builds_a_valid_query():
     """Regression: `func.max` was used in the repo without importing `func`,
     which mocked-repo tests never exercised — it only blew up (NameError,
